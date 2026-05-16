@@ -1,0 +1,48 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Testing ──────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Model artefacts (stored on lustre, not git) ───────────────────────────────
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.pkl
+
+# ── SLURM logs ────────────────────────────────────────────────────────────────
+*.out
+*.err
+slurm_logs/
+job_scripts/
+
+# ── Results (large binary outputs on lustre) ──────────────────────────────────
+results_mm_abmil_*/
+analysis_v6_*/
+inference_cache_*
+
+# ── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
