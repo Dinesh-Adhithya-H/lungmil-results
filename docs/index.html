@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lung Transplant · Patient Analysis</title>
+<script>
+(function(){
+  var PASS = "lungmil2024";
+  var KEY  = "lm_auth";
+  if (sessionStorage.getItem(KEY) !== "1") {
+    var p = prompt("Password:");
+    if (p !== PASS) { document.write("<h2 style='font-family:sans-serif;padding:40px'>Access denied.</h2>"); throw ""; }
+    sessionStorage.setItem(KEY, "1");
+  }
+})();
+</script>
 <style>
 :root {
   --bg:      #F0F2F5;
