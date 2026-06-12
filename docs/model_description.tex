@@ -1,0 +1,1006 @@
+% Multimodal MIL — Lung Transplant Outcome Prediction with Interpretability
+% Compile with: pdflatex model_description.tex
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{microtype}
+\usepackage[numbers,sort&compress]{natbib}
+\geometry{margin=2.5cm}
+
+\title{\textbf{Multimodal Multiple Instance Learning\\
+for Lung Transplant Outcome Prediction\\
+with Interpretability}}
+\author{Dinesh Haridoss}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Overview}
+% =============================================================================
+
+We present a two-phase multimodal Multiple Instance Learning (MIL) framework for
+classifying Acute Cellular Rejection (ACR) in lung transplant patients.
+The framework ingests up to four modalities: H\&E histology (HE), BAL cytology
+(BAL), computed tomography (CT), and clinical tabular data (Clinical).
+Each modality is represented as a \emph{bag of instances} without requiring
+spatial registration across modalities.
+
+H\&E patches carry spatial tile coordinates (\texttt{tile\_left},
+\texttt{tile\_top}) that record each patch's pixel position on the biopsy slide.
+This spatial information enables position-aware visualisation of attention maps
+on the biopsy tissue.
+CT instances carry 3-D voxel coordinates (\texttt{d\_voxel}, \texttt{h\_voxel},
+\texttt{w\_voxel}) locating each patch within the scan volume.
+
+\paragraph{Phase 1.}
+Each modality is trained independently using a Gated Attention MIL
+backbone~\cite{ilse2018abmil}.
+Optional auxiliary objectives encourage student modalities (CT, BAL) to mimic
+the representations of teacher modalities (HE, Clinical).
+These objectives include cross-modal attention transfer, contrastive
+representation alignment, and cosine representation distillation.
+
+\paragraph{Phase 2.}
+Pre-trained modality encoders are frozen (projection heads) or fine-tuned
+(backbones), and a fusion module combines all available modality representations.
+We evaluate five fusion strategies: early, late, middle, cross-attention, and
+iterative cross-modal fusion.
+
+\bigskip\noindent
+\textbf{Task.}
+Binary classification (rejection vs.\ non-rejection) under extreme class
+imbalance.
+The model is evaluated by balanced accuracy (bAcc) and AUROC.
+
+% =============================================================================
+\section{Dataset Preprocessing}
+% =============================================================================
+
+\subsection{Raw Data Sources}
+
+The dataset is assembled from five raw sources covering four imaging and one
+tabular modality:
+
+\begin{table}[h]
+\centering
+\caption{Raw data sources and their identifiers.}
+\label{tab:datasources}
+\begin{tabular}{llll}
+\toprule
+Modality & File type & Patient ID col & Time col \\
+\midrule
+BAL (scRNA-seq) & \texttt{.h5ad} & \texttt{record\_id} & \texttt{date\_from\_id} \\
+H\&E histology  & \texttt{.h5ad} & \texttt{record\_id} & \texttt{biopsy\_date} \\
+CT scan         & \texttt{.h5ad} & \texttt{Patient}    & \texttt{date\_of\_CT} \\
+Radiomics       & \texttt{.csv}  & \texttt{Patient}    & \texttt{Exam\_Date} \\
+Clinical        & \texttt{.csv}  & \texttt{record\_id} & \texttt{spiro\_date} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+Instance-level embeddings for the three imaging modalities are stored in the
+\texttt{.obsm} key \texttt{X\_scVI} (BAL) or \texttt{X} (H\&E, CT).
+Per-instance cluster and cell-type labels are stored in the \texttt{.obs}
+columns \texttt{resolution\_v2} (BAL), \texttt{subcluster\_renamed} (H\&E),
+and \texttt{leiden} (CT).
+For H\&E, spatial coordinates \texttt{tile\_left} and \texttt{tile\_top}
+record the pixel position of each patch on the biopsy slide.
+For CT, coordinates \texttt{d\_voxel}, \texttt{h\_voxel}, and
+\texttt{w\_voxel} record the 3-D voxel location of each patch in the scan
+volume.
+
+\subsection{Dataset Statistics and Modality Coverage}
+
+The cohort consists of longitudinal biopsy-anchored timepoints from lung
+transplant patients.
+Each timepoint is associated with a rejection label derived from the ACR
+biopsy grade.
+Figure~\ref{fig:modality_overlap} shows the patient-level modality availability
+across the cohort.
+The largest single-modality group consists of Clinical-only patients (257
+patients), reflecting that clinical measurements are the most frequently
+collected.
+A total of 60 patients have all four modalities available simultaneously.
+
+Figure~\ref{fig:acr_distribution} shows the distribution of ACR-positive and
+ACR-negative timepoints for each modality combination.
+The dataset is highly imbalanced: rejection events are a minority across all
+modality groups.
+Clinical-only timepoints are the most frequent (1643 ACR$-$, 425 ACR$+$),
+and the HE+CT+Clinical group contributes 169 ACR$-$ and 64 ACR$+$ timepoints.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{../chicago/plots/Patient-Level_modality_overlap.png}
+\caption{Patient-level modality overlap (UpSet plot). Each bar represents a
+  modality combination. The largest single-modality group is Clinical-only
+  (257 patients). The all-four-modality group contains 60 patients.}
+\label{fig:modality_overlap}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{../chicago/plots/Timepoint-Level_acr_distribution_by_modality.png}
+\caption{Timepoint-level ACR label distribution by modality combination.
+  Each bar shows the count of ACR-positive and ACR-negative timepoints for a
+  given modality subset. Clinical-only timepoints are the most frequent.}
+\label{fig:acr_distribution}
+\end{figure}
+
+\subsection{Temporal Alignment}
+\label{sec:temporal}
+
+All modalities are aligned to a common anchor event using a time-windowed
+nearest-neighbour strategy.
+The H\&E biopsy is the anchor modality because it provides the ACR rejection
+label.
+For each biopsy event, the dataset searches for the nearest available
+measurement from every other modality within a window of $\pm$45 days
+($45 \times 86\,400$ seconds).
+If multiple measurements from the same modality fall within the window, the one
+closest in time to the biopsy date is selected.
+A timepoint is included as long as at least one modality is present
+(\texttt{min\_modalities}~$= 1$).
+
+The alignment procedure for each biopsy anchor proceeds as follows:
+\begin{enumerate}
+    \item Fix the anchor timestamp $t_0$ from the biopsy date.
+    \item For each other modality $m \in \{\text{BAL, CT, Clinical}\}$, collect
+          all measurements from the same patient.
+    \item Retain measurements whose timestamp $t_m$ satisfies
+          $|t_m - t_0| \leq 45 \times 86\,400$.
+    \item Among retained measurements, select the one minimising $|t_m - t_0|$
+          as the aligned record for modality $m$.
+    \item If no measurement falls within the window, modality $m$ is absent for
+          this timepoint.
+\end{enumerate}
+
+This procedure produces a set of aligned multimodal samples.
+Each sample has one rejection label from the biopsy and zero or more
+co-occurring modality observations within the 45-day window.
+Patients without a biopsy on a given date still contribute if their most
+recent biopsy label falls within the window.
+
+\subsection{Label Encoding}
+
+The binary rejection label is derived from the ACR biopsy grade:
+\begin{equation}
+    y =
+    \begin{cases}
+        1 & \text{if ACR grade contains A1 or A2 (acute rejection),} \\
+        0 & \text{otherwise.}
+    \end{cases}
+\end{equation}
+Outcome-predictive clinical columns (FVC/FEV1 slopes, biopsy grade itself) are
+excluded from the clinical feature set to prevent label leakage.
+
+\subsection{Clinical Feature Tokenisation}
+
+Raw clinical tabular features ($F = 102$ features after label-leakage
+exclusion) are discretised by a \texttt{ClinicalFeatureTokenizer}:
+
+\paragraph{Continuous features.}
+Each continuous feature $f$ is discretised into $n_q = 4$ quantile bins fitted
+on the population.
+Bin boundaries $b_0^{(f)} < b_1^{(f)} < \cdots < b_{n_q}^{(f)}$ are the
+$0, 1/n_q, \ldots, 1$ quantiles of the observed values.
+A dedicated NaN token is reserved per feature.
+
+\paragraph{Categorical/binary features.}
+Features with $\leq 10$ unique values are treated as categorical: each unique
+category receives a distinct token, plus one NaN token.
+
+\paragraph{Block-diagonal one-hot representation.}
+At precompute time, each sample's tokenised clinical vector $\mathbf{t} \in
+\mathbb{Z}^F$ (one token ID per feature) is converted into the 2-D bag matrix
+$\mathbf{X}_\text{Clin} \in \{0,1\}^{F \times V_\text{Clin}}$.
+The global vocabulary has $V_\text{Clin}$ tokens, partitioned into $F$
+non-overlapping blocks of size $n_q + 1$ (continuous) or
+$|\text{categories}| + 1$ (categorical).
+Row $f$ of $\mathbf{X}_\text{Clin}$ is a one-hot vector with a single $1$ at
+the position of token $t_f$.
+Because each feature occupies a disjoint block of columns, the matrix is
+block-diagonal and each row is a valid token embedding.
+This treats clinical features as $F$ \emph{instance tokens} on equal footing
+with imaging patch tokens.
+
+For the special case of $n_q = 4$ bins with all $F$ features continuous, the
+representation simplifies to $\mathbf{X}_\text{Clin} \in \{0,1\}^{F \times 4F}$
+(feature dimension $= 4F = 408$), matching the \texttt{MODALITY\_REGISTRY}
+entry \texttt{("clinical\_onehot", 408)}.
+
+\subsection{Cluster Count Tokenisation}
+
+For each imaging modality $m \in \{\text{HE, BAL, CT}\}$ with $K_m$
+cell/patch clusters, a per-bag cluster abundance vector
+$\mathbf{c}_m \in \mathbb{R}^{K_m}$ (CLR-normalised counts) is precomputed
+from the per-instance cluster labels.
+A \texttt{ClusterCountTokenizer} discretises each cluster's abundance into
+$n_q = 4$ quantile bins.
+Each cluster receives its own separate set of quantile boundaries fitted on the
+population distribution for that cluster.
+The boundaries for cluster $k$ are computed from the CLR-normalised count of
+cluster $k$ across all patients.
+This per-cluster fitting ensures that the bin thresholds are meaningful for
+each cell type independently, regardless of how common or rare that cell type
+is.
+
+The token ID vector is $\mathbf{t}_m \in \mathbb{Z}^{K_m}$, where entry $k$
+encodes the quantile bin of cluster $k$'s abundance relative to the
+population.
+The analogous block-diagonal one-hot matrix is
+$\mathbf{X}_m^\text{count} \in \{0,1\}^{K_m \times (n_q K_m)}$: row $k$ has a
+$1$ at column $k n_q + b_k$, where $b_k$ is the quantile bin of cluster $k$'s
+count.
+Pooling across rows gives the bag-level count representation:
+\begin{equation}
+    \mathbf{c}_m^\text{onehot} = (\mathbf{X}_m^\text{count})^\top\mathbf{1}_{K_m}
+    \in \{0,1\}^{n_q K_m},
+\end{equation}
+a sparse vector with exactly $K_m$ non-zero entries (one per cluster).
+
+\subsection{Precomputed \texttt{.pt} File Format}
+
+Each aligned timepoint is saved as a PyTorch \texttt{.pt} dictionary with the
+following top-level keys after key remapping (\texttt{KEY\_REMAP}):
+
+\begin{itemize}
+    \item \texttt{inputs}: dict of modality tensors.
+          \texttt{HE\_cells}~$(N_\text{HE}, 1024)$,
+          \texttt{BAL\_cells}~$(N_\text{BAL}, 10)$,
+          \texttt{CT\_cells}~$(N_\text{CT}, 1024)$,
+          \texttt{Clinical}~$(N_\text{Clin}, d_\text{Clin})$.
+    \item \texttt{cluster\_labels}: per-instance cluster assignment strings.
+    \item \texttt{coords}: per-instance spatial coordinates.
+    \item \texttt{bag\_centroids}: dict of per-modality centroid
+          matrices~$(K_m, d_m)$.
+    \item \texttt{clinical\_onehot}: $\mathbf{X}_\text{Clin}
+          \in \{0,1\}^{F \times 4F}$.
+    \item \texttt{cluster\_count\_onehot}: dict of $\mathbf{X}_m^\text{count}$.
+    \item \texttt{cluster\_names}: dict of cluster name lists per modality.
+    \item \texttt{clinical\_feature\_names}: list of $F$ feature name strings.
+    \item \texttt{clinical\_token\_ids}: per-patient bin assignment indices.
+    \item \texttt{clinical\_vocab}: list of bin-specific token label dicts
+          (e.g.\ \texttt{\{"id": 3, "label": "FEV1\_q3"\}}).
+    \item \texttt{label}, \texttt{identifier}, \texttt{anchor\_time},
+          \texttt{metadata}, \texttt{survival}.
+\end{itemize}
+
+% =============================================================================
+\section{Data Representation}
+% =============================================================================
+
+\subsection{Modality Feature Spaces}
+
+\begin{table}[h]
+\centering
+\caption{Modality registry. Each bag is a set of instance-level feature vectors.}
+\label{tab:modalities}
+\begin{tabular}{llrl}
+\toprule
+Modality & Key & Feature dim $d$ & Role \\
+\midrule
+HE       & \texttt{HE\_cells}        & 1024 & Teacher \\
+Clinical & \texttt{clinical\_onehot} & 408  & Teacher \\
+CT       & \texttt{CT\_cells}        & 1024 & Student \\
+BAL      & \texttt{BAL\_cells}       & 10   & Student \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Clinical representation.}
+Clinical features are encoded as a 2-D bag
+$\mathbf{X}_\text{Clin}\in\mathbb{R}^{F\times(F\cdot n_b)}$, where $F=102$ is
+the number of clinical features and $n_b=4$ is the number of quantisation bins.
+Row $f$ is a block-diagonal one-hot vector that encodes the binned value of
+feature $f$.
+There is exactly one non-zero entry at column $f\cdot n_b + b_f$, where $b_f$
+is the bin index.
+This representation treats each clinical feature as a separate
+\emph{token instance}, enabling attention-based pooling over clinical features
+on equal footing with histological patch tokens.
+
+% =============================================================================
+\section{Phase 1: Unimodal Pre-Training}
+% =============================================================================
+
+\subsection{Gated Attention MIL Encoder}
+\label{sec:abmil}
+
+Following~\cite{ilse2018abmil}, each modality encoder maps a bag
+$\mathbf{X}\in\mathbb{R}^{N\times d}$ (with $N$ instances) to a scalar logit
+via three stages.
+
+\paragraph{Instance projection (backbone).}
+\begin{equation}
+    \mathbf{h}_i = \text{ReLU}\!\left(\mathbf{W}_\text{bb}\,\mathbf{x}_i\right),
+    \quad \mathbf{h}_i \in \mathbb{R}^H, \quad H=256.
+\end{equation}
+
+\paragraph{Gated attention pooling.}
+\begin{equation}
+    a_i = \frac{\exp\!\left(\mathbf{w}^\top
+          \!\left[\tanh(\mathbf{V}\mathbf{h}_i)
+                 \odot\sigma(\mathbf{U}\mathbf{h}_i)\right]\right)}
+         {\sum_{j=1}^{N}\exp\!\left(\mathbf{w}^\top
+          \!\left[\tanh(\mathbf{V}\mathbf{h}_j)
+                 \odot\sigma(\mathbf{U}\mathbf{h}_j)\right]\right)},
+    \label{eq:abmil}
+\end{equation}
+where $\mathbf{V},\mathbf{U}\in\mathbb{R}^{H\times H}$,
+$\mathbf{w}\in\mathbb{R}^H$.
+
+\paragraph{Bag representation and classification.}
+\begin{equation}
+    \mathbf{r} = \sum_{i=1}^{N} a_i\,\mathbf{h}_i, \qquad
+    \hat{y} = \mathbf{w}_\text{head}^\top \mathbf{r}.
+    \label{eq:rep}
+\end{equation}
+
+\subsection{Phase 1 Loss Functions}
+
+\subsubsection{Task Loss (Weighted Hinge)}
+
+\begin{equation}
+    \mathcal{L}_\text{task} = \frac{1}{B}\sum_{b=1}^{B}
+        w_b\cdot\max\!\left(0,\; 1 - \tilde{y}_b\,\hat{y}_b\right),
+    \label{eq:hinge}
+\end{equation}
+where $\tilde{y}_b = 2y_b - 1 \in\{-1,+1\}$ and $w_b$ is a class weight that
+upweights the minority (rejection) class.
+
+\subsubsection{Bidirectional Patch Cross-Attention}
+
+For student--teacher pairs we compute bidirectional patch-level cross-attention
+following the MCAT architecture~\cite{chen2021mcat}.
+Let $\mathbf{H}_s\in\mathbb{R}^{N_s\times H}$ and
+$\mathbf{H}_t\in\mathbb{R}^{N_t\times H}$ be the student and teacher patch
+features.
+
+\paragraph{Student attends teacher.}
+\begin{equation}
+    \text{CA}_{s\to t} = \text{softmax}\!\left(
+        \frac{\mathbf{Q}_s\,\mathbf{K}_t^\top}{\sqrt{H/n_h}}\right)\mathbf{V}_t,
+\end{equation}
+producing enriched student features $\tilde{\mathbf{H}}_s$.
+The multi-head variant uses $n_h = 4$ heads.
+After cross-attention, layer normalisation and a feed-forward residual are
+applied.
+
+\paragraph{Knowledge Distillation signal.}
+For knowledge distillation, the \emph{teacher attends to student embeddings}.
+The teacher patches act as queries and the student patches act as keys and
+values.
+This produces cross-attention weights
+$\boldsymbol{\alpha}_{t\to s}\in\mathbb{R}^{N_t\times N_s}$, where entry
+$[j, i]$ measures how strongly teacher patch $j$ attends to student patch $i$.
+These attention weights are computed from the pre-softmax logits
+$\mathbf{Q}_t\mathbf{K}_s^\top / \sqrt{H/n_h}$.
+The per-student-patch importance score is obtained by averaging over teacher
+patches:
+\begin{equation}
+    \bar{\boldsymbol{\alpha}}_{t\to s} = \frac{1}{N_t}
+        \sum_{j=1}^{N_t}\boldsymbol{\alpha}_{t\to s}[j,:]\;\in\mathbb{R}^{N_s}.
+\end{equation}
+This score tells us which student patches the teacher considers most
+informative, and it serves as a soft target for the student's own
+self-attention.
+
+\subsubsection{Attention Transfer Loss (KD)}
+
+Inspired by~\cite{zagoruyko2017at}, we align the student's self-attention
+distribution to the teacher-guided distribution over the top-$K$ most attended
+student patches.
+Both $\boldsymbol{\alpha}_\text{self}$ and $\bar{\boldsymbol{\alpha}}_{t\to s}$
+are pre-softmax attention logits.
+Softmax is applied inside the KL divergence to convert them to distributions:
+\begin{equation}
+    \mathcal{L}_\text{KD} =
+    \mathrm{KL}\!\left(
+        \text{softmax}\!\left(\frac{\boldsymbol{\alpha}_\text{self}[\mathcal{K}]}{\tau}\right)
+        \,\Big\|\,
+        \text{softmax}\!\left(\frac{\bar{\boldsymbol{\alpha}}_{t\to s}[\mathcal{K}]}{\tau}\right)
+    \right),
+    \label{eq:kd}
+\end{equation}
+where $\mathcal{K}$ is the index set of the top-$K=50$ student patches by
+teacher score, and $\tau=0.5$ is a temperature parameter.
+Using pre-softmax logits allows the temperature $\tau$ to control the
+sharpness of the target distribution independently of the attention scores.
+
+\subsubsection{Cosine Representation Distillation (CRD)}
+
+To align the student's cross-attended bag representation
+$\mathbf{r}_s^\times$ with the cached teacher summary $\mathbf{r}_t$:
+\begin{equation}
+    \mathcal{L}_\text{CRD} = 1 - \frac{\mathbf{r}_s^\times}{\|\mathbf{r}_s^\times\|}
+        \cdot\frac{\mathbf{r}_t}{\|\mathbf{r}_t\|},
+    \label{eq:crd}
+\end{equation}
+adapted from CRD~\cite{tian2020crd}.
+
+\subsubsection{Supervised Contrastive Loss (SupCon)}
+
+All modality representations $\mathbf{z} = g(\mathbf{r})$ (projected through a
+two-layer MLP projection head $g:\mathbb{R}^H\to\mathbb{R}^{128}$) contribute
+to a SupCon loss~\cite{khosla2020supcon}:
+\begin{equation}
+    \mathcal{L}_\text{CLR} =
+    -\sum_{i\in I} w_i
+    \frac{1}{|P(i)|}\sum_{p\in P(i)}
+    \log\frac{\exp(\mathbf{z}_i\cdot\mathbf{z}_p/\tau_c)}
+             {\sum_{j\in I\setminus\{i\}}\exp(\mathbf{z}_i\cdot\mathbf{z}_j/\tau_c)},
+    \label{eq:supcon}
+\end{equation}
+with $\tau_c = 0.07$ and positive set
+$P(i) = \{j : (\text{same stem} \wedge \text{different modality}) \vee
+             (\text{same label} \wedge \text{different stem})\}$.
+Class weights $w_i$ upweight the minority class.
+An analogous \emph{summary CLR} loss is computed on the normalised bag
+representations $\ell_2(\mathbf{r})$ directly, without a projection head.
+
+\subsubsection{Total Phase 1 Objective}
+
+\begin{equation}
+    \mathcal{L}_1 = \mathcal{L}_\text{task}
+        + \lambda_\text{cx}\,\mathcal{L}_\text{cross}
+        + \lambda_\text{kd}\,\mathcal{L}_\text{KD}
+        + \lambda_\text{crd}\,\mathcal{L}_\text{CRD}
+        + \lambda_\text{clr}\,\mathcal{L}_\text{CLR}
+        + \lambda_\text{sclr}\,\mathcal{L}_\text{sCLR},
+    \label{eq:p1_total}
+\end{equation}
+where $\mathcal{L}_\text{cross}$ is an auxiliary hinge loss computed from the
+cross-attended student representation.
+The default configuration uses task loss only, with all $\lambda$s set to 0
+unless explicitly enabled.
+
+\subsection{Phase 1 Hyperparameters}
+
+\begin{table}[h]
+\centering
+\caption{Phase 1 hyperparameters.}
+\label{tab:p1_hparams}
+\begin{tabular}{llr}
+\toprule
+Parameter & Symbol & Value \\
+\midrule
+Hidden dimension & $H$ & 256 \\
+Dropout & $p$ & 0.4 \\
+Learning rate & $\eta_1$ & $1\times10^{-5}$ \\
+Weight decay & & $1\times10^{-3}$ \\
+Max epochs & & 400 \\
+Eval every & & 25 epochs \\
+Grad accumulation steps & & 4 \\
+Cross-attn heads & $n_h$ & 4 \\
+Projection dim & $d_z$ & 128 \\
+KD temperature & $\tau$ & 0.5 \\
+KD top-K & $K$ & 50 \\
+CLR temperature & $\tau_c$ & 0.07 \\
+$\lambda_\text{cx}$ & & 0.05 \\
+$\lambda_\text{kd}$ & & 0.05 \\
+$\lambda_\text{crd}$ & & 0.10 \\
+$\lambda_\text{clr}$ & & 0.10 \\
+$\lambda_\text{sclr}$ & & 0.10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Phase 2: Multimodal Fusion}
+% =============================================================================
+
+\subsection{Shared Building Blocks}
+
+\subsubsection{Iterative Slot Attention}
+\label{sec:slots}
+
+Slot Attention~\cite{locatello2020slots} compresses a variable-length patch
+sequence $\mathbf{H}\in\mathbb{R}^{N\times H}$ into $K$ fixed-size slot
+vectors $\mathbf{S}\in\mathbb{R}^{K\times H}$, where $K \ll N$.
+Each slot learns to represent a different subset of the input patches through
+a competition mechanism.
+
+\paragraph{Set Transformer view.}
+The core idea is related to the Induced Set Attention Block (ISAB) from the
+Set Transformer~\cite{lee2019settransformer}.
+Two attention operations define the block.
+First, the $K$ slot vectors act as queries and the $N$ patch features act as
+keys and values:
+\begin{equation}
+    \mathbf{S}' = \mathrm{MHA}(\mathbf{S},\,\mathbf{H},\,\mathbf{H}).
+    \label{eq:mab}
+\end{equation}
+Each slot gathers information from the patches it is most similar to.
+Second, the patches can be refined by attending back to the updated slots:
+\begin{equation}
+    \mathbf{H}' = \mathrm{MHA}(\mathbf{H},\,\mathbf{S}',\,\mathbf{S}').
+    \label{eq:sab}
+\end{equation}
+Here $\mathbf{S}$ is a small set of $K$ vectors in $\mathbb{R}^d$, with
+$K \ll N$.
+This bottleneck forces the slots to form compact summaries of the full patch
+sequence.
+
+\paragraph{Slot Attention procedure.}
+Our implementation follows~\cite{locatello2020slots} and uses a GRU-based
+iterative update.
+A slot-competition softmax is applied column-wise over patches so that each
+patch is drawn toward the slot it fits best.
+
+Given patch features $\mathbf{H}\in\mathbb{R}^{N\times H}$, slot count $K$,
+and iterations $T$:
+\begin{enumerate}
+    \item Initialise $\mathbf{S}^{(0)} \sim
+          \mathcal{N}(\boldsymbol{\mu},\,\mathrm{softplus}(\boldsymbol{\sigma}))$
+          from learned parameters.
+    \item Compute keys and values once:
+          $\mathbf{k} = W_k\,\mathrm{LN}(\mathbf{H})$,
+          $\mathbf{v} = W_v\,\mathrm{LN}(\mathbf{H})$.
+    \item For $t = 1,\ldots,T$:
+    \begin{enumerate}
+        \item $\mathbf{q} \leftarrow W_q\,\mathrm{LN}(\mathbf{S}^{(t-1)})$
+        \item $\mathbf{L} \leftarrow \mathbf{q}\mathbf{k}^\top / \sqrt{H}
+              \in\mathbb{R}^{K\times N}$
+        \item $\mathbf{A} \leftarrow \mathrm{softmax}_{K}(\mathbf{L})$
+              \hfill (softmax over slots, not over patches)
+        \item $\tilde{\mathbf{A}} \leftarrow
+              \mathbf{A} \oslash (\mathbf{A}\mathbf{1}_N + \varepsilon)$
+              \hfill (normalise each slot)
+        \item $\mathbf{U} \leftarrow \tilde{\mathbf{A}}\,\mathbf{v}$
+              \hfill (weighted mean of patch values per slot)
+        \item $\mathbf{S}^{(t)} \leftarrow
+              \mathrm{GRU}(\mathbf{U},\,\mathbf{S}^{(t-1)})$
+        \item $\mathbf{S}^{(t)} \leftarrow
+              \mathrm{LN}\!\left(\mathbf{S}^{(t)} +
+              \mathrm{FFN}(\mathbf{S}^{(t)})\right)$
+    \end{enumerate}
+    \item Return $\mathbf{S}^{(T)}\in\mathbb{R}^{K\times H}$.
+\end{enumerate}
+
+\noindent Default: $K\in\{8,16\}$, $T=3$.
+
+\subsubsection{Cross-Modal Transformer}
+
+Slot tokens from all present modalities are concatenated and refined by an
+$L$-layer Transformer encoder:
+\begin{equation}
+    \mathbf{Z}^{(\ell+1)} = \mathrm{FFN}\!\left(
+        \mathrm{LN}\!\left(\mathbf{Z}^{(\ell)} +
+            \mathrm{MHA}\!\left(\mathbf{Z}^{(\ell)},
+                               \mathbf{Z}^{(\ell)},
+                               \mathbf{Z}^{(\ell)}\right)\right)\right),
+    \label{eq:xfmr}
+\end{equation}
+with $L=2$, $n_h=4$ heads. FFN uses a GELU activation with hidden dim $2H$.
+
+\subsubsection{Final Pooling}
+
+Two pooling modes are supported after the cross-modal transformer:
+
+\paragraph{ABMIL pooling.}
+Standard gated attention (Eq.~\eqref{eq:abmil}) applied to the slot token
+sequence.
+
+\paragraph{CLS pooling.}
+A learned CLS token is prepended to the token sequence.
+Cross-attention from the CLS token to the remaining tokens is computed via
+multi-head attention, followed by layer normalisation.
+The CLS output is used as the bag representation.
+
+\subsection{Fusion Variants}
+
+\subsubsection{Variant 1: Early Fusion (\texttt{early} / \texttt{early\_cls})}
+
+All modality patches are mapped to the shared feature space $\mathbb{R}^H$
+via their respective frozen backbone, concatenated into a single sequence, and
+pooled with ABMIL or a CLS token:
+\begin{equation}
+    \mathbf{H}_\text{all} = \left[\mathbf{H}_\text{HE}\;;\;\mathbf{H}_\text{BAL}\;;\;
+        \mathbf{H}_\text{CT}\;;\;\mathbf{H}_\text{Clin}\right]
+    \in\mathbb{R}^{(\sum_m N_m)\times H},
+\end{equation}
+\begin{equation}
+    \hat{y} = f_\text{head}\!\left(\text{pool}(\mathbf{H}_\text{all})\right).
+\end{equation}
+Modalities absent for a patient are simply omitted.
+Patches are sub-sampled to at most $P_\text{max}=2048$ per modality.
+
+\subsubsection{Variant 2: Late Fusion (\texttt{late})}
+
+Each modality is processed independently through its ABMIL encoder to produce
+a logit $\hat{y}_m$.
+The final prediction is a softmax-weighted sum of present modality logits:
+\begin{equation}
+    \hat{y} = \sum_{m\in\mathcal{M}} w_m\,\hat{y}_m,\qquad
+    \mathbf{w} = \text{softmax}\!\left(\boldsymbol{\ell}[\mathcal{M}]\right),
+    \label{eq:late}
+\end{equation}
+where $\boldsymbol{\ell}\in\mathbb{R}^{|\mathcal{M}_0|}$ is a learned weight
+vector over the full modality set $\mathcal{M}_0$, indexed by the present set
+$\mathcal{M}$.
+
+\subsubsection{Variant 3: Middle Fusion (\texttt{middle} / \texttt{middle\_cls})}
+
+Each modality is reduced to a single summary vector by ABMIL
+(Eqs.~\eqref{eq:abmil}--\eqref{eq:rep}).
+The $|\mathcal{M}|$ modality summaries are passed through the cross-modal
+transformer (Eq.~\eqref{eq:xfmr}) and pooled:
+\begin{equation}
+    \hat{y} = f_\text{head}\!\left(
+        \text{pool}\!\left(\mathrm{XFmr}\!\left(
+            [\mathbf{r}_m]_{m\in\mathcal{M}}
+        \right)\right)\right).
+    \label{eq:middle}
+\end{equation}
+The transformer is only applied when $|\mathcal{M}|\geq 2$.
+
+\subsubsection{Variant 4: Cross-Attention Fusion (\texttt{crossattn} / \texttt{crossattn\_cls})}
+
+This variant first applies bidirectional patch-level cross-attention across
+modality pairs, then compresses each modality with Slot Attention.
+Cross-attention operates between modality patch sequences, not between
+individual patch instances across all modalities at once.
+For each pair $(m, m')$, MCAT-style~\cite{chen2021mcat} bidirectional
+cross-attention produces cross-enriched patch features $\tilde{\mathbf{H}}_m$.
+Each enriched sequence is then summarised into $K$ slot vectors by Slot
+Attention.
+The slot summaries from all modalities are concatenated and fused via the
+cross-modal transformer:
+\begin{align}
+    \tilde{\mathbf{H}}_m &= \text{BidirCA}(\mathbf{H}_m,\, \mathbf{H}_{m'})
+        \quad \forall m'\neq m, \\
+    \mathbf{S}_m &= \text{SlotAttn}(\tilde{\mathbf{H}}_m)
+        \in\mathbb{R}^{K\times H}, \\
+    \hat{y} &= f_\text{head}\!\left(
+        \text{pool}\!\left(
+            \mathrm{XFmr}\!\left(
+                [\mathbf{S}_m]_{m\in\mathcal{M}}
+            \right)
+        \right)\right).
+\end{align}
+Patch sequences for the bidirectional cross-attention are capped at 256 patches
+per modality to limit memory.
+
+\subsubsection{Variant 5: Cross-Modal Slot Fusion (\texttt{crossmodal} / \texttt{crossmodal\_cls})}
+
+Each modality's patch sequence is first summarised into $K$ slot vectors by
+Slot Attention.
+No patch-level cross-attention between modalities is performed.
+The slot summaries serve as compact modality representations.
+Cross-modal interaction then happens at the level of these slot summaries
+through the cross-modal transformer:
+\begin{equation}
+    \mathbf{S}_m = \text{SlotAttn}(\mathbf{H}_m), \quad
+    \hat{y} = f_\text{head}\!\left(
+        \text{pool}\!\left(
+            \mathrm{XFmr}\!\left(
+                [\mathbf{S}_m]_{m\in\mathcal{M}}
+            \right)
+        \right)\right).
+\end{equation}
+All modalities share a single Slot Attention module but retain separate
+backbone encoders.
+
+\subsubsection{Variant 6: Iterative Cross-Modal Fusion (\texttt{iterative} / \texttt{iterative\_cls})}
+
+Inspired by~\cite{jaegle2021perceiver,tsai2019multimodal}, we apply $R$
+iterative blocks.
+Each block consists of within-modal self-attention followed by cross-modal
+cross-attention at the patch level.
+Let $\mathbf{H}_m^{(r)}$ denote the patch features of modality $m$ after
+block $r$.
+
+\paragraph{Self-attention block.}
+\begin{equation}
+    \tilde{\mathbf{H}}_m^{(r)} = \mathrm{FFN}\!\left(
+        \mathrm{LN}\!\left(
+            \mathbf{H}_m^{(r)} + \mathrm{MHA}(
+                \mathbf{H}_m^{(r)},
+                \mathbf{H}_m^{(r)},
+                \mathbf{H}_m^{(r)})\right)\right).
+\end{equation}
+
+\paragraph{Cross-attention block.}
+\begin{equation}
+    \mathbf{H}_m^{(r+1)} = \mathrm{FFN}\!\left(
+        \mathrm{LN}\!\left(
+            \tilde{\mathbf{H}}_m^{(r)} + \mathrm{MHA}\!\left(
+                \tilde{\mathbf{H}}_m^{(r)},\,
+                \mathbf{C}_{-m}^{(r)},\,
+                \mathbf{C}_{-m}^{(r)}
+            \right)\right)\right),
+    \label{eq:iterative_ca}
+\end{equation}
+where $\mathbf{C}_{-m}^{(r)} = \bigl[\tilde{\mathbf{H}}_{m'}^{(r)}\bigr]_{m'\neq m}$
+is the concatenated patch context from all other modalities.
+
+\paragraph{After $R$ blocks,} each modality is compressed via Slot Attention
+and fused with the cross-modal transformer identically to Variant 5:
+\begin{equation}
+    \hat{y} = f_\text{head}\!\left(
+        \text{pool}\!\left(
+            \mathrm{XFmr}\!\left(
+                [\text{SlotAttn}(\mathbf{H}_m^{(R)})]_{m\in\mathcal{M}}
+            \right)
+        \right)\right).
+\end{equation}
+Default: $R=2$, $K\in\{8,16\}$.
+HE patches are capped at 1024 inside the iterative blocks to control memory.
+
+\subsection{Phase 2 Summary Table}
+
+\begin{table}[h]
+\centering
+\caption{Phase 2 fusion variant overview. ``CA'' = cross-attention,
+  ``SA'' = slot attention, ``XFmr'' = cross-modal transformer,
+  ``pool'' = ABMIL or CLS.}
+\label{tab:p2_variants}
+\begin{tabular}{llll}
+\toprule
+Variant & Fusion level & Key components & CLS variant \\
+\midrule
+\texttt{early}      & patch      & concat $\to$ pool
+    & \texttt{early\_cls} \\
+\texttt{late}       & logit      & per-mod ABMIL, learned weight
+    & {---} \\
+\texttt{middle}     & summary    & ABMIL $\to$ XFmr $\to$ pool
+    & \texttt{middle\_cls} \\
+\texttt{crossattn}  & patch+slot & bidir-CA $\to$ SA $\to$ XFmr $\to$ pool
+    & \texttt{crossattn\_cls} \\
+\texttt{crossmodal} & slot       & SA $\to$ XFmr $\to$ pool
+    & \texttt{crossmodal\_cls} \\
+\texttt{iterative}  & patch+slot & $R\times$(SA+CA) $\to$ SA $\to$ XFmr $\to$ pool
+    & \texttt{iterative\_cls} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Phase 2 Hyperparameters}
+
+\begin{table}[h]
+\centering
+\caption{Phase 2 hyperparameters.}
+\label{tab:p2_hparams}
+\begin{tabular}{llr}
+\toprule
+Parameter & Symbol & Value \\
+\midrule
+Learning rate       & $\eta_2$ & $5\times10^{-5}$ \\
+Weight decay        &          & $1\times10^{-3}$ \\
+Max epochs          &          & 200 \\
+Eval every          &          & 20 epochs \\
+Grad accumulation   &          & 4 \\
+Transformer layers  & $L$      & 2 \\
+Attention heads     & $n_h$    & 4 \\
+Attention dropout   &          & 0.1 \\
+Modal dropout       &          & 0.3 \\
+Max patches (total) & $P_\text{max}$ & 2048 \\
+Max HE (iterative)  &          & 1024 \\
+Slot iterations     & $T$      & 3 \\
+Slot count          & $K$      & 8, 16 \\
+Iterative blocks    & $R$      & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Training Protocol}
+% =============================================================================
+
+\paragraph{Optimiser.}
+Adam~\cite{kingma2014adam} with the learning rates and weight decay in
+Tables~\ref{tab:p1_hparams} and~\ref{tab:p2_hparams}.
+Mixed precision (FP16) training is used via PyTorch AMP with gradient scaling.
+Gradient accumulation runs over 4 steps.
+
+\paragraph{Cross-validation.}
+Nested cross-validation: 5 outer splits $\times$ 4 inner folds.
+Model selection is performed on the inner validation fold by balanced accuracy.
+
+\paragraph{Checkpoint selection.}
+The checkpoint with the highest validation balanced accuracy is selected as the
+best model for each fold.
+
+% =============================================================================
+\section{Cross-Attention Interpretability}
+% =============================================================================
+
+\subsection{ABMIL Attention Maps}
+
+The per-instance attention weights $\{a_i\}$ from Eq.~\eqref{eq:abmil}
+provide a scalar importance score for every patch in each modality.
+Patches with high attention are the ones the model relies on most for its
+prediction.
+For H\&E, these patches can be projected back onto the biopsy slide using the
+stored tile coordinates \texttt{tile\_left} and \texttt{tile\_top}, producing
+a spatial attention heatmap over the tissue section.
+For clinical features, each row of the bag (one feature token) has an
+attention weight.
+The token label is bin-specific (e.g.\ \texttt{FEV1\_q3} or
+\texttt{BMI\_nan}), so the attention map reveals not only which clinical
+variables were attended but also whether the attended values were high or low.
+
+\subsection{Clinical $\times$ Cluster Cross-Attention}
+
+After Phase 2 inference, we compute an interpretability map that quantifies
+how strongly each clinical feature attends to each cell-cluster type.
+
+Let $\mathbf{F}_\text{Clin}\in\mathbb{R}^{F\times H}$ be the backbone
+projections of the $F$ clinical-feature token rows, and let
+$\mathbf{C}_m\in\mathbb{R}^{K_m\times H}$ be the slot centroid tokens for
+modality $m$.
+All cluster tokens are concatenated:
+$\mathbf{C} = [\mathbf{C}_m]_{m\in\mathcal{M}}\in\mathbb{R}^{K_\text{tot}\times H}$.
+
+The clinical-cluster cross-attention matrix is:
+\begin{equation}
+    \mathbf{A}_\text{clin} = \text{softmax}\!\left(
+        \frac{\mathbf{F}_\text{Clin}\,\mathbf{C}^\top}{\sqrt{H}}
+    \right) \in [0,1]^{F\times K_\text{tot}},
+    \label{eq:clin_clust_attn}
+\end{equation}
+where the softmax is over $K_\text{tot}$.
+Each clinical feature produces a probability distribution over all cluster
+tokens.
+
+Entry $\mathbf{A}_\text{clin}[f,k]$ quantifies how much clinical feature $f$
+attends to cluster $k$.
+Each clinical feature token is labelled with its bin-specific identifier
+(e.g.\ \texttt{FEV1\_q3}, \texttt{BMI\_nan}), so the attention map
+distinguishes which quantile bin of each feature is co-active with which
+cell population.
+Cohort-level summaries are obtained by averaging $\mathbf{A}_\text{clin}$
+over patients separately for rejection-positive and rejection-negative cases
+and computing their difference.
+
+% =============================================================================
+\section{Cluster-Level Interpretability}
+% =============================================================================
+
+Each instance in a bag (patch, cell, or CT slice) carries a cluster-type
+annotation string (e.g.\ \texttt{HE\_cells/Lymphocytes}) loaded from the
+pre-computed \texttt{.pt} file.
+These annotations enable five complementary cluster-level analyses that reveal
+which cell populations and clinical states the model attends to.
+
+\subsection{ABMIL Attention by Cluster Type}
+
+For each modality $m$, the ABMIL softmax attention weights
+$\boldsymbol{\alpha}_m \in \mathbb{R}^{N_m}$ assign a scalar importance to
+every instance.
+Given cluster-type labels $c_i \in \mathcal{C}_m$ for instance $i$, the mean
+attention for cluster type $c$ is:
+\begin{equation}
+    \bar{\alpha}_{m,c}
+    = \frac{1}{|\mathcal{I}_c|}\sum_{i \in \mathcal{I}_c} \alpha_i,
+    \qquad \mathcal{I}_c = \{i : c_i = c\},
+    \label{eq:abmil_cluster}
+\end{equation}
+where $\mathcal{I}_c$ is the index set of all instances of type $c$ in the
+bag.
+
+A bar chart of $\bar{\alpha}_{m,c}$ averaged over the cohort, shown separately
+for ACR-positive and ACR-negative patients, reveals which cell types are most
+attended by the ABMIL head in each clinical group.
+Differences between the two groups indicate cell types that are discriminative
+for rejection.
+
+\subsection{Modality Importance from Classifier Weights}
+
+For the late-fusion variant, each modality produces an independent logit and
+the final decision is a learned weighted sum:
+\begin{equation}
+    \hat{y} = \sum_{m} w_m \hat{y}_m,
+    \qquad \{w_m\} = \text{softmax}(\boldsymbol{\ell}_\text{modal}),
+\end{equation}
+where $\boldsymbol{\ell}_\text{modal}$ is a learnable parameter vector.
+The weight $w_m$ is the classifier's estimate of how much modality $m$
+contributes to the final decision.
+Comparing the mean weights $\bar{w}_m^{+}$ (ACR) and $\bar{w}_m^{-}$ (non-ACR)
+reveals whether one modality dominates in each class.
+
+\subsection{Self-Attention Cluster Co-Attention}
+
+Within the iterative cross-modal model, each block applies a within-modality
+self-attention layer with weight matrix
+$\mathbf{W}^{(r)} \in [0,1]^{N\times N}$ (patches as queries and keys).
+For the final block $R$, the cluster co-attention matrix
+$\mathbf{S}_m \in \mathbb{R}^{C\times C}$ measures how strongly patches of
+type $c_1$ attend to patches of type $c_2$:
+\begin{equation}
+    \mathbf{S}_m[c_1, c_2]
+    = \frac{1}{|\mathcal{I}_{c_1}||\mathcal{I}_{c_2}|}
+      \sum_{i\in\mathcal{I}_{c_1}}\sum_{j\in\mathcal{I}_{c_2}}
+      \mathbf{W}^{(R)}[i,j],
+    \label{eq:coattn}
+\end{equation}
+where the patch sequence is capped at $N_\text{cap}=256$ before aggregation.
+This reveals intra-modality cell-cell attention patterns that differ between
+ACR and non-ACR patients.
+
+\subsection{Slot Attention Cluster Contribution}
+
+The slot attention module assigns each instance to $K$ slots via a competition
+softmax.
+Let $\mathbf{A}_m \in \mathbb{R}^{K\times N_m}$ be the final-round slot
+assignment matrix (post-softmax) for modality $m$.
+The $K\times C$ slot cluster contribution matrix is:
+\begin{equation}
+    \mathbf{B}_m[k,c]
+    = \frac{1}{|\mathcal{I}_c|}\sum_{i\in\mathcal{I}_c} A_m[k,i],
+    \label{eq:slot_cluster}
+\end{equation}
+giving the mean assignment weight that slot $k$ places on instances of type
+$c$.
+
+We compute both the post-softmax version (Eq.~\eqref{eq:slot_cluster}) and the
+pre-softmax (raw logit) version, where
+$A^\text{pre}_m[k,i] = \mathbf{q}_k^\top \mathbf{k}_i \cdot \text{scale}$
+before the slot competition normalisation.
+Side-by-side heatmaps reveal whether slot specialisation is already present in
+the raw scores or emerges only after competition.
+
+\subsection{Cross-Modal Slot Connection}
+
+For slot-based fusion variants, the cross-modal transformer operates on the
+concatenated slot sequence
+$\mathbf{Z} = [\mathbf{Z}_{m_1}; \ldots; \mathbf{Z}_{m_M}]$, yielding a full
+attention matrix $\mathbf{X} \in \mathbb{R}^{K_\text{tot}\times K_\text{tot}}$.
+We extract the inter-modality block
+$\mathbf{X}_{ab} \in \mathbb{R}^{K_a\times K_b}$ for modality pair
+$(m_a, m_b)$.
+
+\paragraph{Three-panel connection figure.}
+For a given modality pair, we display:
+\begin{enumerate}
+    \item \textbf{Left}: $\mathbf{B}_{m_a} \in \mathbb{R}^{K_a\times C_a}$,
+          showing which cell types load onto each $m_a$ slot.
+    \item \textbf{Centre}: $\mathbf{X}_{ab} \in \mathbb{R}^{K_a\times K_b}$,
+          showing cross-modal attention between $m_a$ and $m_b$ slot
+          summaries.
+    \item \textbf{Right}: $\mathbf{B}_{m_b}^\top \in \mathbb{R}^{C_b\times K_b}$,
+          showing which $m_b$ cell types each $m_b$ slot represents.
+\end{enumerate}
+Reading left to right traces the information path:
+$m_a$ cell type $\to$ $m_a$ slot $\to$ cross-modal $\to$ $m_b$ slot $\to$
+$m_b$ cell type.
+
+\paragraph{Cluster-to-cluster cross-modal attention.}
+To summarise the multi-hop path into a single $C_a\times C_b$ matrix, we
+compute:
+\begin{equation}
+    \mathbf{P}_{ab}
+    = \mathbf{B}_{m_a}^\top \,\mathbf{X}_{ab}\, \mathbf{B}_{m_b}
+    \;\in\; \mathbb{R}^{C_a\times C_b},
+    \label{eq:cluster_xmodal}
+\end{equation}
+where entry $\mathbf{P}_{ab}[c_1,c_2]$ quantifies the effective attention from
+cell type $c_1$ in $m_a$ to cell type $c_2$ in $m_b$.
+Heatmaps of $\mathbf{P}_{ab}$ for ACR vs.\ non-ACR, and their difference,
+reveal which inter-modality cell-type interactions are specific to rejection.
+
+\paragraph{ACR vs.\ Non-ACR comparison.}
+All cluster-level interpretability plots are shown in three panels: mean over
+ACR-positive patients, mean over ACR-negative patients, and the signed
+difference $\Delta = \mu_\text{ACR} - \mu_\text{non-ACR}$.
+Positive entries in $\Delta$ indicate mechanisms that are more active in
+rejection.
+Negative entries indicate mechanisms that are more active in non-rejection.
+
+% =============================================================================
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+% =============================================================================
+
+\end{document}

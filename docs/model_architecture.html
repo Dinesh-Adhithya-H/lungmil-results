@@ -1,0 +1,1542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MM-ABMIL v6 — Model Architecture</title>
+<style>
+  :root {
+    --bg:        #f4f6fa;
+    --surface:   #ffffff;
+    --surface2:  #f0f2f8;
+    --border:    #d1d9e6;
+    --border2:   #c3ccdf;
+    --text:      #1a2035;
+    --text2:     #3d4f6e;
+    --text3:     #7a8aab;
+
+    --p1:        #0369a1;
+    --p1-bg:     #e0f2fe;
+    --p1-border: #7dd3fc;
+    --p2:        #6d28d9;
+    --p2-bg:     #ede9fe;
+    --p2-border: #c4b5fd;
+
+    --he:        #15803d;
+    --he-bg:     #dcfce7;
+    --he-border: #86efac;
+    --bal:       #c2410c;
+    --bal-bg:    #ffedd5;
+    --bal-border:#fdba74;
+    --ct:        #1d4ed8;
+    --ct-bg:     #dbeafe;
+    --ct-border: #93c5fd;
+    --clin:      #9d174d;
+    --clin-bg:   #fce7f3;
+    --clin-border:#f9a8d4;
+
+    --enc-bg:    #e0f2fe;
+    --enc-border:#7dd3fc;
+    --enc-text:  #0c4a6e;
+    --attn-bg:   #ede9fe;
+    --attn-border:#c4b5fd;
+    --attn-text: #4c1d95;
+    --slot-bg:   #dcfce7;
+    --slot-border:#86efac;
+    --slot-text: #14532d;
+    --xfmr-bg:   #fef9c3;
+    --xfmr-border:#fde047;
+    --xfmr-text: #713f12;
+    --head-bg:   #fee2e2;
+    --head-border:#fca5a5;
+    --head-text: #7f1d1d;
+    --pool-bg:   #ffedd5;
+    --pool-border:#fdba74;
+    --pool-text: #7c2d12;
+    --cross-bg:  #fce7f3;
+    --cross-border:#f9a8d4;
+    --cross-text:#831843;
+    --kd-bg:     #fefce8;
+    --kd-border: #fde68a;
+    --kd-text:   #78350f;
+    --input-bg:  #f8fafc;
+    --input-border:#94a3b8;
+    --input-text:#1e293b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .page { max-width: 1400px; margin: 0 auto; padding: 36px 28px 100px; }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(130deg, #1e3a5f 0%, #2d1b69 100%);
+    border-radius: 20px;
+    padding: 44px 52px;
+    margin-bottom: 44px;
+    color: #fff;
+  }
+  .hero h1 { font-size: 2.2rem; font-weight: 800; letter-spacing: -.02em; }
+  .hero p  { color: rgba(255,255,255,.75); margin-top: 8px; font-size: 1rem; }
+  .badge-row { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  .badge {
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 20px; padding: 4px 14px;
+    font-size: 12.5px; color: rgba(255,255,255,.9);
+  }
+
+  /* ── TOC ── */
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 32px;
+    margin-bottom: 44px;
+    display: flex; gap: 40px; flex-wrap: wrap;
+  }
+  .toc-col { flex: 1; min-width: 200px; }
+  .toc-title { font-weight: 700; font-size: 13px; text-transform: uppercase;
+               letter-spacing: .06em; color: var(--text3); margin-bottom: 12px; }
+  .toc a { color: var(--p1); text-decoration: none; display: block;
+           padding: 3px 0; font-size: 14px; }
+  .toc a:hover { color: var(--text); }
+
+  /* ── Section ── */
+  .section { margin-bottom: 56px; }
+  .section-title {
+    font-size: 1.3rem; font-weight: 800; color: var(--text);
+    margin-bottom: 24px;
+    padding-bottom: 12px; border-bottom: 2px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .section-num {
+    background: var(--text); color: #fff;
+    width: 32px; height: 32px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 800; flex: 0 0 32px;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+  }
+  .card-title {
+    font-size: 1.05rem; font-weight: 700; color: var(--text);
+    margin-bottom: 16px; display: flex; align-items: center; gap: 10px;
+  }
+
+  /* ── Tags ── */
+  .tag {
+    font-size: 11px; padding: 3px 10px; border-radius: 5px;
+    font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    display: inline-block;
+  }
+  .tag-p1      { background: var(--p1-bg);    color: var(--p1);   border: 1px solid var(--p1-border); }
+  .tag-p2      { background: var(--p2-bg);    color: var(--p2);   border: 1px solid var(--p2-border); }
+  .tag-shared  { background: var(--slot-bg);  color: var(--he);   border: 1px solid var(--slot-border); }
+  .tag-teacher { background: var(--kd-bg);    color: var(--kd-text); border: 1px solid var(--kd-border); }
+  .tag-student { background: var(--pool-bg);  color: var(--pool-text); border: 1px solid var(--pool-border); }
+
+  /* ── Arch Boxes ── */
+  .abox {
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: 1.5px solid;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .abox small { font-size: 11px; display: block; opacity: .75; margin-top: 2px; font-weight: 400; }
+  .abox-input { background:var(--input-bg); border-color:var(--input-border); color:var(--input-text); }
+  .abox-enc   { background:var(--enc-bg);   border-color:var(--enc-border);   color:var(--enc-text); }
+  .abox-attn  { background:var(--attn-bg);  border-color:var(--attn-border);  color:var(--attn-text); }
+  .abox-slot  { background:var(--slot-bg);  border-color:var(--slot-border);  color:var(--slot-text); }
+  .abox-xfmr  { background:var(--xfmr-bg);  border-color:var(--xfmr-border);  color:var(--xfmr-text); }
+  .abox-head  { background:var(--head-bg);  border-color:var(--head-border);  color:var(--head-text); }
+  .abox-pool  { background:var(--pool-bg);  border-color:var(--pool-border);  color:var(--pool-text); }
+  .abox-cross { background:var(--cross-bg); border-color:var(--cross-border); color:var(--cross-text); }
+  .abox-kd    { background:var(--kd-bg);    border-color:var(--kd-border);    color:var(--kd-text); }
+  .abox-p2    { background:var(--p2-bg);    border-color:var(--p2-border);    color:var(--p2); }
+
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 18px 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .flow-step {
+    flex: 1;
+    min-width: 110px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+  .flow-box {
+    width: 100%;
+    border-radius: 10px;
+    border: 2px solid;
+    padding: 14px 12px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .flow-box small { font-size: 11px; font-weight: 400; color: inherit; opacity: .75; margin-top: 3px; }
+  .flow-box .shape { font-size: 10.5px; font-family: 'Courier New', monospace;
+                     margin-top: 4px; opacity: .65; }
+  .flow-arrow {
+    flex: 0 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: var(--text3);
+    padding-top: 0;
+  }
+  .flow-label {
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-top: 5px;
+    text-align: center;
+    font-family: 'Courier New', monospace;
+  }
+
+  /* vertical flow */
+  .vflow { display: flex; flex-direction: column; gap: 0; }
+  .vflow-row { display: flex; align-items: center; gap: 10px; margin-bottom: 0; }
+  .vflow-arrow { text-align: center; color: var(--text3); font-size: 18px;
+                 padding: 2px 0 2px 56px; line-height: 1; }
+  .vflow-label { flex: 0 0 120px; font-size: 12px; color: var(--text3);
+                 text-align: right; padding-right: 8px; font-weight: 600; }
+  .vflow-box { flex: 1; }
+
+  /* ── Grid ── */
+  .col2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .col3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+  @media (max-width: 1000px) { .col2 { grid-template-columns: 1fr; } }
+  @media (max-width: 1200px) { .col3 { grid-template-columns: 1fr 1fr; } }
+
+  /* ── Modality pills ── */
+  .mod-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    border-radius: 8px; padding: 7px 16px;
+    font-size: 13px; font-weight: 700;
+    border: 1.5px solid;
+  }
+  .mod-he   { color:var(--he);   border-color:var(--he-border);   background:var(--he-bg); }
+  .mod-bal  { color:var(--bal);  border-color:var(--bal-border);  background:var(--bal-bg); }
+  .mod-ct   { color:var(--ct);   border-color:var(--ct-border);   background:var(--ct-bg); }
+  .mod-clin { color:var(--clin); border-color:var(--clin-border); background:var(--clin-bg); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+  .dot-he   { background:var(--he); }
+  .dot-bal  { background:var(--bal); }
+  .dot-ct   { background:var(--ct); }
+  .dot-clin { background:var(--clin); }
+
+  /* ── Table ── */
+  .arch-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .arch-table th {
+    text-align: left; padding: 12px 16px;
+    background: var(--surface2); color: var(--text3);
+    font-weight: 700; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .05em; border-bottom: 2px solid var(--border);
+  }
+  .arch-table td {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    vertical-align: top; color: var(--text2);
+  }
+  .arch-table tr:last-child td { border-bottom: none; }
+  .arch-table tr:hover td { background: var(--surface2); }
+  code {
+    font-family: 'Courier New', monospace;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 6px; font-size: 12.5px; color: var(--p1);
+  }
+
+  /* ── Param grid ── */
+  .param-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
+  .param-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  .param-key  { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+  .param-val  { font-size: 1.35rem; font-weight: 800; color: var(--text); margin-top: 3px; }
+
+  /* ── Info blocks ── */
+  .info-block {
+    background: #eff6ff; border: 1.5px solid #bfdbfe;
+    border-radius: 10px; padding: 14px 18px; margin-top: 14px;
+    font-size: 13px; color: #1e40af; line-height: 1.7;
+  }
+  .warn-block {
+    background: #fffbeb; border: 1.5px solid #fde68a;
+    border-radius: 10px; padding: 14px 18px; margin-top: 14px;
+    font-size: 13px; color: #92400e; line-height: 1.7;
+  }
+
+  /* ── Variant cards ── */
+  .variant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 24px; }
+  .variant-card {
+    background: var(--surface); border: 2px solid var(--border);
+    border-radius: 14px; padding: 26px 28px;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .variant-card:hover { border-color: var(--p2-border); box-shadow: 0 4px 20px rgba(109,40,217,.08); }
+  .variant-name  { font-size: 1.1rem; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+  .variant-class { font-size: 12px; color: var(--text3); font-family: 'Courier New', monospace; margin-bottom: 14px; }
+  .variant-desc  { color: var(--text2); font-size: 13.5px; line-height: 1.75; margin-bottom: 16px; }
+
+  /* ── Pipeline (horizontal step row) ── */
+  .pipeline { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .pipe-step {
+    background: var(--surface2); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 7px 13px; font-size: 12px;
+    font-weight: 600; text-align: center; white-space: nowrap;
+    color: var(--text2);
+  }
+  .pipe-step.ps-enc   { background:var(--enc-bg);  border-color:var(--enc-border);  color:var(--enc-text); }
+  .pipe-step.ps-attn  { background:var(--attn-bg); border-color:var(--attn-border); color:var(--attn-text); }
+  .pipe-step.ps-slot  { background:var(--slot-bg); border-color:var(--slot-border); color:var(--slot-text); }
+  .pipe-step.ps-xfmr  { background:var(--xfmr-bg); border-color:var(--xfmr-border); color:var(--xfmr-text); }
+  .pipe-step.ps-pool  { background:var(--pool-bg); border-color:var(--pool-border); color:var(--pool-text); }
+  .pipe-step.ps-head  { background:var(--head-bg); border-color:var(--head-border); color:var(--head-text); }
+  .pipe-step.ps-cross { background:var(--cross-bg);border-color:var(--cross-border);color:var(--cross-text); }
+  .pipe-arrow { color: var(--text3); font-size: 16px; padding: 0 2px; flex: 0 0 auto; }
+
+  /* ── Loss items ── */
+  .loss-item { display:flex; gap:16px; padding:16px 0; border-bottom:1px solid var(--border); }
+  .loss-item:last-child { border-bottom:none; }
+  .loss-sym {
+    font-family:'Courier New',monospace; font-size:13px;
+    background:var(--kd-bg); border:1.5px solid var(--kd-border);
+    border-radius:8px; padding:4px 10px;
+    white-space:nowrap; flex:0 0 auto; min-width:100px;
+    text-align:center; color:var(--kd-text); font-weight:700; align-self:flex-start;
+  }
+  .loss-desc    { color:var(--text); font-size:14px; font-weight:600; }
+  .loss-formula { color:var(--text3); font-size:12px; font-family:'Courier New',monospace;
+                  margin-top:5px; line-height:1.6; white-space:pre-wrap; }
+
+  /* ── Big diagram wrapper ── */
+  .big-diagram {
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin: 20px 0;
+  }
+  .diagram-title {
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text3); margin-bottom: 18px;
+  }
+
+  /* ── Phase banner ── */
+  .phase-banner {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 20px; border-radius: 10px; margin-bottom: 20px;
+    font-size: 14px; font-weight: 600;
+  }
+  .phase-p1 { background: var(--p1-bg); border: 1.5px solid var(--p1-border); color: var(--p1); }
+  .phase-p2 { background: var(--p2-bg); border: 1.5px solid var(--p2-border); color: var(--p2); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ══ Hero ══ -->
+<div class="hero">
+  <h1>MM-ABMIL v6 — Model Architecture</h1>
+  <p>Multimodal Attention-Based Multiple Instance Learning · Binary ACR Rejection Classification (HE + BAL + CT + Clinical)</p>
+  <div class="badge-row">
+    <span class="badge">Phase 1 · Per-Modality ABMIL</span>
+    <span class="badge">Phase 2 · 6 Fusion Variants</span>
+    <span class="badge">HIDDEN_DIM = 256</span>
+    <span class="badge">Nested 4-Fold CV</span>
+    <span class="badge">train_mm_abmil_v6.py</span>
+  </div>
+</div>
+
+<!-- ══ TOC ══ -->
+<div class="toc">
+  <div class="toc-col">
+    <div class="toc-title">Contents</div>
+    <a href="#overview">1 · System Overview</a>
+    <a href="#modalities">2 · Modalities &amp; Inputs</a>
+    <a href="#shared">3 · Shared Building Blocks</a>
+  </div>
+  <div class="toc-col">
+    <a href="#phase1">4 · Phase 1 — SingleModalMIL</a>
+    <a href="#phase2">5 · Phase 2 — Fusion Variants</a>
+    <a href="#losses">6 · Loss Functions</a>
+    <a href="#hparams">7 · Hyperparameters</a>
+    <a href="#curriculum">8 · Training Curriculum</a>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 1. Overview                             -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="overview">
+  <div class="section-title"><span class="section-num">1</span>System Overview</div>
+
+  <div class="card">
+    <p style="color:var(--text2);font-size:15px;line-height:1.75;margin-bottom:22px;">
+      Two-phase pipeline for multimodal lung transplant rejection classification.
+      <strong>Phase 1</strong> trains one ABMIL model per modality with optional bidirectional cross-attention
+      knowledge distillation (HE &amp; Clinical → teacher; CT &amp; BAL → student).
+      <strong>Phase 2</strong> fine-tunes all encoders jointly under six different multimodal fusion strategies.
+    </p>
+
+    <!-- Big overview flow -->
+    <div class="big-diagram">
+      <div class="diagram-title">End-to-end training flow</div>
+
+      <div style="display:grid;grid-template-columns:1fr 60px 1fr;gap:0;align-items:center;">
+
+        <!-- Phase 1 -->
+        <div>
+          <div class="phase-banner phase-p1">Phase 1 — Independent per-modality training (400 epochs each)</div>
+          <div class="flow" style="gap:6px;">
+            <div class="flow-step">
+              <div class="flow-box" style="background:var(--he-bg);border-color:var(--he-border);color:var(--he);">
+                HE patches<br><small>N×1024</small>
+                <span class="shape">(N, 1024)</span>
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-enc">
+                Backbone<br><small>Linear→ReLU→Drop</small>
+                <span class="shape">(N, 256)</span>
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-attn">
+                ABMIL Gate<br><small>tanh × sigmoid</small>
+                <span class="shape">α (N,)</span>
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-pool">
+                rep = Σαh<br><small>summary</small>
+                <span class="shape">(256,)</span>
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-head">
+                Head<br><small>→ logit</small>
+                <span class="shape">scalar</span>
+              </div>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--text3);margin:6px 0 14px 4px;">↑ same structure for BAL (10-d), CT (1024-d), Clinical (408-d)</div>
+
+          <!-- KD extension -->
+          <div style="border-left:3px solid var(--kd-border);padding:12px 16px;background:var(--kd-bg);border-radius:0 10px 10px 0;margin-top:4px;">
+            <div style="font-size:12px;font-weight:700;color:var(--kd-text);margin-bottom:10px;">KD Extension — Students (CT, BAL) only</div>
+            <div class="flow" style="gap:4px;">
+              <div class="flow-step" style="min-width:90px;">
+                <div class="flow-box abox-enc" style="font-size:12px;">h_stud<br>(N_s, 256)</div>
+              </div>
+              <div class="flow-arrow" style="font-size:14px;">↕</div>
+              <div class="flow-step" style="min-width:90px;">
+                <div class="flow-box abox-kd" style="font-size:12px;">h_teach<br>(N_t, 256)<br>detached</div>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step" style="min-width:100px;">
+                <div class="flow-box abox-cross" style="font-size:12px;">BidirXAttn<br>h_stud_enr</div>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step" style="min-width:130px;">
+                <div class="flow-box abox-kd" style="font-size:11px;">L_cross + L_kd + L_crd</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arrow between phases -->
+        <div style="text-align:center;font-size:36px;color:var(--text3);">⇒</div>
+
+        <!-- Phase 2 -->
+        <div>
+          <div class="phase-banner phase-p2">Phase 2 — Multimodal fusion fine-tuning (200 epochs, 6 variants)</div>
+          <div class="flow" style="gap:6px;">
+            <div class="flow-step">
+              <div class="flow-box" style="background:var(--surface2);border-color:var(--border);font-size:12px;">
+                All modality<br>patches
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-enc">
+                P1 encoders<br><small>fine-tuned</small>
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-p2" style="font-size:12px;">
+                Fusion strategy<br><small>early/late/middle/<br>crossattn/crossmodal/<br>iterative</small>
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <div class="flow-box abox-head">
+                Head<br><small>→ logit</small>
+              </div>
+            </div>
+          </div>
+          <div class="info-block" style="margin-top:16px;">
+            <strong>Modal dropout 30%</strong> during training simulates missing modalities.<br>
+            Missing modality → absent everywhere; cross-attention skipped if &lt;2 mods present.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:4px;">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Task</div>
+        <div style="color:var(--text);font-size:14px;line-height:1.6;">Binary ACR rejection<br>A0* → 0 &nbsp;|&nbsp; A1*/A2* → 1</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Splits</div>
+        <div style="color:var(--text);font-size:14px;line-height:1.6;">Nested 4-fold CV<br>Outer split index selectable</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Loss</div>
+        <div style="color:var(--text);font-size:14px;line-height:1.6;">Hinge + class weights<br>Optional contrastive L_clr</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 2. Modalities                           -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="modalities">
+  <div class="section-title"><span class="section-num">2</span>Modalities &amp; Input Dimensions</div>
+
+  <div class="card">
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:22px;">
+      <span class="mod-pill mod-he"><span class="dot dot-he"></span>HE — Histology</span>
+      <span class="mod-pill mod-bal"><span class="dot dot-bal"></span>BAL — Lavage</span>
+      <span class="mod-pill mod-ct"><span class="dot dot-ct"></span>CT — Scan</span>
+      <span class="mod-pill mod-clin"><span class="dot dot-clin"></span>Clinical</span>
+    </div>
+    <table class="arch-table">
+      <thead>
+        <tr>
+          <th>Modality</th><th>Data Key (.pt)</th><th>feat_dim</th>
+          <th>Presence Col</th><th>Role</th><th>Bag structure</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="mod-pill mod-he" style="padding:4px 12px;font-size:12px;"><span class="dot dot-he"></span>HE</span></td>
+          <td><code>HE_cells</code></td>
+          <td style="font-weight:800;font-size:16px;">1024</td>
+          <td><code>has_HE</code></td>
+          <td><span class="tag tag-teacher">Teacher</span></td>
+          <td>N patches × 1024 features. Optional 2D sinusoidal PE from tile coordinates. Capped at 1024 in P2 iterative, 256 in bidir KV cap.</td>
+        </tr>
+        <tr>
+          <td><span class="mod-pill mod-bal" style="padding:4px 12px;font-size:12px;"><span class="dot dot-bal"></span>BAL</span></td>
+          <td><code>BAL_cells</code></td>
+          <td style="font-weight:800;font-size:16px;">10</td>
+          <td><code>has_BAL</code></td>
+          <td><span class="tag tag-student">Student</span></td>
+          <td>N_BAL patches × 10 features (cell-level counts). Very low-dimensional — backbone Linear(10→256) learns a rich projection.</td>
+        </tr>
+        <tr>
+          <td><span class="mod-pill mod-ct" style="padding:4px 12px;font-size:12px;"><span class="dot dot-ct"></span>CT</span></td>
+          <td><code>CT_cells</code></td>
+          <td style="font-weight:800;font-size:16px;">1024</td>
+          <td><code>has_CT</code></td>
+          <td><span class="tag tag-student">Student</span></td>
+          <td>N patches × 1024 features. Same backbone as HE. No 2D PE (no spatial coord available).</td>
+        </tr>
+        <tr>
+          <td><span class="mod-pill mod-clin" style="padding:4px 12px;font-size:12px;"><span class="dot dot-clin"></span>Clinical</span></td>
+          <td><code>clinical_onehot</code></td>
+          <td style="font-weight:800;font-size:16px;">408</td>
+          <td><code>has_Clinical</code></td>
+          <td><span class="tag tag-teacher">Teacher</span></td>
+          <td>Block-diagonal one-hot: 102 clinical features × 4 bins = shape (102, 408). Each row = one clinical feature treated as an MIL instance. Falls back to raw (1, 107) for old format.</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="warn-block">
+      <strong>mil_v3 format:</strong> <code>inputs["Clinical"]</code> is stored as raw 1D (102,) features — incompatible with the 408-dim block-diagonal one-hot expected by trained models.
+      Clinical inference is gracefully skipped for mil_v3 patients.
+      Token IDs in mil_v3 are global (k×5 + local_bin) and require <code>id % 5</code> conversion.
+      HE / CT / BAL unaffected.
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 3. Shared Building Blocks              -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="shared">
+  <div class="section-title"><span class="section-num">3</span>Shared Building Blocks</div>
+
+  <!-- GatedAttentionEncoder -->
+  <div class="card">
+    <div class="card-title"><span class="tag tag-shared">Shared</span>&nbsp; GatedAttentionEncoder — Core ABMIL Encoder</div>
+    <p style="color:var(--text2);font-size:14px;margin-bottom:18px;">
+      Used by every modality in both phases. Takes a bag of patches, projects them to a shared latent space,
+      applies a gated attention mechanism, and returns a single weighted summary vector alongside per-patch weights and features.
+    </p>
+    <div class="big-diagram">
+      <div class="diagram-title">Forward pass: x (N, feat_dim) → rep (256,), α (N,), h (N, 256)</div>
+      <div class="flow" style="gap:8px;">
+        <div class="flow-step">
+          <div class="flow-box" style="background:#f8fafc;border-color:#94a3b8;color:#1e293b;min-height:90px;">
+            Input patches<br><code>x</code>
+            <span class="shape">(N, feat_dim)</span>
+          </div>
+          <div class="flow-label">feat_dim:<br>HE/CT=1024<br>BAL=10<br>Clin=408</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-box abox-enc" style="min-height:90px;">
+            Linear<br>(feat_dim→256)<br>→ ReLU<br>→ Dropout(0.4)
+            <span class="shape">h (N, 256)</span>
+          </div>
+          <div class="flow-label">Backbone</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-box abox-enc" style="min-height:90px;">
+            + SinPE<br>(tile_coords)<br><small>HE only</small>
+            <span class="shape">h (N, 256)</span>
+          </div>
+          <div class="flow-label">2D-PE<br>(optional)</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step" style="min-width:160px;">
+          <div class="flow-box abox-attn" style="min-height:90px;">
+            att_V(h)·Tanh<br>⊙<br>att_U(h)·Sigmoid<br>→ att_w → (N,1)
+            <span class="shape">gate (N, 256)</span>
+          </div>
+          <div class="flow-label">Gated Attention<br>Dropout→Linear</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-box abox-pool" style="min-height:90px;">
+            softmax(dim=0)<br>→ α (N,1)<br><br>rep = Σ αᵢ·hᵢ
+            <span class="shape">rep (256,)</span>
+          </div>
+          <div class="flow-label">Weighted<br>Sum Pool</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BidirPatchCrossAttn -->
+  <div class="card">
+    <div class="card-title"><span class="tag tag-shared">Shared</span>&nbsp; BidirPatchCrossAttn — Bidirectional Patch Cross-Attention</div>
+    <p style="color:var(--text2);font-size:14px;margin-bottom:18px;">
+      Implements explicit Q/K/V cross-attention in both directions between two sets of patches.
+      Used in Phase 1 student KD (h_stud ↔ h_teach) and in Phase 2 CrossAttn fusion across all modality pairs.
+      Uses manual attention (not PyTorch flash-attn) to ensure correct gradients when K/V are detached.
+      <strong>4 heads, d_k = 64, separate projection weights per direction.</strong>
+    </p>
+    <div class="big-diagram">
+      <div class="diagram-title">Forward: h_a (N_a, 256) × h_b (N_b, 256) → h_a_enr, h_b_enr, alpha_a2b</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--enc-text);margin-bottom:10px;text-transform:uppercase;">Direction: A → B (student queries teacher)</div>
+          <div class="vflow">
+            <div class="vflow-row">
+              <div class="vflow-label">Q from A</div>
+              <div class="vflow-box"><div class="abox abox-enc">Wq_a(h_a) → Q_a&nbsp; (N_a, 256)</div></div>
+            </div>
+            <div class="vflow-arrow">↓</div>
+            <div class="vflow-row">
+              <div class="vflow-label">K, V from B</div>
+              <div class="vflow-box"><div class="abox abox-kd">Wk_b(h_b) → K_b&nbsp;&nbsp; Wv_b(h_b) → V_b</div></div>
+            </div>
+            <div class="vflow-arrow">↓</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Scaled dot-prod</div>
+              <div class="vflow-box"><div class="abox abox-attn">scores = Q_a @ K_b.T / √64&nbsp;&nbsp; (N_a, N_b)</div></div>
+            </div>
+            <div class="vflow-arrow">↓ softmax(dim=-1)</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Output</div>
+              <div class="vflow-box"><div class="abox abox-enc">out = attn @ V_b → Wo_a<br>+ residual + FFN + LN</div></div>
+            </div>
+            <div class="vflow-arrow">↓</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Result</div>
+              <div class="vflow-box"><div class="abox abox-pool" style="font-weight:700;">h_a_enr&nbsp; (N_a, 256)</div></div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--cross-text);margin-bottom:10px;text-transform:uppercase;">Direction: B → A (teacher queries student) — KD signal</div>
+          <div class="vflow">
+            <div class="vflow-row">
+              <div class="vflow-label">Q from B</div>
+              <div class="vflow-box"><div class="abox abox-cross">Wq_b(h_b) → Q_b&nbsp; (N_b, 256)</div></div>
+            </div>
+            <div class="vflow-arrow">↓</div>
+            <div class="vflow-row">
+              <div class="vflow-label">K, V from A</div>
+              <div class="vflow-box"><div class="abox abox-kd">Wk_a(h_a) → K_a&nbsp;&nbsp; Wv_a(h_a) → V_a</div></div>
+            </div>
+            <div class="vflow-arrow">↓</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Scaled dot-prod</div>
+              <div class="vflow-box"><div class="abox abox-cross">attn_b2a = softmax(Q_b @ K_a.T / √64)<br>(N_b, N_a) — how much teacher attends each student patch</div></div>
+            </div>
+            <div class="vflow-arrow">↓ output + FFN + LN</div>
+            <div class="vflow-row">
+              <div class="vflow-label">KD target</div>
+              <div class="vflow-box"><div class="abox abox-kd" style="font-weight:700;">alpha_a2b = mean_j(attn_b2a[j, i])<br>→ (N_a,)  collective teacher attention per student patch</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col2">
+
+    <!-- IterativeSlotAttn -->
+    <div class="card">
+      <div class="card-title"><span class="tag tag-shared">Shared</span>&nbsp; IterativeSlotAttn</div>
+      <p style="color:var(--text2);font-size:13.5px;margin-bottom:16px;">
+        Compresses N patches into K=8 disentangled slot vectors via slot competition (Locatello et al., NeurIPS 2020).
+        Slots compete for patches via <code>softmax(dim=0)</code> — each patch is "assigned" to one slot.
+        A GRU update iterates T=3 rounds. Learned init (μ, log_σ) shared across all modalities.
+      </p>
+      <div class="big-diagram" style="padding:20px 24px;">
+        <div class="diagram-title">h (N, 256) → slots (K=8, 256)</div>
+        <div class="vflow">
+          <div class="vflow-row">
+            <div class="vflow-label">Init</div>
+            <div class="vflow-box"><div class="abox abox-slot">S₀ ~ 𝒩(μ, softplus(log_σ))&nbsp;&nbsp;shape (K, 256)<br>μ, log_σ are learnable nn.Parameters</div></div>
+          </div>
+          <div class="vflow-arrow">↓ repeat T=3×</div>
+          <div class="vflow-row">
+            <div class="vflow-label">Attention logits</div>
+            <div class="vflow-box"><div class="abox abox-attn">L = LN(slots) @ LN(h).T / √256&nbsp;&nbsp;(K, N)</div></div>
+          </div>
+          <div class="vflow-row" style="margin-top:6px;">
+            <div class="vflow-label">Slot competition</div>
+            <div class="vflow-box"><div class="abox abox-slot">A = softmax(L, dim=0)&nbsp;&nbsp;← softmax over slots, NOT instances<br>Each patch-column sums to 1 → patches fight over slots</div></div>
+          </div>
+          <div class="vflow-row" style="margin-top:6px;">
+            <div class="vflow-label">Normalise</div>
+            <div class="vflow-box"><div class="abox abox-attn">A_norm = A / rowsum(A)&nbsp;&nbsp;(K, N)<br>Each slot's fractional ownership of the patch pool</div></div>
+          </div>
+          <div class="vflow-row" style="margin-top:6px;">
+            <div class="vflow-label">Aggregate</div>
+            <div class="vflow-box"><div class="abox abox-slot">updates = A_norm @ h&nbsp;&nbsp;(K, 256)</div></div>
+          </div>
+          <div class="vflow-row" style="margin-top:6px;">
+            <div class="vflow-label">GRU update</div>
+            <div class="vflow-box"><div class="abox abox-xfmr">slots = GRU(updates, slots_prev)&nbsp;&nbsp;(K, 256)<br>+ MLP residual + LayerNorm</div></div>
+          </div>
+          <div class="vflow-arrow">↓ after T iters</div>
+          <div class="vflow-row">
+            <div class="vflow-label">Output</div>
+            <div class="vflow-box"><div class="abox abox-pool" style="font-weight:700;">slots&nbsp;&nbsp;(K=8, 256)&nbsp; disentangled per-modality summaries</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CrossModalTransformer -->
+    <div class="card">
+      <div class="card-title"><span class="tag tag-shared">Shared</span>&nbsp; CrossModalTransformer</div>
+      <p style="color:var(--text2);font-size:13.5px;margin-bottom:16px;">
+        Standard self-attention transformer over a sequence of modality tokens (slot vectors or summary reps).
+        Applied after slot aggregation in P2 crossattn / crossmodal / iterative variants.
+        Allows slots from different modalities to exchange information.
+        <strong>Skipped if only 1 modality is present.</strong>
+      </p>
+      <div class="big-diagram" style="padding:20px 24px;">
+        <div class="diagram-title">tokens (K·n_mods, 256) → contextualised tokens (K·n_mods, 256)</div>
+        <div class="vflow">
+          <div class="vflow-row">
+            <div class="vflow-label">Input</div>
+            <div class="vflow-box"><div class="abox abox-slot">tokens = cat(slots_HE, slots_BAL, slots_CT, …)<br>shape (K × n_present_mods, 256)</div></div>
+          </div>
+          <div class="vflow-arrow">↓ L=2 layers</div>
+          <div class="vflow-row">
+            <div class="vflow-label">Self-Attention</div>
+            <div class="vflow-box"><div class="abox abox-attn">MultiheadAttention(256, n_heads=4, batch_first=True)<br>Residual: x = LN(x + attn(x,x,x))</div></div>
+          </div>
+          <div class="vflow-row" style="margin-top:6px;">
+            <div class="vflow-label">FFN</div>
+            <div class="vflow-box"><div class="abox abox-xfmr">Linear(256→512) → GELU → Drop → Linear(512→256) → Drop<br>Residual + LayerNorm</div></div>
+          </div>
+          <div class="vflow-arrow">↓ after L layers</div>
+          <div class="vflow-row">
+            <div class="vflow-label">Output</div>
+            <div class="vflow-box"><div class="abox abox-pool" style="font-weight:700;">contextualised tokens&nbsp;&nbsp;(K·n_mods, 256)</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pooling options -->
+      <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px;">ABMIL pooling (default)</div>
+          <div class="abox abox-attn" style="font-size:12px;">att_V·tanh ⊙ att_U·sigmoid → softmax<br>rep = Σ αᵢ·tokensᵢ&nbsp;&nbsp;(256,)</div>
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px;">CLS pooling (_cls variants)</div>
+          <div class="abox abox-enc" style="font-size:12px;">learnable cls_token (1, 256)<br>prepend → MHA → LN → take [0]</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ProjectionHead -->
+    <div class="card">
+      <div class="card-title"><span class="tag tag-shared">Shared</span>&nbsp; ProjectionHead — Contrastive MLP</div>
+      <p style="color:var(--text2);font-size:13.5px;margin-bottom:16px;">
+        2-layer MLP maps summary rep to a 128-d L2-normalised space for supervised contrastive loss (L_clr).
+        Loaded from P1 checkpoint and kept <strong>frozen</strong> during Phase 2 training.
+      </p>
+      <div class="flow" style="gap:8px;margin-top:8px;">
+        <div class="flow-step">
+          <div class="flow-box abox-pool">rep (256,)</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-box abox-enc">Linear<br>(256→256)<br>→ ReLU</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-box abox-enc">Linear<br>(256→128)</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-box abox-pool">L2 norm<br>(128,)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PositionEncoding2D -->
+    <div class="card">
+      <div class="card-title"><span class="tag tag-shared">Shared</span>&nbsp; PositionEncoding2D — 2D Sinusoidal PE</div>
+      <p style="color:var(--text2);font-size:13.5px;margin-bottom:16px;">
+        Fixed 2D sinusoidal positional encoding for WSI tiles (TransMIL style). <strong>No learnable parameters.</strong>
+        Applied to HE patches only (spatial coords available). Works for any irregular patch layout.
+      </p>
+      <div class="big-diagram" style="padding:18px 22px;">
+        <div class="diagram-title">coords (N, 2) pixels → PE (N, 256)</div>
+        <div class="flow" style="gap:6px;">
+          <div class="flow-step" style="min-width:90px;">
+            <div class="flow-box" style="background:#f8fafc;border-color:#94a3b8;font-size:12px;">
+              coords (N, 2)<br>tile_left, tile_top
+            </div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box abox-enc" style="font-size:12px;">
+              / tile_stride (224)<br>→ col, row indices
+            </div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:160px;">
+            <div class="flow-box abox-attn" style="font-size:12px;">
+              d = 256/4 = 64 freq bands<br>freq = T^(-i/d)&nbsp; T=10000<br>[sin_col | cos_col | sin_row | cos_row]
+            </div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box abox-pool" style="font-size:12px;">
+              PE (N, 256)<br>added to h
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col2 -->
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 4. Phase 1                             -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="phase1">
+  <div class="section-title"><span class="section-num">4</span>Phase 1 — SingleModalMIL</div>
+
+  <div class="card">
+    <div class="phase-banner phase-p1">Phase 1 · 400 epochs · lr=1e-5 · grad_accum=4 · eval_every=25</div>
+    <p style="color:var(--text2);font-size:14px;line-height:1.75;margin-bottom:22px;">
+      One <code>SingleModalMIL</code> model per modality. <strong>Teachers</strong> (HE, Clinical) are trained first;
+      their backbone features h and summary reps r are cached to disk.
+      <strong>Students</strong> (CT, BAL) are then trained with optional bidir cross-attention KD from the nearest teacher.
+    </p>
+
+    <div class="col2">
+      <!-- Standard path -->
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--p1);text-transform:uppercase;letter-spacing:.04em;margin-bottom:14px;">Standard Forward (all modalities)</div>
+        <div class="big-diagram" style="padding:20px 24px;">
+          <div class="vflow">
+            <div class="vflow-row">
+              <div class="vflow-label">Input</div>
+              <div class="vflow-box"><div class="abox abox-input">x&nbsp;&nbsp;(N, feat_dim)</div></div>
+            </div>
+            <div class="vflow-arrow">↓ encode_patches</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Backbone</div>
+              <div class="vflow-box"><div class="abox abox-enc">Linear(feat_dim→256) → ReLU → Dropout(0.4)<br>h&nbsp;&nbsp;(N, 256)</div></div>
+            </div>
+            <div class="vflow-arrow">↓ optional HE 2D-PE</div>
+            <div class="vflow-row">
+              <div class="vflow-label">ABMIL gate</div>
+              <div class="vflow-box"><div class="abox abox-attn">att_V(h)·Tanh ⊙ att_U(h)·Sigmoid → att_w → softmax<br>α (N,)&nbsp;&nbsp; rep = Σαᵢhᵢ&nbsp;&nbsp;(256,)</div></div>
+            </div>
+            <div class="vflow-arrow">↓ two parallel outputs</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div class="abox abox-head">Head: Dropout → Linear(256→1)<br>→ logit (scalar)</div>
+              <div class="abox abox-pool">ProjectionHead(rep)<br>→ z (128,) L2-norm</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KD extension -->
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--kd-text);text-transform:uppercase;letter-spacing:.04em;margin-bottom:14px;">KD Extension — Students (CT, BAL)</div>
+        <div class="big-diagram" style="padding:20px 24px;background:var(--kd-bg);border-color:var(--kd-border);">
+          <div class="vflow">
+            <div class="vflow-row">
+              <div class="vflow-label">From backbone</div>
+              <div class="vflow-box"><div class="abox abox-enc">h_stud&nbsp;&nbsp;(N_s, 256)&nbsp;&nbsp;has grad</div></div>
+            </div>
+            <div class="vflow-row" style="margin-top:6px;">
+              <div class="vflow-label">From cache</div>
+              <div class="vflow-box"><div class="abox abox-kd">h_teach&nbsp;&nbsp;(N_t≤100, 256)&nbsp;&nbsp;DETACHED<br>top-100 teacher patches by ABMIL α</div></div>
+            </div>
+            <div class="vflow-arrow">↓ BidirPatchCrossAttn</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Bidir xattn</div>
+              <div class="vflow-box"><div class="abox abox-cross">h_stud_enr&nbsp;&nbsp;(N_s, 256)<br>alpha_a2b&nbsp;&nbsp;(N_s,)&nbsp; ← KD target</div></div>
+            </div>
+            <div class="vflow-arrow">↓ ABMIL on enriched patches</div>
+            <div class="vflow-row">
+              <div class="vflow-label">Enriched rep</div>
+              <div class="vflow-box"><div class="abox abox-pool">r_stud_enr&nbsp;&nbsp;(256,)<br>alpha_self_enr&nbsp;&nbsp;(N_s,)</div></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">
+              <div class="abox abox-kd" style="font-size:11.5px;padding:8px;">
+                <strong>L_cross</strong><br>Hinge(aux_head<br>(r_stud_enr))<br>λ=0.05
+              </div>
+              <div class="abox abox-kd" style="font-size:11.5px;padding:8px;">
+                <strong>L_kd</strong><br>KL(α_self‖α_a2b)<br>top-50  τ=0.5<br>λ=0.05
+              </div>
+              <div class="abox abox-kd" style="font-size:11.5px;padding:8px;">
+                <strong>L_crd</strong><br>1 − cos(r_enr,<br>r_teacher)<br>λ=0.1
+              </div>
+            </div>
+            <div class="abox abox-attn" style="margin-top:8px;font-size:12px;">
+              Total: L_task + λ_cx·L_cross + λ_kd·L_kd + λ_crd·L_crd [+ L_clr at boundary]
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Training order -->
+    <div style="margin-top:24px;">
+      <div style="font-size:13px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:12px;">Training Order</div>
+      <div class="pipeline">
+        <div class="pipe-step ps-enc" style="background:var(--he-bg);border-color:var(--he-border);color:var(--he);">
+          1 · HE<br><small>Teacher A</small>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step ps-enc" style="background:var(--clin-bg);border-color:var(--clin-border);color:var(--clin);">
+          2 · Clinical<br><small>Teacher B</small>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="background:var(--kd-bg);border-color:var(--kd-border);color:var(--kd-text);font-size:11px;padding:7px 10px;">
+          Build teacher caches<br>h features (top-100 by α)<br>r summaries · proj_z
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step ps-cross" style="background:var(--ct-bg);border-color:var(--ct-border);color:var(--ct);">
+          3 · CT<br><small>Student + KD</small>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step ps-cross" style="background:var(--bal-bg);border-color:var(--bal-border);color:var(--bal);">
+          4 · BAL<br><small>Student + KD</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 5. Phase 2 Variants                    -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="phase2">
+  <div class="section-title"><span class="section-num">5</span>Phase 2 — Fusion Variants</div>
+
+  <div class="card" style="margin-bottom:28px;">
+    <div class="phase-banner phase-p2">Phase 2 · 200 epochs · lr=5e-5 · modal_dropout=30% · 11 variants (6 base + 5 _cls)</div>
+    <p style="color:var(--text2);font-size:14px;line-height:1.75;">
+      All variants share the same frozen P1 <strong>encoders</strong> (GatedAttentionEncoder, loaded from <code>best_model.pt</code>, fine-tuned during P2)
+      and frozen <strong>ProjectionHeads</strong>. A <code>_cls</code> suffix replaces the ABMIL gate with a learnable CLS token + single MHA head for pooling.
+    </p>
+  </div>
+
+  <div class="variant-grid">
+
+    <!-- early -->
+    <div class="variant-card">
+      <div class="variant-name">Early Fusion &nbsp;<span style="color:var(--text3);font-size:14px;">/ early_cls</span></div>
+      <div class="variant-class">EarlyFusionMIL</div>
+      <div class="variant-desc">
+        Concatenates all modality patch features into a single flat bag before any pooling.
+        All patches from all present modalities are mixed together and processed by one shared ABMIL gate (or CLS token).
+        Simplest possible fusion — no explicit cross-modal interaction.
+      </div>
+      <div class="big-diagram" style="padding:16px 18px;">
+        <div class="flow" style="gap:5px;">
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box ps-enc" style="background:var(--enc-bg);border-color:var(--enc-border);color:var(--enc-text);font-size:12px;">Backbone<br><small>per mod</small><span class="shape">(N_m, 256)</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box" style="background:var(--surface2);border-color:var(--border);font-size:12px;">Cat all<br>patches<span class="shape">(ΣN_m, 256)</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box ps-pool" style="background:var(--pool-bg);border-color:var(--pool-border);color:var(--pool-text);font-size:12px;">ABMIL or CLS<br>pool<span class="shape">(256,)</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:60px;">
+            <div class="flow-box ps-head" style="background:var(--head-bg);border-color:var(--head-border);color:var(--head-text);font-size:12px;">Drop→Linear<br>logit</div>
+          </div>
+        </div>
+      </div>
+      <div class="info-block" style="font-size:12.5px;">
+        Max patches sampled per modality: <strong>2048</strong><br>
+        _cls: prepends <code>cls_token (1, 256)</code> + MHA(4h) + LN
+      </div>
+    </div>
+
+    <!-- late -->
+    <div class="variant-card">
+      <div class="variant-name">Late Fusion</div>
+      <div class="variant-class">LateFusionMIL</div>
+      <div class="variant-desc">
+        Each modality passes through its own full ABMIL encoder and independent classification head.
+        Per-modality logits are combined via a softmax-weighted sum where weights are <em>learned</em> log-weights (one scalar per modality).
+        Modality importance adapts automatically during training.
+      </div>
+      <div class="big-diagram" style="padding:16px 18px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div class="abox abox-enc" style="font-size:11px;">ABMIL_HE<br>→ rep_HE</div>
+          <div class="abox abox-enc" style="font-size:11px;">ABMIL_BAL<br>→ rep_BAL</div>
+          <div class="abox abox-enc" style="font-size:11px;">ABMIL_CT<br>→ rep_CT</div>
+          <div class="abox abox-enc" style="font-size:11px;">ABMIL_Clin<br>→ rep_Clin</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div class="abox abox-head" style="font-size:11px;">head_HE<br>→ logit_HE</div>
+          <div class="abox abox-head" style="font-size:11px;">head_BAL<br>→ logit_BAL</div>
+          <div class="abox abox-head" style="font-size:11px;">head_CT<br>→ logit_CT</div>
+          <div class="abox abox-head" style="font-size:11px;">head_Clin<br>→ logit_Clin</div>
+        </div>
+        <div class="abox abox-pool" style="font-size:12px;">
+          w = softmax(log_weights[present_mods])<br>
+          output = Σ wᵢ · logitᵢ
+        </div>
+      </div>
+      <div class="info-block" style="font-size:12.5px;">
+        <code>log_weights</code> (n_mods,) learnable parameter<br>
+        Single modality → logit passthrough, no weighting
+      </div>
+    </div>
+
+    <!-- middle -->
+    <div class="variant-card">
+      <div class="variant-name">Middle Fusion &nbsp;<span style="color:var(--text3);font-size:14px;">/ middle_cls</span></div>
+      <div class="variant-class">MiddleFusionMIL</div>
+      <div class="variant-desc">
+        Each modality is first compressed to a single 256-d summary via its own ABMIL encoder.
+        The small set of summary vectors forms a sequence that is processed by a 2-layer cross-modal transformer.
+        Final representation = mean of transformer outputs (or CLS token).
+        Computationally efficient — transformer operates on n_mods tokens, not patches.
+      </div>
+      <div class="big-diagram" style="padding:16px 18px;">
+        <div class="flow" style="gap:5px;">
+          <div class="flow-step">
+            <div class="flow-box ps-enc" style="background:var(--enc-bg);border-color:var(--enc-border);color:var(--enc-text);font-size:12px;">ABMIL<br>per mod<span class="shape">→ (256,)</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box" style="background:var(--surface2);border-color:var(--border);font-size:12px;">Stack<br>summaries<span class="shape">(n_mods,256)</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box ps-xfmr" style="background:var(--xfmr-bg);border-color:var(--xfmr-border);color:var(--xfmr-text);font-size:12px;">XModal<br>Transformer<br>L=2 layers</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box ps-pool" style="background:var(--pool-bg);border-color:var(--pool-border);color:var(--pool-text);font-size:12px;">Mean[0]<br>or CLS[0]<span class="shape">(256,)</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box ps-head" style="background:var(--head-bg);border-color:var(--head-border);color:var(--head-text);font-size:12px;">LN→Drop<br>→Linear<br>logit</div>
+          </div>
+        </div>
+      </div>
+      <div class="info-block" style="font-size:12.5px;">
+        Transformer skipped when &lt;2 mods present (single mod → direct head)<br>
+        Optional recon decoder: MSE(decoder(rep), summary[random_mod])
+      </div>
+    </div>
+
+    <!-- crossattn -->
+    <div class="variant-card">
+      <div class="variant-name">CrossAttn Fusion &nbsp;<span style="color:var(--text3);font-size:14px;">/ crossattn_cls</span></div>
+      <div class="variant-class">CrossAttnFusionMIL</div>
+      <div class="variant-desc">
+        All-pairs bidirectional patch cross-attention (MCAT style).
+        For each present pair (A, B): patches from A attend patches from B and vice versa — enriching each modality with context from all others.
+        Enriched patches are then compressed to K=8 disentangled slots via IterativeSlotAttn.
+        All slots go through CrossModalTransformer, then ABMIL or CLS pooling.
+      </div>
+      <div class="big-diagram" style="padding:16px 18px;">
+        <div class="flow" style="gap:4px;flex-wrap:wrap;">
+          <div class="flow-step" style="min-width:70px;">
+            <div class="flow-box ps-enc" style="background:var(--enc-bg);border-color:var(--enc-border);color:var(--enc-text);font-size:11px;">Backbone<br>h (N_m,256)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:100px;">
+            <div class="flow-box ps-attn" style="background:var(--attn-bg);border-color:var(--attn-border);color:var(--attn-text);font-size:11px;">BidirXAttn<br>all pairs<br>h_enr (N_m,256)<br><small>cap KV@256</small></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:90px;">
+            <div class="flow-box ps-slot" style="background:var(--slot-bg);border-color:var(--slot-border);color:var(--slot-text);font-size:11px;">SlotAttn<br>T=3 iters<br>K=8 slots<br>(K,256)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box ps-xfmr" style="background:var(--xfmr-bg);border-color:var(--xfmr-border);color:var(--xfmr-text);font-size:11px;">XModal<br>Xfmr<br>L=2</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:70px;">
+            <div class="flow-box ps-pool" style="background:var(--pool-bg);border-color:var(--pool-border);color:var(--pool-text);font-size:11px;">ABMIL<br>or CLS<br>(256,)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:55px;">
+            <div class="flow-box ps-head" style="background:var(--head-bg);border-color:var(--head-border);color:var(--head-text);font-size:11px;">LN→Head<br>logit</div>
+          </div>
+        </div>
+      </div>
+      <div class="info-block" style="font-size:12.5px;">
+        Bidir KV cap: <strong>256 patches</strong> to control O(N²) attention matrix<br>
+        Shared BidirPatchCrossAttn weights across all modality pairs<br>
+        Shared IterativeSlotAttn init (μ, log_σ) across modalities
+      </div>
+    </div>
+
+    <!-- crossmodal -->
+    <div class="variant-card">
+      <div class="variant-name">CrossModal Fusion &nbsp;<span style="color:var(--text3);font-size:14px;">/ crossmodal_cls</span></div>
+      <div class="variant-class">SlotCrossModalMIL</div>
+      <div class="variant-desc">
+        Simpler slot-based variant without patch-level cross-attention.
+        Each modality's backbone features are directly compressed to K=8 slots via IterativeSlotAttn.
+        All slots are concatenated and processed by CrossModalTransformer.
+        Cross-modal interaction happens only at the slot level (not at the raw patch level).
+      </div>
+      <div class="big-diagram" style="padding:16px 18px;">
+        <div class="flow" style="gap:4px;flex-wrap:wrap;">
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box ps-enc" style="background:var(--enc-bg);border-color:var(--enc-border);color:var(--enc-text);font-size:11px;">Backbone<br>h (N_m,256)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:90px;">
+            <div class="flow-box ps-slot" style="background:var(--slot-bg);border-color:var(--slot-border);color:var(--slot-text);font-size:11px;">SlotAttn<br>T=3 iters<br>K=8 slots<br>(K,256) per mod</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:90px;">
+            <div class="flow-box" style="background:var(--surface2);border-color:var(--border);font-size:11px;">Cat slots<br>(K·n_mods,<br>256)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box ps-xfmr" style="background:var(--xfmr-bg);border-color:var(--xfmr-border);color:var(--xfmr-text);font-size:11px;">XModal<br>Xfmr L=2</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:70px;">
+            <div class="flow-box ps-pool" style="background:var(--pool-bg);border-color:var(--pool-border);color:var(--pool-text);font-size:11px;">ABMIL<br>or CLS<br>(256,)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box ps-head" style="background:var(--head-bg);border-color:var(--head-border);color:var(--head-text);font-size:11px;">Head</div>
+          </div>
+        </div>
+      </div>
+      <div class="info-block" style="font-size:12.5px;">
+        No all-pairs bidir patch cross-attention → faster than crossattn<br>
+        Same slot machinery (shared IterativeSlotAttn) as crossattn variant
+      </div>
+    </div>
+
+    <!-- iterative -->
+    <div class="variant-card">
+      <div class="variant-name">Iterative XModal &nbsp;<span style="color:var(--text3);font-size:14px;">/ iterative_cls</span></div>
+      <div class="variant-class">IterativeXModalMIL</div>
+      <div class="variant-desc">
+        Most complex variant. Applies R=2 iterative blocks at the raw patch level before slot compression.
+        Each block: (a) within-modal self-attention, then (b) cross-modal cross-attention
+        (Q = own patches, KV = all other present modalities concatenated).
+        After R blocks, IterativeSlotAttn → CrossModalTransformer → pool.
+        Supports gradient checkpointing for memory savings on long HE sequences.
+      </div>
+      <div class="big-diagram" style="padding:16px 18px;">
+        <div class="flow" style="gap:4px;flex-wrap:wrap;">
+          <div class="flow-step" style="min-width:70px;">
+            <div class="flow-box ps-enc" style="background:var(--enc-bg);border-color:var(--enc-border);color:var(--enc-text);font-size:11px;">Backbone<br>h (N_m,256)<br><small>HE≤1024</small></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:110px;">
+            <div class="flow-box ps-attn" style="background:var(--attn-bg);border-color:var(--attn-border);color:var(--attn-text);font-size:11px;">R=2 iter blocks<br>① Self-Attn(mod)<br>② XAttn(Q=own,<br>KV=others_cat)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:80px;">
+            <div class="flow-box ps-slot" style="background:var(--slot-bg);border-color:var(--slot-border);color:var(--slot-text);font-size:11px;">SlotAttn<br>K=8 T=3<br>(K,256)</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:70px;">
+            <div class="flow-box ps-xfmr" style="background:var(--xfmr-bg);border-color:var(--xfmr-border);color:var(--xfmr-text);font-size:11px;">XModal<br>Xfmr L=2</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step" style="min-width:65px;">
+            <div class="flow-box ps-pool" style="background:var(--pool-bg);border-color:var(--pool-border);color:var(--pool-text);font-size:11px;">ABMIL<br>or CLS</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step">
+            <div class="flow-box ps-head" style="background:var(--head-bg);border-color:var(--head-border);color:var(--head-text);font-size:11px;">Head</div>
+          </div>
+        </div>
+      </div>
+      <div class="info-block" style="font-size:12.5px;">
+        HE capped at <strong>1024 patches</strong> per iter block<br>
+        Shared self-attn + shared cross-attn weights across R=2 blocks<br>
+        Cross-attn step skipped if &lt;2 mods present<br>
+        Tag: <code>iterative_r2_k8[_cls]</code>
+      </div>
+    </div>
+
+  </div><!-- /variant-grid -->
+
+  <!-- Comparison table -->
+  <div class="card" style="margin-top:28px;">
+    <div class="card-title">Variant Comparison</div>
+    <table class="arch-table">
+      <thead>
+        <tr>
+          <th>Variant</th><th>Fusion Level</th><th>Cross-Modal Mechanism</th>
+          <th>Pooling</th><th>Main Module</th><th>Computational Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>early[_cls]</code></td>
+          <td>Patch (concat)</td>
+          <td>Implicit — shared ABMIL sees all modality patches</td>
+          <td>ABMIL or CLS</td>
+          <td>GatedAttentionEncoder (shared)</td>
+          <td>Lowest</td>
+        </tr>
+        <tr>
+          <td><code>late</code></td>
+          <td>Logit</td>
+          <td>None — per-modality heads, weighted combination</td>
+          <td>Softmax-weighted logit sum</td>
+          <td>Per-mod head + learnable log_weights</td>
+          <td>Lowest</td>
+        </tr>
+        <tr>
+          <td><code>middle[_cls]</code></td>
+          <td>Summary (rep)</td>
+          <td>Self-attn over n_mods summary vectors</td>
+          <td>Mean or CLS</td>
+          <td>CrossModalTransformer (tiny seq)</td>
+          <td>Low</td>
+        </tr>
+        <tr>
+          <td><code>crossattn[_cls]</code></td>
+          <td>Patch</td>
+          <td>All-pairs bidir patch cross-attn → K slots → transformer</td>
+          <td>ABMIL or CLS</td>
+          <td>BidirPatchCrossAttn + IterativeSlotAttn + XfmrTransformer</td>
+          <td>High</td>
+        </tr>
+        <tr>
+          <td><code>crossmodal[_cls]</code></td>
+          <td>Patch → Slot</td>
+          <td>Slot-level transformer only (no patch-level XA)</td>
+          <td>ABMIL or CLS</td>
+          <td>IterativeSlotAttn + CrossModalTransformer</td>
+          <td>Medium</td>
+        </tr>
+        <tr>
+          <td><code>iterative[_cls]</code></td>
+          <td>Patch (iterative)</td>
+          <td>R×(self-attn + cross-attn at patch level) + slots + xfmr</td>
+          <td>ABMIL or CLS</td>
+          <td>Iter blocks + IterativeSlotAttn + CrossModalTransformer</td>
+          <td>Highest</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 6. Losses                              -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="losses">
+  <div class="section-title"><span class="section-num">6</span>Loss Functions</div>
+  <div class="col2">
+
+    <div class="card">
+      <div class="card-title"><span class="tag tag-p1">Phase 1</span>&nbsp; Per-Sample Losses</div>
+      <div class="loss-item">
+        <div class="loss-sym">L_task</div>
+        <div>
+          <div class="loss-desc">Hinge loss with class weights (all modalities)</div>
+          <div class="loss-formula">y = 2·label − 1 ∈ {−1, +1}
+L = w · max(0, 1 − y · logit)
+w_pos = N/(2·N_pos)  w_neg = N/(2·N_neg)  clamp max=20</div>
+        </div>
+      </div>
+      <div class="loss-item">
+        <div class="loss-sym">L_cross</div>
+        <div>
+          <div class="loss-desc">Aux head on cross-attended student rep (students only)</div>
+          <div class="loss-formula">Hinge(cross_aux_head(r_stud_enr), label)
+λ_cx = 0.05</div>
+        </div>
+      </div>
+      <div class="loss-item">
+        <div class="loss-sym">L_kd</div>
+        <div>
+          <div class="loss-desc">Attention transfer KD — Zagoruyko &amp; Komodakis ICLR 2017</div>
+          <div class="loss-formula">Select top-K=50 student patches by alpha_a2b (teacher's view)
+KL( softmax(α_self[top-K]/τ=0.5) ‖ softmax(α_a2b[top-K]/τ) )
+λ_kd = 0.05  — scale-invariant, relative ranking only</div>
+        </div>
+      </div>
+      <div class="loss-item">
+        <div class="loss-sym">L_crd</div>
+        <div>
+          <div class="loss-desc">CRD cosine distance — He et al. ICLR 2020</div>
+          <div class="loss-formula">1 − cosine_similarity(r_stud_enr, r_teacher)  ∈ [0, 2]
+Pulls cross-attended student summary toward teacher rep
+λ_crd = 0.1</div>
+        </div>
+      </div>
+      <div class="loss-item" style="border-bottom:none;">
+        <div class="loss-sym">L_clr</div>
+        <div>
+          <div class="loss-desc">Supervised contrastive — Khosla et al. NeurIPS 2020 (optional)</div>
+          <div class="loss-formula">Positives: same stem + diff modality  OR  same label + diff stem
+Negatives: different label
+Class-weighted by w_pos/w_neg
+τ = 0.07  λ = 0.1  computed at gradient-accumulation boundary</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="tag tag-p2">Phase 2</span>&nbsp; Training Losses</div>
+      <div class="loss-item">
+        <div class="loss-sym">L_task</div>
+        <div>
+          <div class="loss-desc">Same hinge loss with class weights as Phase 1</div>
+          <div class="loss-formula">200 epochs · lr=5e-5 · weight_decay=1e-3
+grad_accum=4 · AMP (mixed precision)</div>
+        </div>
+      </div>
+      <div class="loss-item">
+        <div class="loss-sym">L_recon</div>
+        <div>
+          <div class="loss-desc">Optional reconstruction loss (middle / crossattn / crossmodal / iterative)</div>
+          <div class="loss-formula">Random modality m sampled per training sample
+L = MSE( decoder_m(rep), summary_m.detach() )
+Decoder: Linear(256→256) → GELU → Linear(256→256)</div>
+        </div>
+      </div>
+      <div class="info-block" style="margin-top:20px;">
+        <strong>Model selection:</strong> Best val_BAcc checkpoint is saved <em>inline</em> during training
+        (written at every val_BAcc improvement to <code>best_model.pt</code>).
+        No expensive end-of-training GPU rescan. Fast fallback: history-based ckpt selection
+        from stored <code>val_bacc</code> lists.
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 7. Hyperparameters                     -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="hparams">
+  <div class="section-title"><span class="section-num">7</span>Hyperparameters</div>
+  <div class="col2">
+    <div class="card">
+      <div class="card-title"><span class="tag tag-p1">Phase 1</span>&nbsp; Hyperparameters</div>
+      <div class="param-grid">
+        <div class="param-item"><div class="param-key">HIDDEN_DIM</div><div class="param-val">256</div></div>
+        <div class="param-item"><div class="param-key">DROPOUT</div><div class="param-val">0.4</div></div>
+        <div class="param-item"><div class="param-key">EPOCHS</div><div class="param-val">400</div></div>
+        <div class="param-item"><div class="param-key">LR</div><div class="param-val">1e-5</div></div>
+        <div class="param-item"><div class="param-key">WEIGHT DECAY</div><div class="param-val">1e-3</div></div>
+        <div class="param-item"><div class="param-key">GRAD ACCUM</div><div class="param-val">4</div></div>
+        <div class="param-item"><div class="param-key">EVAL EVERY</div><div class="param-val">25 ep</div></div>
+        <div class="param-item"><div class="param-key">PROJ DIM</div><div class="param-val">128</div></div>
+        <div class="param-item"><div class="param-key">CLR τ</div><div class="param-val">0.07</div></div>
+        <div class="param-item"><div class="param-key">CLR λ</div><div class="param-val">0.1</div></div>
+        <div class="param-item"><div class="param-key">CROSS ATTN λ</div><div class="param-val">0.05</div></div>
+        <div class="param-item"><div class="param-key">KD λ</div><div class="param-val">0.05</div></div>
+        <div class="param-item"><div class="param-key">KD τ</div><div class="param-val">0.5</div></div>
+        <div class="param-item"><div class="param-key">KD top-K</div><div class="param-val">50</div></div>
+        <div class="param-item"><div class="param-key">CRD λ</div><div class="param-val">0.1</div></div>
+        <div class="param-item"><div class="param-key">XAttn heads</div><div class="param-val">4</div></div>
+        <div class="param-item"><div class="param-key">XAttn dropout</div><div class="param-val">0.1</div></div>
+        <div class="param-item"><div class="param-key">Max teach patches</div><div class="param-val">100</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="tag tag-p2">Phase 2</span>&nbsp; Hyperparameters</div>
+      <div class="param-grid">
+        <div class="param-item"><div class="param-key">EPOCHS</div><div class="param-val">200</div></div>
+        <div class="param-item"><div class="param-key">LR</div><div class="param-val">5e-5</div></div>
+        <div class="param-item"><div class="param-key">WEIGHT DECAY</div><div class="param-val">1e-3</div></div>
+        <div class="param-item"><div class="param-key">MODAL DROPOUT</div><div class="param-val">30%</div></div>
+        <div class="param-item"><div class="param-key">GRAD ACCUM</div><div class="param-val">4</div></div>
+        <div class="param-item"><div class="param-key">EVAL EVERY</div><div class="param-val">20 ep</div></div>
+        <div class="param-item"><div class="param-key">N HEADS</div><div class="param-val">4</div></div>
+        <div class="param-item"><div class="param-key">CROSS LAYERS</div><div class="param-val">2</div></div>
+        <div class="param-item"><div class="param-key">ATTN DROPOUT</div><div class="param-val">0.1</div></div>
+        <div class="param-item"><div class="param-key">MAX PATCHES</div><div class="param-val">2048</div></div>
+        <div class="param-item"><div class="param-key">MAX HE BLOCK</div><div class="param-val">1024</div></div>
+        <div class="param-item"><div class="param-key">ITER BLOCKS R</div><div class="param-val">2</div></div>
+        <div class="param-item"><div class="param-key">SLOT K</div><div class="param-val">8</div></div>
+        <div class="param-item"><div class="param-key">SLOT ITERS T</div><div class="param-val">3</div></div>
+        <div class="param-item"><div class="param-key">BIDIR KV CAP</div><div class="param-val">256</div></div>
+        <div class="param-item"><div class="param-key">OOM SKIP</div><div class="param-val">3×/ep</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- 8. Training Curriculum                 -->
+<!-- ═══════════════════════════════════════ -->
+<div class="section" id="curriculum">
+  <div class="section-title"><span class="section-num">8</span>Training Curriculum &amp; Checkpointing</div>
+  <div class="card">
+    <p style="color:var(--text2);font-size:14px;margin-bottom:22px;">Full pipeline executed per (outer_split, fold) combination:</p>
+    <div class="big-diagram">
+      <div class="flow" style="gap:8px;flex-wrap:wrap;justify-content:center;">
+        <div class="flow-step" style="min-width:110px;">
+          <div class="flow-box" style="background:var(--he-bg);border-color:var(--he-border);color:var(--he);font-size:12px;">
+            P1 · HE<br>400 epochs<br><small>Teacher A</small>
+            <span class="shape">best_model.pt</span>
+          </div>
+        </div>
+        <div class="flow-arrow" style="font-size:22px;">→</div>
+        <div class="flow-step" style="min-width:110px;">
+          <div class="flow-box" style="background:var(--clin-bg);border-color:var(--clin-border);color:var(--clin);font-size:12px;">
+            P1 · Clinical<br>400 epochs<br><small>Teacher B</small>
+            <span class="shape">best_model.pt</span>
+          </div>
+        </div>
+        <div class="flow-arrow" style="font-size:22px;">→</div>
+        <div class="flow-step" style="min-width:130px;">
+          <div class="flow-box" style="background:var(--kd-bg);border-color:var(--kd-border);color:var(--kd-text);font-size:12px;">
+            Build teacher caches<br>h features (top-100 by α)<br>r summaries<br>proj_z vectors
+          </div>
+        </div>
+        <div class="flow-arrow" style="font-size:22px;">→</div>
+        <div class="flow-step" style="min-width:110px;">
+          <div class="flow-box" style="background:var(--ct-bg);border-color:var(--ct-border);color:var(--ct);font-size:12px;">
+            P1 · CT<br>400 epochs<br><small>Student + KD</small>
+            <span class="shape">best_model.pt</span>
+          </div>
+        </div>
+        <div class="flow-arrow" style="font-size:22px;">→</div>
+        <div class="flow-step" style="min-width:110px;">
+          <div class="flow-box" style="background:var(--bal-bg);border-color:var(--bal-border);color:var(--bal);font-size:12px;">
+            P1 · BAL<br>400 epochs<br><small>Student + KD</small>
+            <span class="shape">best_model.pt</span>
+          </div>
+        </div>
+      </div>
+      <div style="text-align:center;font-size:28px;color:var(--text3);margin:12px 0;">↓</div>
+      <div class="flow-step" style="min-width:100%;max-width:100%;">
+        <div class="flow-box abox-p2" style="width:100%;padding:18px;font-size:14px;">
+          Phase 2 — All 11 variants trained (sequentially or in parallel)<br>
+          <small>early · early_cls · late · middle · middle_cls · crossattn · crossattn_cls · crossmodal · crossmodal_cls · iterative_r2_k8 · iterative_r2_k8_cls</small>
+          <span class="shape">model_{variant}.pt  +  metrics.json  +  status.json</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="col2" style="margin-top:20px;">
+      <div class="info-block">
+        <strong>Skip / Resume logic:</strong> Each phase checks <code>status.json</code> for <code>"completed": true</code>
+        before starting. Training can be safely interrupted and resumed from the last <code>ep{N:04d}.pt</code> checkpoint.
+        Epoch checkpoints include <code>model, optimizer, scaler, history</code>.
+      </div>
+      <div class="info-block">
+        <strong>Best model selection:</strong> Val BAcc is tracked inline — <code>best_model.pt</code> (state dict)
+        is overwritten at every improvement during training. No end-of-training GPU rescan needed.
+        Fallback: scan all epoch checkpoint <code>val_bacc</code> histories if inline save is missing.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div style="border-top:2px solid var(--border);padding-top:24px;color:var(--text3);font-size:13px;text-align:center;margin-top:20px;">
+  train_mm_abmil_v6.py · analyze_v6.py · Generated 2026-04-23
+</div>
+
+</div><!-- /page -->
+</body>
+</html>

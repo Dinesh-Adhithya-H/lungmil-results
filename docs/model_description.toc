@@ -1,0 +1,69 @@
+\contentsline {section}{\numberline {1}Overview}{3}{section.1}%
+\contentsline {paragraph}{Phase 1.}{3}{section*.2}%
+\contentsline {paragraph}{Phase 2.}{3}{section*.3}%
+\contentsline {section}{\numberline {2}Dataset Preprocessing}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Raw Data Sources}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Dataset Statistics and Modality Coverage}{3}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Temporal Alignment}{4}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Label Encoding}{5}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Clinical Feature Tokenisation}{5}{subsection.2.5}%
+\contentsline {paragraph}{Continuous features.}{5}{section*.4}%
+\contentsline {paragraph}{Categorical/binary features.}{5}{section*.5}%
+\contentsline {paragraph}{Block-diagonal one-hot representation.}{6}{section*.6}%
+\contentsline {subsection}{\numberline {2.6}Cluster Count Tokenisation}{6}{subsection.2.6}%
+\contentsline {subsection}{\numberline {2.7}Precomputed \texttt {.pt} File Format}{6}{subsection.2.7}%
+\contentsline {section}{\numberline {3}Data Representation}{7}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Modality Feature Spaces}{7}{subsection.3.1}%
+\contentsline {paragraph}{Clinical representation.}{7}{section*.7}%
+\contentsline {section}{\numberline {4}Phase 1: Unimodal Pre-Training}{7}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Gated Attention MIL Encoder}{7}{subsection.4.1}%
+\contentsline {paragraph}{Instance projection (backbone).}{7}{section*.8}%
+\contentsline {paragraph}{Gated attention pooling.}{7}{section*.9}%
+\contentsline {paragraph}{Bag representation and classification.}{7}{section*.10}%
+\contentsline {subsection}{\numberline {4.2}Phase 1 Loss Functions}{7}{subsection.4.2}%
+\contentsline {subsubsection}{\numberline {4.2.1}Task Loss (Weighted Hinge)}{7}{subsubsection.4.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.2}Bidirectional Patch Cross-Attention}{8}{subsubsection.4.2.2}%
+\contentsline {paragraph}{Student attends teacher.}{8}{section*.11}%
+\contentsline {paragraph}{Knowledge Distillation signal.}{8}{section*.12}%
+\contentsline {subsubsection}{\numberline {4.2.3}Attention Transfer Loss (KD)}{8}{subsubsection.4.2.3}%
+\contentsline {subsubsection}{\numberline {4.2.4}Cosine Representation Distillation (CRD)}{8}{subsubsection.4.2.4}%
+\contentsline {subsubsection}{\numberline {4.2.5}Supervised Contrastive Loss (SupCon)}{8}{subsubsection.4.2.5}%
+\contentsline {subsubsection}{\numberline {4.2.6}Total Phase 1 Objective}{9}{subsubsection.4.2.6}%
+\contentsline {subsection}{\numberline {4.3}Phase 1 Hyperparameters}{9}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Phase 2: Multimodal Fusion}{9}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Shared Building Blocks}{9}{subsection.5.1}%
+\contentsline {subsubsection}{\numberline {5.1.1}Iterative Slot Attention}{9}{subsubsection.5.1.1}%
+\contentsline {paragraph}{Set Transformer view.}{9}{section*.13}%
+\contentsline {paragraph}{Slot Attention procedure.}{10}{section*.14}%
+\contentsline {subsubsection}{\numberline {5.1.2}Cross-Modal Transformer}{10}{subsubsection.5.1.2}%
+\contentsline {subsubsection}{\numberline {5.1.3}Final Pooling}{10}{subsubsection.5.1.3}%
+\contentsline {paragraph}{ABMIL pooling.}{10}{section*.15}%
+\contentsline {paragraph}{CLS pooling.}{10}{section*.16}%
+\contentsline {subsection}{\numberline {5.2}Fusion Variants}{11}{subsection.5.2}%
+\contentsline {subsubsection}{\numberline {5.2.1}Variant 1: Early Fusion (\texttt {early} / \texttt {early\_cls})}{11}{subsubsection.5.2.1}%
+\contentsline {subsubsection}{\numberline {5.2.2}Variant 2: Late Fusion (\texttt {late})}{11}{subsubsection.5.2.2}%
+\contentsline {subsubsection}{\numberline {5.2.3}Variant 3: Middle Fusion (\texttt {middle} / \texttt {middle\_cls})}{11}{subsubsection.5.2.3}%
+\contentsline {subsubsection}{\numberline {5.2.4}Variant 4: Cross-Attention Fusion (\texttt {crossattn} / \texttt {crossattn\_cls})}{11}{subsubsection.5.2.4}%
+\contentsline {subsubsection}{\numberline {5.2.5}Variant 5: Cross-Modal Slot Fusion (\texttt {crossmodal} / \texttt {crossmodal\_cls})}{11}{subsubsection.5.2.5}%
+\contentsline {subsubsection}{\numberline {5.2.6}Variant 6: Iterative Cross-Modal Fusion (\texttt {iterative} / \texttt {iterative\_cls})}{12}{subsubsection.5.2.6}%
+\contentsline {paragraph}{Self-attention block.}{12}{section*.17}%
+\contentsline {paragraph}{Cross-attention block.}{12}{section*.18}%
+\contentsline {paragraph}{After $R$ blocks,}{12}{section*.19}%
+\contentsline {subsection}{\numberline {5.3}Phase 2 Summary Table}{12}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Phase 2 Hyperparameters}{12}{subsection.5.4}%
+\contentsline {section}{\numberline {6}Training Protocol}{12}{section.6}%
+\contentsline {paragraph}{Optimiser.}{12}{section*.20}%
+\contentsline {paragraph}{Cross-validation.}{12}{section*.21}%
+\contentsline {paragraph}{Checkpoint selection.}{12}{section*.22}%
+\contentsline {section}{\numberline {7}Cross-Attention Interpretability}{13}{section.7}%
+\contentsline {subsection}{\numberline {7.1}ABMIL Attention Maps}{13}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Clinical $\times $ Cluster Cross-Attention}{13}{subsection.7.2}%
+\contentsline {section}{\numberline {8}Cluster-Level Interpretability}{14}{section.8}%
+\contentsline {subsection}{\numberline {8.1}ABMIL Attention by Cluster Type}{14}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Modality Importance from Classifier Weights}{14}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Self-Attention Cluster Co-Attention}{14}{subsection.8.3}%
+\contentsline {subsection}{\numberline {8.4}Slot Attention Cluster Contribution}{14}{subsection.8.4}%
+\contentsline {subsection}{\numberline {8.5}Cross-Modal Slot Connection}{15}{subsection.8.5}%
+\contentsline {paragraph}{Three-panel connection figure.}{15}{section*.23}%
+\contentsline {paragraph}{Cluster-to-cluster cross-modal attention.}{15}{section*.24}%
+\contentsline {paragraph}{ACR vs.\ Non-ACR comparison.}{15}{section*.25}%

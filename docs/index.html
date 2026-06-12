@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lung Transplant · Patient Analysis</title>
+<style>
+:root {
+  --bg:      #F0F2F5;
+  --sidebar: #1A1D2E;
+  --card:    #FFFFFF;
+  --text:    #1A1D2E;
+  --muted:   #6E7A8A;
+  --accent:  #E63946;
+  --blue:    #3A86FF;
+  --clad:    #FB8500;
+  --death:   #4A4A4A;
+  --green:   #2DC653;
+  --border:  #E2E6EA;
+  --shadow:  0 2px 8px rgba(0,0,0,.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+       background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 260px; min-width: 220px; background: var(--sidebar); color: #E8ECF0;
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden; flex-shrink: 0;
+}
+#sidebar-header { padding: 18px 16px 12px; border-bottom: 1px solid #2C3050; }
+#sidebar-header .logo { font-size: 1.15rem; font-weight: 700; color: #FFF; }
+#sidebar-header .sub  { font-size: 0.72rem; color: #8A93A8; margin-top: 2px; }
+#sidebar-header input {
+  width: 100%; margin-top: 10px; padding: 7px 10px; border-radius: 6px;
+  border: 1px solid #3A3F60; background: #252840; color: #E8ECF0;
+  font-size: 0.82rem; outline: none;
+}
+#sidebar-header input::placeholder { color: #6E7A8A; }
+#sidebar-header input:focus { border-color: var(--blue); }
+
+#filter-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chip {
+  font-size: 0.7rem; padding: 3px 9px; border-radius: 12px; cursor: pointer;
+  border: 1px solid #3A3F60; background: #252840; color: #9AA3BA;
+  user-select: none; transition: all .15s;
+}
+.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.active.blue  { background: var(--blue);  border-color: var(--blue); }
+.chip.active.clad  { background: var(--clad);  border-color: var(--clad); }
+.chip.active.death { background: var(--death); border-color: var(--death); }
+
+#cohort-btn {
+  margin: 10px 16px 0; padding: 7px 10px; background: #252840; border: 1px solid #3A3F60;
+  color: #9AA3BA; border-radius: 7px; cursor: pointer; font-size: 0.8rem;
+  text-align: left; transition: all .15s;
+}
+#cohort-btn:hover { background: #2E3358; color: #FFF; }
+
+#patient-list { overflow-y: auto; flex: 1; padding: 4px 0 16px; }
+.pt-item {
+  padding: 9px 16px; cursor: pointer; border-left: 3px solid transparent;
+  transition: all .12s;
+}
+.pt-item:hover { background: #252840; }
+.pt-item.active { background: #252840; border-left-color: var(--accent); }
+.pt-item .pt-id { font-size: 0.88rem; font-weight: 600; color: #DDE3EE; }
+.pt-item .pt-meta { font-size: 0.7rem; color: #6E7A8A; margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; }
+.badge {
+  display: inline-block; font-size: 0.62rem; padding: 1px 5px; border-radius: 4px;
+  font-weight: 600; vertical-align: middle;
+}
+.badge-red   { background: #3D1E22; color: var(--accent); }
+.badge-blue  { background: #1A2A44; color: var(--blue); }
+.badge-clad  { background: #3D2A10; color: var(--clad); }
+.badge-death { background: #252525; color: #AAA; }
+.badge-multi { background: #2B1E3D; color: #BF9FFF; }
+
+/* ── Main ── */
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+#topbar {
+  background: var(--card); border-bottom: 1px solid var(--border); padding: 0 24px;
+  display: flex; align-items: center; gap: 16px; height: 52px; flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+#topbar .patient-title { font-size: 1.2rem; font-weight: 700; color: var(--text); }
+#topbar .patient-meta  { font-size: 0.8rem; color: var(--muted); }
+#topbar .spacer { flex: 1; }
+
+/* tab bar */
+#tabbar {
+  display: flex; gap: 0; background: var(--card); border-bottom: 1px solid var(--border);
+  padding: 0 24px; flex-shrink: 0; overflow-x: auto;
+}
+.tab {
+  padding: 10px 18px; font-size: 0.82rem; font-weight: 500; cursor: pointer;
+  color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap;
+  transition: all .15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* content */
+#content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+.plot-grid {
+  display: grid; grid-template-columns: 1fr; gap: 16px;
+}
+.plot-grid.two-col { grid-template-columns: 1fr 1fr; }
+
+.plot-card {
+  background: var(--card); border-radius: 10px; box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.plot-card .card-title {
+  font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .05em; padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.plot-card img {
+  width: 100%; height: auto; display: block;
+}
+.plot-card img.loading { min-height: 200px; background: #F5F7FA; }
+
+.no-plot {
+  padding: 40px; text-align: center; color: var(--muted); font-size: 0.85rem;
+  background: var(--card); border-radius: 10px;
+}
+
+/* Stat cards row */
+.stat-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat-card {
+  background: var(--card); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 14px 18px; flex: 1; min-width: 120px;
+}
+.stat-card .val { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+.stat-card .lbl { font-size: 0.7rem; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: .05em; margin-top: 3px; }
+.stat-card .sub { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+
+/* Home / cohort view */
+#home-view { max-width: 900px; }
+#home-view h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 4px; }
+#home-view .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; }
+
+/* scrollbar styling */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3A3F60; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<aside id="sidebar">
+  <div id="sidebar-header">
+    <div class="logo">🫁 LungMIL</div>
+    <div class="sub">Lung Transplant · Patient Analysis</div>
+    <input id="search" type="text" placeholder="Search patient…" oninput="filterList()">
+    <div id="filter-row">
+      <span class="chip" id="f-acr"   onclick="toggleChip(this,'acr')"  >ACR+</span>
+      <span class="chip" id="f-multi" onclick="toggleChip(this,'multi')" >Multi-ep</span>
+      <span class="chip" id="f-clad"  onclick="toggleChip(this,'clad')" >CLAD</span>
+      <span class="chip" id="f-death" onclick="toggleChip(this,'death')">Death</span>
+    </div>
+    <button id="cohort-btn" onclick="showCohort()">📊 Cohort overview</button>
+  </div>
+  <div id="patient-list"></div>
+</aside>
+
+<!-- ── Main ── -->
+<div id="main">
+  <div id="topbar">
+    <span id="topbar-title" class="patient-title">Lung Transplant · Patient Analysis</span>
+    <span id="topbar-meta"  class="patient-meta"></span>
+    <span class="spacer"></span>
+    <span id="topbar-count" style="font-size:.78rem;color:var(--muted)"></span>
+  </div>
+
+  <div id="tabbar" style="display:none">
+    <span class="tab active" onclick="showTab(this,'overview')">Overview</span>
+    <span class="tab" onclick="showTab(this,'clusters')">Clusters</span>
+    <span class="tab" onclick="showTab(this,'clinical')">Clinical</span>
+    <span class="tab" onclick="showTab(this,'embedding')">Embedding</span>
+  </div>
+
+  <div id="content">
+    <div id="home-view"></div>
+    <div id="patient-view" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let ALL = [];
+let FILTERS = {acr:false, multi:false, clad:false, death:false};
+let CURRENT = null;
+let CURRENT_TAB = 'overview';
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+fetch('data/patients.json')
+  .then(r => r.json())
+  .then(data => {
+    ALL = data;
+    renderList(ALL);
+    buildHomeView(ALL);
+    document.getElementById('topbar-count').textContent =
+      `${ALL.length} patients`;
+    // navigate to hash if present
+    const h = location.hash.replace('#','');
+    if (h) selectPatient(h);
+  })
+  .catch(() => {
+    document.getElementById('home-view').innerHTML =
+      '<div class="no-plot">⚠️ Could not load patients.json. Run the plot generation script first.</div>';
+  });
+
+window.addEventListener('hashchange', () => {
+  const pid = location.hash.replace('#','');
+  if (pid) selectPatient(pid);
+  else showCohort();
+});
+
+// ── Sidebar list ───────────────────────────────────────────────────────────
+function renderList(patients) {
+  const el = document.getElementById('patient-list');
+  el.innerHTML = '';
+  patients.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'pt-item' + (p.pid === CURRENT ? ' active' : '');
+    div.id = 'li-' + p.pid;
+    div.onclick = () => { location.hash = p.pid; };
+
+    let badges = '';
+    if (p.n_acr_pos > 0) badges += `<span class="badge badge-red">ACR+ ${p.n_acr_pos}</span>`;
+    if (p.n_episodes > 1) badges += `<span class="badge badge-multi">ep×${p.n_episodes}</span>`;
+    if (p.clad)           badges += `<span class="badge badge-clad">CLAD</span>`;
+    if (p.death)          badges += `<span class="badge badge-death">†</span>`;
+
+    div.innerHTML = `
+      <div class="pt-id">${p.pid}</div>
+      <div class="pt-meta">
+        <span>${p.n_biopsies} Bx</span>
+        <span>FU ${p.fu_days}d</span>
+        ${badges}
+      </div>`;
+    el.appendChild(div);
+  });
+}
+
+function filterList() {
+  const q = document.getElementById('search').value.toUpperCase();
+  const visible = ALL.filter(p => {
+    if (q && !p.pid.includes(q)) return false;
+    if (FILTERS.acr   && p.n_acr_pos < 1) return false;
+    if (FILTERS.multi && p.n_episodes < 2) return false;
+    if (FILTERS.clad  && !p.clad)          return false;
+    if (FILTERS.death && !p.death)         return false;
+    return true;
+  });
+  renderList(visible);
+}
+
+function toggleChip(el, key) {
+  FILTERS[key] = !FILTERS[key];
+  el.classList.toggle('active');
+  filterList();
+}
+
+// ── Cohort / Home ──────────────────────────────────────────────────────────
+function buildHomeView(patients) {
+  const n = patients.length;
+  const n_acr   = patients.filter(p => p.n_acr_pos > 0).length;
+  const n_multi = patients.filter(p => p.n_episodes > 1).length;
+  const n_clad  = patients.filter(p => p.clad).length;
+  const n_death = patients.filter(p => p.death).length;
+
+  document.getElementById('home-view').innerHTML = `
+    <div style="max-width:900px">
+      <h1>Lung Transplant · Multimodal MIL</h1>
+      <p class="sub">MiddleFusionMIL analysis of histology, BAL cytology, CT imaging and clinical data</p>
+
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="val">${n}</div><div class="lbl">Patients</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" style="color:var(--accent)">${n_acr}</div>
+          <div class="lbl">Any ACR+</div>
+          <div class="sub">${(100*n_acr/n).toFixed(1)}%</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" style="color:#BF9FFF">${n_multi}</div>
+          <div class="lbl">Multi-episode</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" style="color:var(--clad)">${n_clad}</div>
+          <div class="lbl">CLAD</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" style="color:var(--death)">${n_death}</div>
+          <div class="lbl">Death</div>
+        </div>
+      </div>
+
+      <div class="plot-grid">
+        <div class="plot-card">
+          <div class="card-title">Cohort UMAP — All Patients</div>
+          <img src="cohort/umap_cohort.png" alt="Cohort UMAP" onerror="this.parentElement.style.display='none'">
+        </div>
+        <div class="plot-card">
+          <div class="card-title">ACR Episode Statistics</div>
+          <img src="cohort/acr_episode_stats.png" alt="Episode stats" onerror="this.parentElement.style.display='none'">
+        </div>
+        <div class="plot-card">
+          <div class="card-title">Multi-episode Patients</div>
+          <img src="cohort/multi_episode_grid.png" alt="Multi-episode grid" onerror="this.parentElement.style.display='none'">
+        </div>
+      </div>
+    </div>`;
+}
+
+function showCohort() {
+  CURRENT = null;
+  document.querySelectorAll('.pt-item').forEach(e => e.classList.remove('active'));
+  document.getElementById('home-view').style.display   = '';
+  document.getElementById('patient-view').style.display = 'none';
+  document.getElementById('tabbar').style.display       = 'none';
+  document.getElementById('topbar-title').textContent   = 'Lung Transplant · Patient Analysis';
+  document.getElementById('topbar-meta').textContent    = '';
+}
+
+// ── Patient view ───────────────────────────────────────────────────────────
+function selectPatient(pid) {
+  const p = ALL.find(r => r.pid === pid);
+  if (!p) { showCohort(); return; }
+
+  CURRENT = pid;
+  // highlight sidebar
+  document.querySelectorAll('.pt-item').forEach(e => e.classList.remove('active'));
+  const li = document.getElementById('li-' + pid);
+  if (li) { li.classList.add('active'); li.scrollIntoView({block:'nearest'}); }
+
+  // topbar
+  let mods = p.modalities.join(' · ');
+  let flags = [];
+  if (p.clad)  flags.push(`<span style="color:var(--clad)">CLAD</span>`);
+  if (p.death) flags.push(`<span style="color:var(--death)">†</span>`);
+  document.getElementById('topbar-title').textContent = pid;
+  document.getElementById('topbar-meta').innerHTML =
+    `${p.n_biopsies} biopsies · FU ${p.fu_days}d · ${mods}` +
+    (flags.length ? ' · ' + flags.join(' · ') : '');
+
+  // show tabs
+  document.getElementById('tabbar').style.display = '';
+  // reset to overview tab
+  CURRENT_TAB = 'overview';
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab')[0].classList.add('active');
+
+  document.getElementById('home-view').style.display    = 'none';
+  document.getElementById('patient-view').style.display = '';
+
+  renderPatientTab(p, 'overview');
+}
+
+function showTab(el, tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  CURRENT_TAB = tab;
+  const p = ALL.find(r => r.pid === CURRENT);
+  if (p) renderPatientTab(p, tab);
+}
+
+function img(src, title) {
+  return `<div class="plot-card">
+    <div class="card-title">${title}</div>
+    <img src="${src}" alt="${title}" loading="lazy"
+         onerror="this.closest('.plot-card').style.display='none'">
+  </div>`;
+}
+
+function renderPatientTab(p, tab) {
+  const pv  = document.getElementById('patient-view');
+  const pid = p.pid;
+  const base = `patients/${pid}/`;
+
+  // stats row always shown
+  let acr_badge = p.n_acr_pos > 0
+    ? `<span class="badge badge-red" style="font-size:.9rem">ACR+ ${p.n_acr_pos}</span>` : '';
+  let ep_badge  = p.n_episodes > 1
+    ? `<span class="badge badge-multi" style="font-size:.9rem">×${p.n_episodes} episodes</span>` : '';
+
+  const stats = `
+    <div class="stat-row" style="margin-bottom:16px">
+      <div class="stat-card"><div class="val">${p.n_biopsies}</div><div class="lbl">Biopsies</div></div>
+      <div class="stat-card">
+        <div class="val" style="color:var(--accent)">${p.n_acr_pos}</div>
+        <div class="lbl">ACR+ events</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" style="color:#BF9FFF">${p.n_episodes}</div>
+        <div class="lbl">ACR episodes</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" style="color:${p.clad ? 'var(--clad)' : 'var(--muted)'}">${p.clad ? '✓' : '—'}</div>
+        <div class="lbl">CLAD</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" style="color:${p.death ? 'var(--death)' : 'var(--muted)'}">${p.death ? '✓' : '—'}</div>
+        <div class="lbl">Death</div>
+      </div>
+      <div class="stat-card"><div class="val">${p.fu_days}</div><div class="lbl">FU days</div></div>
+    </div>`;
+
+  let body = stats;
+
+  if (tab === 'overview') {
+    // per-episode detail plots (if multi-episode)
+    let ep_plots = '';
+    if (p.n_episodes >= 2) {
+      for (let i = 1; i <= p.n_episodes; i++) {
+        ep_plots += img(`patients/${pid}/episode_detail_${i}.png`,
+                        `Episode ${i} detail`);
+      }
+    }
+    body += `<div class="plot-grid">
+      ${img(base+'timeline.png',    'ACR Episode Timeline')}
+      ${img(base+'predictions.png', 'Model Predictions over Time')}
+      ${ep_plots}
+    </div>`;
+  }
+  else if (tab === 'clusters') {
+    body += `<div class="plot-grid">
+      ${img(base+'clusters_HE.png',  'HE — Cluster Composition')}
+      ${img(base+'clusters_BAL.png', 'BAL — Cluster Composition')}
+      ${img(base+'clusters_CT.png',  'CT — Cluster Composition')}
+    </div>`;
+  }
+  else if (tab === 'clinical') {
+    body += `<div class="plot-grid">
+      ${img(base+'clinical.png', 'Clinical Features (PFT + Labs)')}
+    </div>`;
+  }
+  else if (tab === 'embedding') {
+    body += `<div class="plot-grid two-col">
+      ${img(base+'umap.png',        'Patient in Latent Space (UMAP)')}
+      ${img('cohort/umap_cohort.png', 'Full Cohort UMAP (reference)')}
+    </div>`;
+  }
+
+  pv.innerHTML = body;
+}
+</script>
+</body>
+</html>

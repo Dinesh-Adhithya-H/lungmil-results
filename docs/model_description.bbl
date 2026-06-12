@@ -1,0 +1,83 @@
+\begin{thebibliography}{10}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Ilse et~al.(2018)Ilse, Tomczak, and Welling]{ilse2018abmil}
+Maximilian Ilse, Jakub~M. Tomczak, and Max Welling.
+\newblock Attention-based deep multiple instance learning.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine
+  Learning (ICML)}, pages 2127--2136. PMLR, 2018.
+
+\bibitem[Chen et~al.(2021)Chen, Lu, Weng, Chen, Williamson, Manz, Shady, and
+  Mahmood]{chen2021mcat}
+Richard~J. Chen, Ming~Y. Lu, Wei-Hung Weng, Tiffany~Y. Chen, Drew F.~K.
+  Williamson, Trevor Manz, Maha Shady, and Faisal Mahmood.
+\newblock Multimodal co-attention transformer for survival prediction in
+  gigapixel whole slide images.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on
+  Computer Vision (ICCV)}, pages 4015--4025, 2021.
+
+\bibitem[Zagoruyko and Komodakis(2017)]{zagoruyko2017at}
+Sergey Zagoruyko and Nikos Komodakis.
+\newblock Paying more attention to attention: Improving the performance of
+  convolutional neural networks via attention transfer.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2017.
+
+\bibitem[Tian et~al.(2020)Tian, Krishnan, and Isola]{tian2020crd}
+Yonglong Tian, Dilip Krishnan, and Phillip Isola.
+\newblock Contrastive representation distillation.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2020.
+
+\bibitem[Khosla et~al.(2020)Khosla, Tian, Wang, Garg, Krishnan, Liang, Chen,
+  Liu, Li, Tian, and Isola]{khosla2020supcon}
+Prannay Khosla, Yonglong Tian, Huiwen Wang, Dilip Garg, Dor Krishnan, Chen
+  Liang, Xinlei Chen, Ce~Liu, Fei-Fei Li, Yuandong Tian, and Phillip Isola.
+\newblock Supervised contrastive learning.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, volume~33, pages 18661--18673, 2020.
+
+\bibitem[Locatello et~al.(2020)Locatello, Weissenborn, Unterthiner, Mahendran,
+  Heigold, Uszkoreit, Dosovitskiy, and Kipf]{locatello2020slots}
+Francesco Locatello, Dirk Weissenborn, Thomas Unterthiner, Aravindh Mahendran,
+  Georg Heigold, Jakob Uszkoreit, Alexey Dosovitskiy, and Thomas Kipf.
+\newblock Object-centric learning with slot attention.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, volume~33, pages 11525--11538, 2020.
+
+\bibitem[Lee et~al.(2019)Lee, Lee, Kim, Kosiorek, Choi, and
+  Teh]{lee2019settransformer}
+Juho Lee, Yoonho Lee, Jungtaek Kim, Adam~R. Kosiorek, Seungjin Choi, and
+  Yee~Whye Teh.
+\newblock Set transformer: A framework for attention-based
+  permutation-invariant neural networks.
+\newblock In \emph{Proceedings of the 36th International Conference on Machine
+  Learning (ICML)}, pages 3744--3753. PMLR, 2019.
+
+\bibitem[Jaegle et~al.(2021)Jaegle, Gimeno, Brock, Vinyals, Zisserman, and
+  Carreira]{jaegle2021perceiver}
+Andrew Jaegle, Felix Gimeno, Andrew Brock, Oriol Vinyals, Andrew Zisserman, and
+  Joao Carreira.
+\newblock Perceiver: General perception with iterative attention.
+\newblock In \emph{Proceedings of the 38th International Conference on Machine
+  Learning (ICML)}, pages 4651--4664. PMLR, 2021.
+
+\bibitem[Tsai et~al.(2019)Tsai, Bai, Liang, Kolter, Morency, and
+  Salakhutdinov]{tsai2019multimodal}
+Yao-Hung~Hubert Tsai, Shaojie Bai, Paul~Pu Liang, J.~Zico Kolter,
+  Louis-Philippe Morency, and Ruslan Salakhutdinov.
+\newblock Multimodal transformer for unaligned multimodal language sequences.
+\newblock In \emph{Proceedings of the 57th Annual Meeting of the Association
+  for Computational Linguistics (ACL)}, pages 6558--6569, 2019.
+
+\bibitem[Kingma and Ba(2015)]{kingma2014adam}
+Diederik~P. Kingma and Jimmy Ba.
+\newblock Adam: A method for stochastic optimization.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2015.
+
+\end{thebibliography}

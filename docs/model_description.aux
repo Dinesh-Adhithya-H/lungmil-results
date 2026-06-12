@@ -1,0 +1,147 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldcontentsline\contentsline
+\gdef\contentsline#1#2#3#4{\oldcontentsline{#1}{#2}{#3}}
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\contentsline\oldcontentsline
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{ilse2018abmil}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Overview}{3}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Phase 1.}{3}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Phase 2.}{3}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Dataset Preprocessing}{3}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Raw Data Sources}{3}{subsection.2.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Raw data sources and their identifiers.}}{3}{table.1}\protected@file@percent }
+\newlabel{tab:datasources}{{1}{3}{Raw data sources and their identifiers}{table.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Dataset Statistics and Modality Coverage}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Patient-level modality overlap (UpSet plot). Each bar represents a modality combination. The largest single-modality group is Clinical-only (257 patients). The all-four-modality group contains 60 patients.}}{4}{figure.1}\protected@file@percent }
+\newlabel{fig:modality_overlap}{{1}{4}{Patient-level modality overlap (UpSet plot). Each bar represents a modality combination. The largest single-modality group is Clinical-only (257 patients). The all-four-modality group contains 60 patients}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Temporal Alignment}{4}{subsection.2.3}\protected@file@percent }
+\newlabel{sec:temporal}{{2.3}{4}{Temporal Alignment}{subsection.2.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Timepoint-level ACR label distribution by modality combination. Each bar shows the count of ACR-positive and ACR-negative timepoints for a given modality subset. Clinical-only timepoints are the most frequent.}}{5}{figure.2}\protected@file@percent }
+\newlabel{fig:acr_distribution}{{2}{5}{Timepoint-level ACR label distribution by modality combination. Each bar shows the count of ACR-positive and ACR-negative timepoints for a given modality subset. Clinical-only timepoints are the most frequent}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Label Encoding}{5}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Clinical Feature Tokenisation}{5}{subsection.2.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Continuous features.}{5}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Categorical/binary features.}{5}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Block-diagonal one-hot representation.}{6}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Cluster Count Tokenisation}{6}{subsection.2.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.7}Precomputed \texttt  {.pt} File Format}{6}{subsection.2.7}\protected@file@percent }
+\citation{ilse2018abmil}
+\citation{chen2021mcat}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Data Representation}{7}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Modality Feature Spaces}{7}{subsection.3.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Modality registry. Each bag is a set of instance-level feature vectors.}}{7}{table.2}\protected@file@percent }
+\newlabel{tab:modalities}{{2}{7}{Modality registry. Each bag is a set of instance-level feature vectors}{table.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Clinical representation.}{7}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Phase 1: Unimodal Pre-Training}{7}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Gated Attention MIL Encoder}{7}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:abmil}{{4.1}{7}{Gated Attention MIL Encoder}{subsection.4.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{Instance projection (backbone).}{7}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Gated attention pooling.}{7}{section*.9}\protected@file@percent }
+\newlabel{eq:abmil}{{4}{7}{Gated attention pooling}{equation.4.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Bag representation and classification.}{7}{section*.10}\protected@file@percent }
+\newlabel{eq:rep}{{5}{7}{Bag representation and classification}{equation.4.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Phase 1 Loss Functions}{7}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.1}Task Loss (Weighted Hinge)}{7}{subsubsection.4.2.1}\protected@file@percent }
+\newlabel{eq:hinge}{{6}{7}{Task Loss (Weighted Hinge)}{equation.4.6}{}}
+\citation{zagoruyko2017at}
+\citation{tian2020crd}
+\citation{khosla2020supcon}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.2}Bidirectional Patch Cross-Attention}{8}{subsubsection.4.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Student attends teacher.}{8}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Knowledge Distillation signal.}{8}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.3}Attention Transfer Loss (KD)}{8}{subsubsection.4.2.3}\protected@file@percent }
+\newlabel{eq:kd}{{9}{8}{Attention Transfer Loss (KD)}{equation.4.9}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.4}Cosine Representation Distillation (CRD)}{8}{subsubsection.4.2.4}\protected@file@percent }
+\newlabel{eq:crd}{{10}{8}{Cosine Representation Distillation (CRD)}{equation.4.10}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.5}Supervised Contrastive Loss (SupCon)}{8}{subsubsection.4.2.5}\protected@file@percent }
+\newlabel{eq:supcon}{{11}{8}{Supervised Contrastive Loss (SupCon)}{equation.4.11}{}}
+\citation{locatello2020slots}
+\citation{lee2019settransformer}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.6}Total Phase 1 Objective}{9}{subsubsection.4.2.6}\protected@file@percent }
+\newlabel{eq:p1_total}{{12}{9}{Total Phase 1 Objective}{equation.4.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Phase 1 Hyperparameters}{9}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Phase 1 hyperparameters.}}{9}{table.3}\protected@file@percent }
+\newlabel{tab:p1_hparams}{{3}{9}{Phase 1 hyperparameters}{table.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Phase 2: Multimodal Fusion}{9}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Shared Building Blocks}{9}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.1}Iterative Slot Attention}{9}{subsubsection.5.1.1}\protected@file@percent }
+\newlabel{sec:slots}{{5.1.1}{9}{Iterative Slot Attention}{subsubsection.5.1.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{Set Transformer view.}{9}{section*.13}\protected@file@percent }
+\newlabel{eq:mab}{{13}{9}{Set Transformer view}{equation.5.13}{}}
+\citation{locatello2020slots}
+\newlabel{eq:sab}{{14}{10}{Set Transformer view}{equation.5.14}{}}
+\@writefile{toc}{\contentsline {paragraph}{Slot Attention procedure.}{10}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.2}Cross-Modal Transformer}{10}{subsubsection.5.1.2}\protected@file@percent }
+\newlabel{eq:xfmr}{{15}{10}{Cross-Modal Transformer}{equation.5.15}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}Final Pooling}{10}{subsubsection.5.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{ABMIL pooling.}{10}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{CLS pooling.}{10}{section*.16}\protected@file@percent }
+\citation{chen2021mcat}
+\citation{jaegle2021perceiver,tsai2019multimodal}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Fusion Variants}{11}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.1}Variant 1: Early Fusion (\texttt  {early} / \texttt  {early\_cls})}{11}{subsubsection.5.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.2}Variant 2: Late Fusion (\texttt  {late})}{11}{subsubsection.5.2.2}\protected@file@percent }
+\newlabel{eq:late}{{18}{11}{Variant 2: Late Fusion (\texttt {late})}{equation.5.18}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.3}Variant 3: Middle Fusion (\texttt  {middle} / \texttt  {middle\_cls})}{11}{subsubsection.5.2.3}\protected@file@percent }
+\newlabel{eq:middle}{{19}{11}{Variant 3: Middle Fusion (\texttt {middle} / \texttt {middle\_cls})}{equation.5.19}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.4}Variant 4: Cross-Attention Fusion (\texttt  {crossattn} / \texttt  {crossattn\_cls})}{11}{subsubsection.5.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.5}Variant 5: Cross-Modal Slot Fusion (\texttt  {crossmodal} / \texttt  {crossmodal\_cls})}{11}{subsubsection.5.2.5}\protected@file@percent }
+\citation{kingma2014adam}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.6}Variant 6: Iterative Cross-Modal Fusion (\texttt  {iterative} / \texttt  {iterative\_cls})}{12}{subsubsection.5.2.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Self-attention block.}{12}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Cross-attention block.}{12}{section*.18}\protected@file@percent }
+\newlabel{eq:iterative_ca}{{25}{12}{Cross-attention block}{equation.5.25}{}}
+\@writefile{toc}{\contentsline {paragraph}{After $R$ blocks,}{12}{section*.19}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Phase 2 Summary Table}{12}{subsection.5.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Phase 2 fusion variant overview. ``CA'' = cross-attention, ``SA'' = slot attention, ``XFmr'' = cross-modal transformer, ``pool'' = ABMIL or CLS.}}{12}{table.4}\protected@file@percent }
+\newlabel{tab:p2_variants}{{4}{12}{Phase 2 fusion variant overview. ``CA'' = cross-attention, ``SA'' = slot attention, ``XFmr'' = cross-modal transformer, ``pool'' = ABMIL or CLS}{table.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Phase 2 Hyperparameters}{12}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Training Protocol}{12}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Optimiser.}{12}{section*.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Cross-validation.}{12}{section*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Checkpoint selection.}{12}{section*.22}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Phase 2 hyperparameters.}}{13}{table.5}\protected@file@percent }
+\newlabel{tab:p2_hparams}{{5}{13}{Phase 2 hyperparameters}{table.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Cross-Attention Interpretability}{13}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}ABMIL Attention Maps}{13}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Clinical $\times $ Cluster Cross-Attention}{13}{subsection.7.2}\protected@file@percent }
+\newlabel{eq:clin_clust_attn}{{27}{13}{Clinical $\times $ Cluster Cross-Attention}{equation.7.27}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Cluster-Level Interpretability}{14}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}ABMIL Attention by Cluster Type}{14}{subsection.8.1}\protected@file@percent }
+\newlabel{eq:abmil_cluster}{{28}{14}{ABMIL Attention by Cluster Type}{equation.8.28}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Modality Importance from Classifier Weights}{14}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Self-Attention Cluster Co-Attention}{14}{subsection.8.3}\protected@file@percent }
+\newlabel{eq:coattn}{{30}{14}{Self-Attention Cluster Co-Attention}{equation.8.30}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Slot Attention Cluster Contribution}{14}{subsection.8.4}\protected@file@percent }
+\newlabel{eq:slot_cluster}{{31}{14}{Slot Attention Cluster Contribution}{equation.8.31}{}}
+\bibstyle{unsrtnat}
+\bibdata{references}
+\bibcite{ilse2018abmil}{{1}{2018}{{Ilse et~al.}}{{Ilse, Tomczak, and Welling}}}
+\bibcite{chen2021mcat}{{2}{2021}{{Chen et~al.}}{{Chen, Lu, Weng, Chen, Williamson, Manz, Shady, and Mahmood}}}
+\bibcite{zagoruyko2017at}{{3}{2017}{{Zagoruyko and Komodakis}}{{}}}
+\bibcite{tian2020crd}{{4}{2020}{{Tian et~al.}}{{Tian, Krishnan, and Isola}}}
+\bibcite{khosla2020supcon}{{5}{2020}{{Khosla et~al.}}{{Khosla, Tian, Wang, Garg, Krishnan, Liang, Chen, Liu, Li, Tian, and Isola}}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5}Cross-Modal Slot Connection}{15}{subsection.8.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Three-panel connection figure.}{15}{section*.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Cluster-to-cluster cross-modal attention.}{15}{section*.24}\protected@file@percent }
+\newlabel{eq:cluster_xmodal}{{32}{15}{Cluster-to-cluster cross-modal attention}{equation.8.32}{}}
+\@writefile{toc}{\contentsline {paragraph}{ACR vs.\ Non-ACR comparison.}{15}{section*.25}\protected@file@percent }
+\bibcite{locatello2020slots}{{6}{2020}{{Locatello et~al.}}{{Locatello, Weissenborn, Unterthiner, Mahendran, Heigold, Uszkoreit, Dosovitskiy, and Kipf}}}
+\bibcite{lee2019settransformer}{{7}{2019}{{Lee et~al.}}{{Lee, Lee, Kim, Kosiorek, Choi, and Teh}}}
+\bibcite{jaegle2021perceiver}{{8}{2021}{{Jaegle et~al.}}{{Jaegle, Gimeno, Brock, Vinyals, Zisserman, and Carreira}}}
+\bibcite{tsai2019multimodal}{{9}{2019}{{Tsai et~al.}}{{Tsai, Bai, Liang, Kolter, Morency, and Salakhutdinov}}}
+\bibcite{kingma2014adam}{{10}{2015}{{Kingma and Ba}}{{}}}
+\gdef \@abspage@last{16}
