@@ -44,7 +44,7 @@ P2_MAX_HE_BLOCK = 1024
 class GatedAttentionEncoder(nn.Module):
     """
     Gated attention MIL encoder.
-    backbone: Linear(feat_dim → H) + GELU + Dropout
+    backbone: Linear(feat_dim → H) + Tanh + Dropout
     gate:     att_V (tanh) * att_U (sigmoid) → att_w → softmax → weighted sum
     Returns:  rep (H,), alpha (N,), h (N, H)
     """
@@ -53,7 +53,7 @@ class GatedAttentionEncoder(nn.Module):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.backbone   = nn.Sequential(
-            nn.Linear(feat_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout))
+            nn.Linear(feat_dim, hidden_dim), nn.Tanh(), nn.Dropout(dropout))
         self.pos_enc  = PositionEncoding2D(hidden_dim) if use_spatial else None
         self.att_V    = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())
         self.att_U    = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
@@ -87,7 +87,8 @@ class ModalFFNEncoder(nn.Module):
     width (hidden_dim*2) lets the model learn a modality-specific geometry
     transform before slot attention aligns representations across modalities.
 
-    No final activation — preserves signed directions for MHASlotAttn norms.
+    Tanh preserves both positive and negative directions (no dead units, output in (-1,1)).
+    No final activation on last layer — let MHASlotAttn norms handle scale.
     Compatible with the encode_patches(x, coords) interface used by all encoders.
     """
     def __init__(self, feat_dim: int = 1024, hidden_dim: int = 256,
@@ -95,7 +96,7 @@ class ModalFFNEncoder(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(feat_dim, hidden_dim * 2),
-            nn.GELU(),
+            nn.Tanh(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
@@ -242,7 +243,7 @@ class MHASlotAttn(nn.Module):
                                               dropout=dropout, batch_first=True)
         self.mlp     = nn.Sequential(
             nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, hidden_dim * 2), nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim * 2), nn.Tanh(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, hidden_dim))
 
@@ -267,7 +268,7 @@ class MHASlotAttn(nn.Module):
 class FFN(nn.Module):
     def __init__(self, dim, dropout=0.1):
         super().__init__()
-        self.net  = nn.Sequential(nn.Linear(dim, dim*2), nn.GELU(),
+        self.net  = nn.Sequential(nn.Linear(dim, dim*2), nn.Tanh(),
                                    nn.Dropout(dropout), nn.Linear(dim*2, dim),
                                    nn.Dropout(dropout))
         self.norm = nn.LayerNorm(dim)
