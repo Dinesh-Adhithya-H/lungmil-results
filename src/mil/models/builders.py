@@ -10,9 +10,13 @@ In the two-phase workflow:
 
 v8 architecture
 ---------------
-  slot — TaskSpecificSlotMIL (recommended):
-    1. MHASlotAttn: per-task slot queries per modality attend to all N patches → (K, H)
-    2. Per-task gated ABMIL over K×M slots reveals task-modality importance
+  slot — SharedSlotMIL (recommended):
+    1. Per-modality ModalFFNEncoder: 2-layer FFN (feat_dim → H*2 → H)
+    2. K=128 globally shared slot init tokens
+    3. Per-modality MHASlotAttn (separate weights) → (K, H) per modality
+    4. Mean over present modalities → fair cross-modal aggregation
+    5. Per-task gated ABMIL over K shared slots → task representation
+    6. Per-task cls/survival heads
 
   Simpler ablation baselines (early / late / middle) kept for comparison.
 
@@ -27,12 +31,13 @@ from typing import Dict, List, Optional
 
 import torch
 
-from .encoders import GatedAttentionEncoder, GeoMAESpatialBackbone
+from .encoders import GatedAttentionEncoder, ModalFFNEncoder, GeoMAESpatialBackbone
 from .phase2 import (
     EarlyFusionMIL,
     LateFusionMIL,
     MiddleFusionMIL,
     TaskSpecificSlotMIL,
+    SharedSlotMIL,
 )
 from mil.data.registry import MODALITIES, _feat_dim
 
@@ -45,8 +50,8 @@ P2_N_CROSS_LAYERS = 1      # 1 layer sufficient for small dataset; 4 overfits
 P2_ATTN_DROPOUT   = 0.1
 P2_MAX_PATCHES    = 2048
 P2_MAX_HE_BLOCK   = 99999  # effectively uncapped — use all HE patches (A100/H100 80GB safe up to ~50k)
-P2_SLOT_K         = 8      # default slot size — use as HP (sweep [4, 8, 16])
-P2_SLOT_ITERS     = 3      # fixed; more iterations add cost without clear benefit
+P2_SLOT_K         = 128    # shared slots across modalities
+P2_SLOT_ITERS     = 1      # 1 iter sufficient; more risks overfitting
 
 # Available variants
 P2_VARIANTS = ["slot", "early", "late", "middle"]
@@ -87,19 +92,17 @@ def build_model_v8(
                     mega recommended for slot (trains all 4 tasks jointly)
     """
     import torch.nn as nn
-    encoders   = {m: GatedAttentionEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
-                  for m in MODALITIES}
-    proj_heads = {}   # unused in v8; kept for API compat
     _task_list = TASK_GROUPS.get(task, ["acr_cls", "acr_surv"])
     kw = dict(hidden_dim=HIDDEN_DIM, dropout=DROPOUT, modal_dropout=modal_dropout)
 
     if variant == "slot":
-        # TaskSpecificSlotMIL: per-task slot init tokens + per-task gated ABMIL
-        # No cross-modal transformer — modalities are kept independent.
-        # Per-task slot queries route task-relevant patches into slots;
-        # per-task ABMIL over K*M slots reveals task-modality importance.
-        return TaskSpecificSlotMIL(
-            encoders, proj_heads,
+        # SharedSlotMIL: K=128 globally shared slot tokens, per-modality FFN encoders,
+        # per-modality MHASlotAttn (separate weights), mean fairness aggregation,
+        # per-task gated ABMIL + per-task heads.
+        encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
+                    for m in MODALITIES}
+        return SharedSlotMIL(
+            encoders,
             hidden_dim=HIDDEN_DIM,
             n_heads=P2_N_HEADS,
             dropout=P2_ATTN_DROPOUT,

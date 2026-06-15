@@ -71,6 +71,7 @@ from mil.training.phase1_trainer import (
 )
 from mil.training.phase2_trainer import (
     run_phase2_variant,
+    run_phase2_final,
     run_phase2_hp_sweep,
     run_single_modal_eval,
     P2_LR, P2_WEIGHT_DECAY,
@@ -293,18 +294,14 @@ def run_phase2(args, splits_dict, bag_cache, device, out: Path,
         )
         print(f"  [P2] HP sweep selected: lr={p2_lr}  wd={p2_wd}")
 
-    # Retrain on train+val with selected HP, evaluate on test
-    trainval_recs = train_recs + val_recs
-    metrics  = run_phase2_variant(
+    # Retrain on train+val combined with selected HP — fixed epochs, no val leakage
+    metrics = run_phase2_final(
         model=model, variant=args.p2_variant, fold=fold,
         device=device, bag_cache=bag_cache,
-        train_recs=trainval_recs, val_recs=val_recs, test_recs=test_recs,
+        train_recs=train_recs, val_recs=val_recs, test_recs=test_recs,
         save_dir=save_dir,
-        cox_lambda=COX_LAMBDA,
         task=args.task,
-        patience=P2_PATIENCE,
         lr=p2_lr, weight_decay=p2_wd,
-        alternating=args.alternating,
     )
 
     # ── Single-modal baselines on SAME test set (fair comparison) ─────────────

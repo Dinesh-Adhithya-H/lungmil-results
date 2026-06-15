@@ -1467,6 +1467,129 @@ def run_single_modal_eval(
     return result
 
 
+# ── Phase 2 final trainer (train+val, fixed epochs, no val leakage) ──────────
+
+def run_phase2_final(
+    model: nn.Module,
+    variant: str,
+    fold: int,
+    device: torch.device,
+    bag_cache: "BagCache",
+    train_recs: List[dict],
+    val_recs: List[dict],
+    test_recs: List[dict],
+    save_dir: Path,
+    tag: Optional[str] = None,
+    lr: float = P2_LR,
+    weight_decay: float = P2_WEIGHT_DECAY,
+    n_epochs: int = P2_HP_SWEEP_EPOCHS,  # same as HP sweep — honest epoch count
+    warmup_frac: float = P2_WARMUP_FRAC,
+    task: str = "mega",
+) -> dict:
+    """
+    Final Phase 2 training using the proper nested CV protocol:
+
+      1. HP sweep already selected best (lr, wd) on val set  (on train only).
+      2. THIS function retrains on train+val combined for n_epochs fixed epochs
+         — no held-out val, no early stopping, no val leakage.
+      3. Saves the final (last-epoch) model and evaluates once on test.
+
+    n_epochs defaults to P2_HP_SWEEP_EPOCHS (150) — the epoch count used in
+    the HP sweep. That is the honest estimate of how long to train before
+    memorisation kicks in. Using more epochs with no stopping signal risks
+    overfitting.
+    """
+    vtag     = tag or variant
+    is_mega  = task in ("mega", "both", "both_alt")
+    _surv_ep = "acr"
+
+    print(f"\n  {'='*60}")
+    print(f"  Phase 2 FINAL [{vtag}]  fold={fold}  task={task}  epochs={n_epochs}")
+    print(f"  lr={lr:.0e}  wd={weight_decay:.0e}  train+val combined (no early stopping)")
+    print(f"  {'='*60}")
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    status_path = save_dir / f"status_{vtag}_final.json"
+    if _is_completed(save_dir, tag=f"status_{vtag}_final"):
+        st = _read_status(status_path)
+        print(f"  [{vtag}_final] Already completed (ep={st.get('last_epoch')}). Skipping.")
+        mf = save_dir / f"metrics_{vtag}_final.json"
+        if mf.exists():
+            with open(mf) as f: return json.load(f)
+        return {}
+
+    # Combine train+val — no held-out set during training
+    all_train = train_recs + val_recs
+    print(f"  Combined train+val: {len(all_train)} records  "
+          f"(train={len(train_recs)}, val={len(val_recs)})")
+
+    n_tr = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  Trainable={n_tr:,}")
+
+    cw        = compute_class_weights(all_train)
+    optimizer = torch.optim.Adam(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=lr, weight_decay=weight_decay)
+    scheduler = _flat_cosine_scheduler(optimizer, n_epochs, warmup_frac)
+    scaler    = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
+
+    print(f"  cw=(neg={cw[0]:.3f}, pos={cw[1]:.3f})")
+
+    for epoch in range(n_epochs):
+        loss_d = p2_train_epoch(
+            model, all_train, optimizer, cw, device, bag_cache,
+            scaler, P2_GRAD_ACCUM, mode="simultaneous")
+        tl = loss_d["hinge"] + loss_d["cox"]
+        scheduler.step()
+        if (epoch + 1) % 50 == 0 or epoch == n_epochs - 1:
+            print(f"  [{vtag}_final] ep {epoch+1:3d}/{n_epochs}  train_loss={tl:.4f}  "
+                  f"lr={optimizer.param_groups[0]['lr']:.2e}")
+        _gc()
+
+    # Save final model (last epoch — no checkpoint selection bias)
+    torch.save(model.state_dict(), save_dir / f"model_{vtag}_final.pt")
+    _write_status(status_path, completed=True, last_epoch=n_epochs,
+                  lr=lr, weight_decay=weight_decay)
+    print(f"\n  [{vtag}_final] Training complete. Evaluating on test set...")
+
+    # Evaluate on test only (train/val used for training — can't give unbiased estimate)
+    all_metrics: dict = {}
+    for sn, recs in [("test", test_recs)]:
+        p, l, _, ci, h_list, t_list, e_list = p2_evaluate(
+            model, recs, device, bag_cache, surv_endpoint=_surv_ep, task=task)
+        m = compute_metrics(l, p)
+        m["auprc"] = average_precision_score(l, p) if len(np.unique(l)) > 1 else 0.0
+        if ci is not None:
+            m["c_index"] = ci
+        if is_mega:
+            for ep_name in ("clad", "death"):
+                _, _, _, ci_ep, *_ = p2_evaluate(model, recs, device, bag_cache,
+                                                  surv_endpoint=ep_name, task=task)
+                if ci_ep is not None:
+                    m[f"{ep_name}_c_index"] = ci_ep
+        all_metrics[sn] = {**m, "probs": p.tolist(), "labels": l.tolist()}
+        ci_str = f"  C-idx(ACR)={ci:.4f}" if ci is not None else ""
+        if is_mega:
+            ci_str += (f"  C-idx(CLAD)={m.get('clad_c_index', float('nan')):.4f}"
+                       f"  C-idx(Death)={m.get('death_c_index', float('nan')):.4f}")
+        print(f"  [{vtag}_final] {sn:5s}  AUC={m['auc']:.4f}  BAcc={m['bacc']:.4f}"
+              f"  MCC={m.get('mcc',0):.4f}{ci_str}")
+
+    # Unimodal ablation
+    try:
+        model.eval()
+        uni_abl = evaluate_unimodal_ablation(
+            model, test_recs, device, bag_cache, surv_endpoint=_surv_ep, task=task)
+        all_metrics["unimodal_ablation"] = uni_abl
+    except Exception as e:
+        print(f"  [{vtag}_final] unimodal ablation failed: {e}")
+
+    with open(save_dir / f"metrics_{vtag}_final.json", "w") as f:
+        json.dump(all_metrics, f, indent=2)
+    del model, optimizer, scaler; _gc()
+    return all_metrics
+
+
 # ── Phase 2 runner ────────────────────────────────────────────────────────────
 
 def run_phase2_variant(model: nn.Module, variant: str, fold: int,

@@ -24,6 +24,7 @@ Example
 
 from .encoders import (
     GatedAttentionEncoder,
+    ModalFFNEncoder,
     PositionEncoding2D,
     ProjectionHead,
     MHASlotAttn,
@@ -36,6 +37,7 @@ from .phase2 import (
     LateFusionMIL,
     MiddleFusionMIL,
     TaskSpecificSlotMIL,
+    SharedSlotMIL,
     DualGatedPool,
     MultiTaskHead,
     _load_p1_encoder,
@@ -55,6 +57,7 @@ from .builders import (
 __all__ = [
     # encoders
     "GatedAttentionEncoder",
+    "ModalFFNEncoder",
     "PositionEncoding2D",
     "ProjectionHead",
     "MHASlotAttn",
@@ -67,6 +70,7 @@ __all__ = [
     "LateFusionMIL",
     "MiddleFusionMIL",
     "TaskSpecificSlotMIL",
+    "SharedSlotMIL",
     "DualGatedPool",
     "MultiTaskHead",
     "_load_p1_encoder",

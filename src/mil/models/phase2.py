@@ -16,7 +16,7 @@ Fusion variants
   early  : All patches from all modalities concatenated → DualGatedPool
   late   : Per-modality ABMIL summaries → learnable weighted combination
   middle : Per-modality ABMIL summaries → cross-modal transformer → pool
-  slot   : TaskSpecificSlotMIL — per-task MHASlotAttn + per-task gated ABMIL
+  slot   : SharedSlotMIL — K=128 shared slots, per-modality MHASlotAttn, mean fairness, per-task gated ABMIL
 
 Helper functions
 ----------------
@@ -33,6 +33,7 @@ MiddleFusionMIL
 DualGatedPool
 MultiTaskHead
 TaskSpecificSlotMIL
+SharedSlotMIL
 """
 
 import random
@@ -45,6 +46,7 @@ import torch.nn.functional as F
 
 from .encoders import (
     GatedAttentionEncoder,
+    ModalFFNEncoder,
     ProjectionHead,
     FFN,
     CrossModalTransformer,
@@ -565,6 +567,118 @@ class TaskSpecificSlotMIL(nn.Module):
             rep    = self.norms[task]((alpha * all_slots).sum(0))     # (H,)
 
             # Stage 3: task head
+            out[task] = (self.heads[task](rep).squeeze(), rep)
+
+        return out
+
+
+# ── SharedSlotMIL ─────────────────────────────────────────────────────────────
+
+class SharedSlotMIL(nn.Module):
+    """
+    Multimodal MIL with K globally shared slot tokens and per-modality routing.
+
+    Architecture
+    ------------
+    Stage 1  Per-modality ModalFFNEncoder: (N, feat_dim) → (N, H).
+             2-layer FFN (feat_dim → H*2 → H) learns a modality-specific
+             geometry transform so all modalities can route into the same slot space.
+
+    Stage 2  Per-modality MHASlotAttn (separate MHA weights per modality,
+             shared slot init tokens):
+               slots_m = slot_attn_m(queries=shared_slots, kv=h_m)  →  (K, H)
+             Different MHA weights: each modality learns its own patch→slot routing.
+             Shared slot init: forces slot i to represent the same latent concept
+             regardless of which modality fills it (OT-like cross-modal alignment).
+
+    Stage 3  Mean over present modalities → slots_agg (K, H).
+             Each modality contributes equally (1/M) regardless of patch count,
+             preventing HE (23k patches) from dominating CT (1k) or Clinical (100).
+
+    Stage 4  Per-task gated ABMIL over K shared slots → (H,) task representation.
+             alpha_t reveals which of the K conceptual slots matter per task
+             (interpretable slot importance per task).
+
+    Stage 5  Per-task classification or survival head.
+    """
+    def __init__(self, encoders, hidden_dim: int = 256,
+                 n_heads: int = 4, dropout: float = 0.1,
+                 modal_dropout: float = 0.3, n_slots: int = 128,
+                 n_slot_iters: int = 1,
+                 max_he_patches: int = P2_MAX_HE_BLOCK,
+                 tasks: Optional[List[str]] = None):
+        super().__init__()
+        self.encoders       = nn.ModuleDict(encoders)
+        self.modal_dropout  = modal_dropout
+        self.max_he_patches = max_he_patches
+        self.n_slots        = n_slots
+        _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
+        self.task_names     = _tasks
+
+        # Globally shared slot init tokens — K × H
+        self.shared_slots = nn.Parameter(torch.empty(n_slots, hidden_dim))
+        nn.init.normal_(self.shared_slots, std=0.02)
+
+        # Per-modality slot attention (separate MHA weights, shared init above)
+        self.slot_attns = nn.ModuleDict({
+            mod: MHASlotAttn(hidden_dim, n_slots, n_slot_iters, n_heads, dropout)
+            for mod in encoders
+        })
+
+        # Per-task gated ABMIL over K shared slots
+        self.abmil_V = nn.ModuleDict({
+            t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())    for t in _tasks})
+        self.abmil_U = nn.ModuleDict({
+            t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid()) for t in _tasks})
+        self.abmil_w = nn.ModuleDict({
+            t: nn.Linear(hidden_dim, 1, bias=False)                           for t in _tasks})
+        self.norms   = nn.ModuleDict({
+            t: nn.LayerNorm(hidden_dim)                                       for t in _tasks})
+
+        # Per-task output heads
+        heads: dict = {}
+        for t in _tasks:
+            if TASK_SPEC[t]["type"] == "cls":
+                heads[t] = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+            else:
+                h = nn.Linear(hidden_dim, 1, bias=True)
+                nn.init.normal_(h.weight, 0.0, 0.01)
+                nn.init.zeros_(h.bias)
+                heads[t] = h
+        self.heads = nn.ModuleDict(heads)
+
+    def forward(self, bags: dict, device: torch.device) -> dict:
+        he_coords = bags.get("HE_coords")
+
+        # Stage 1+2: per-modality encode + slot attention
+        mod_slots: List[torch.Tensor] = []
+        for mod, enc in self.encoders.items():
+            t = bags.get(mod)
+            if t is None:
+                continue
+            if self.training and random.random() < self.modal_dropout:
+                continue
+            t = t.to(device, non_blocking=True)
+            if mod == "HE" and t.shape[0] > self.max_he_patches:
+                idx = torch.randperm(t.shape[0], device=device)[:self.max_he_patches]
+                t = t[idx]
+            crds = he_coords if mod == "HE" else None
+            h = enc.encode_patches(t, coords=crds)                    # (N, H)
+            s = self.slot_attns[mod](h, self.shared_slots)             # (K, H)
+            mod_slots.append(s)
+
+        if not mod_slots:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+
+        # Stage 3: mean over present modalities — equal contribution per modality
+        slots_agg = torch.stack(mod_slots, dim=0).mean(dim=0)          # (K, H)
+
+        # Stage 4+5: per-task gated ABMIL → head
+        out: dict = {}
+        for task in self.task_names:
+            gate  = self.abmil_V[task](slots_agg) * self.abmil_U[task](slots_agg)  # (K, H)
+            alpha = torch.softmax(self.abmil_w[task](gate), dim=0)                  # (K, 1)
+            rep   = self.norms[task]((alpha * slots_agg).sum(0))                    # (H,)
             out[task] = (self.heads[task](rep).squeeze(), rep)
 
         return out

@@ -4,7 +4,7 @@
 #SBATCH --qos=gpu_normal
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=300G
 #SBATCH --time=00:30:00
 #SBATCH --array=1,2
 #SBATCH --output=/home/aih/dinesh.haridoss/logs/reeval_slot_%A_%a.out

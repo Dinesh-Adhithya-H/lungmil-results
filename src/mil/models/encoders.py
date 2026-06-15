@@ -10,14 +10,16 @@ resulting representations are already predictive before any cross-modal
 fusion is attempted.
 
 Phase 2 (multimodal fusion): the trained encoder weights are loaded into
-the Phase 2 fusion models (see ``phase2.py``).  ``GatedAttentionEncoder``
-is the backbone used by all fusion variants.  ``MHASlotAttn`` is the
-within-modality slot compression used by ``TaskSpecificSlotMIL``.
-``CrossModalTransformer`` and ``FFN`` are the cross-modal interaction modules.
+the Phase 2 fusion models (see ``phase2.py``).  ``ModalFFNEncoder`` is the
+per-modality 2-layer FFN used by ``SharedSlotMIL``.  ``GatedAttentionEncoder``
+is kept for Phase 1 and ablation baselines.  ``MHASlotAttn`` is the
+within-modality slot compression.  ``CrossModalTransformer`` and ``FFN``
+are the cross-modal interaction modules.
 
 Classes exported
 ----------------
 GatedAttentionEncoder
+ModalFFNEncoder
 PositionEncoding2D
 ProjectionHead
 MHASlotAttn
@@ -42,7 +44,7 @@ P2_MAX_HE_BLOCK = 1024
 class GatedAttentionEncoder(nn.Module):
     """
     Gated attention MIL encoder.
-    backbone: Linear(feat_dim → H) + ReLU + Dropout
+    backbone: Linear(feat_dim → H) + GELU + Dropout
     gate:     att_V (tanh) * att_U (sigmoid) → att_w → softmax → weighted sum
     Returns:  rep (H,), alpha (N,), h (N, H)
     """
@@ -51,7 +53,7 @@ class GatedAttentionEncoder(nn.Module):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.backbone   = nn.Sequential(
-            nn.Linear(feat_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
+            nn.Linear(feat_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout))
         self.pos_enc  = PositionEncoding2D(hidden_dim) if use_spatial else None
         self.att_V    = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())
         self.att_U    = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
@@ -74,6 +76,33 @@ class GatedAttentionEncoder(nn.Module):
         alpha = F.softmax(raw, dim=0)                           # (N, 1)
         rep   = (alpha * h).sum(dim=0)                          # (H,)
         return rep, alpha.squeeze(1), h
+
+
+class ModalFFNEncoder(nn.Module):
+    """
+    Per-modality 2-layer FFN encoder for SharedSlotMIL.
+
+    Projects raw patch features (e.g. L2-normalized UNI-2 1024-dim) into a
+    shared hidden_dim slot space using a wider intermediate layer.  The extra
+    width (hidden_dim*2) lets the model learn a modality-specific geometry
+    transform before slot attention aligns representations across modalities.
+
+    No final activation — preserves signed directions for MHASlotAttn norms.
+    Compatible with the encode_patches(x, coords) interface used by all encoders.
+    """
+    def __init__(self, feat_dim: int = 1024, hidden_dim: int = 256,
+                 dropout: float = 0.4):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(feat_dim, hidden_dim * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+        )
+
+    def encode_patches(self, x: torch.Tensor, coords=None) -> torch.Tensor:
+        """x: (N, feat_dim) → (N, hidden_dim)"""
+        return self.net(x)
 
 
 class GeoMAESpatialBackbone(nn.Module):

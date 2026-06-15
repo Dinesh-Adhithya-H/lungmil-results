@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import torch
 
 from mil.data.loader import preload_bags
-from mil.data.splits import load_splits
+from mil.data.splits import build_splits_multitask
 from mil.models.builders import build_model_v8
 from mil.training.phase2_trainer import p2_evaluate, evaluate_unimodal_ablation
 
@@ -52,10 +52,10 @@ def main():
     print(f"Re-evaluating fold={fold} on {device}")
 
     # Load splits
-    splits = load_splits(SPLITS_CSV, split=SPLIT)
-    train_recs = splits[fold]["train"]
-    val_recs   = splits[fold]["val"]
-    test_recs  = splits[fold]["test"]
+    splits = build_splits_multitask(SAMPLES_DIR, SPLITS_CSV, fold=fold, split=SPLIT)
+    train_recs = splits["train"]
+    val_recs   = splits["val"]
+    test_recs  = splits["test"]
     all_stems  = list({r["stem"] for r in train_recs + val_recs + test_recs})
 
     print(f"  Loading bags ({len(all_stems)} stems)...")
