@@ -1556,12 +1556,37 @@ def run_phase2_final(
     best_metric  = float("inf") if is_surv_only else -1.0
     best_epoch   = 0
     no_improve   = 0
+    start_epoch  = 0
     ckpt_dir     = save_dir / f"ckpts_{vtag}_final"
     ckpt_dir.mkdir(exist_ok=True)
+    ckpt_every   = 10   # save resume checkpoint every N epochs
+
+    # ── Resume from last periodic checkpoint if available ─────────────────
+    resume_ckpts = sorted(ckpt_dir.glob("ep_*.pt"),
+                          key=lambda p: int(p.stem.split("_")[1]))
+    if resume_ckpts:
+        rc = resume_ckpts[-1]
+        try:
+            state = torch.load(rc, map_location=device, weights_only=False)
+            model.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scheduler.load_state_dict(state["scheduler"])
+            if scaler and state.get("scaler"):
+                scaler.load_state_dict(state["scaler"])
+            start_epoch  = state["epoch"]
+            best_metric  = state.get("best_metric", best_metric)
+            best_epoch   = state.get("best_epoch", 0)
+            no_improve   = state.get("no_improve", 0)
+            print(f"  [{vtag}_final] Resumed from ep {start_epoch} "
+                  f"(best_ep={best_epoch}  best_metric={best_metric:.4f}  "
+                  f"no_improve={no_improve})")
+        except Exception as e:
+            print(f"  [{vtag}_final] Could not resume from {rc.name}: {e}. Starting fresh.")
+            start_epoch = 0
 
     print(f"  cw=(neg={cw[0]:.3f}, pos={cw[1]:.3f})  grad_accum={grad_accum}")
 
-    for epoch in range(n_epochs):
+    for epoch in range(start_epoch, n_epochs):
         model.train()
         loss_d = p2_train_epoch(
             model, train_recs, optimizer, cw, device, bag_cache,
@@ -1617,7 +1642,26 @@ def run_phase2_final(
                 if no_improve >= patience:
                     print(f"  [{vtag}_final] Early stop at ep {epoch+1} "
                           f"(best_ep={best_epoch}  combined={best_metric:.4f})")
+                    _gc()
                     break
+
+        # Periodic checkpoint every ckpt_every epochs (keeps only the last one)
+        if (epoch + 1) % ckpt_every == 0:
+            ckpt_path = ckpt_dir / f"ep_{epoch+1:04d}.pt"
+            torch.save({
+                "model":       model.state_dict(),
+                "optimizer":   optimizer.state_dict(),
+                "scheduler":   scheduler.state_dict(),
+                "scaler":      scaler.state_dict() if scaler else None,
+                "epoch":       epoch + 1,
+                "best_metric": best_metric,
+                "best_epoch":  best_epoch,
+                "no_improve":  no_improve,
+            }, ckpt_path)
+            # Delete previous periodic checkpoints to save disk
+            for old in ckpt_dir.glob("ep_*.pt"):
+                if old != ckpt_path:
+                    old.unlink(missing_ok=True)
         _gc()
 
     # Load best-val checkpoint
