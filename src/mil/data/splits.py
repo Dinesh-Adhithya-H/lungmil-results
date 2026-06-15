@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .registry import MODALITIES, _pres_col
-from .labels import acr_label, compute_tte_next_acr
+from .labels import acr_label, compute_tte_first_acr_episode, compute_tte_next_acr
 
 
 def build_splits(samples_dir, splits_csv, fold, split=None):
@@ -187,7 +187,7 @@ def build_splits_multitask(samples_dir, splits_csv, fold, split=None):
     fold_col = f"split{split}_fold{fold}" if split is not None else f"fold_{fold}"
     assert fold_col in df.columns
 
-    tte_map = compute_tte_next_acr(df)
+    tte_map = compute_tte_first_acr_episode(df)
 
     splits_dict: Dict[str, list] = {"train": [], "val": [], "test": []}
     n_dropped = 0

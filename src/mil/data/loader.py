@@ -40,10 +40,11 @@ def _load_one_bag(args):
             if t.dim() == 1: t = t.unsqueeze(0)
             entry[mod] = t
 
-    coords_t = inp.get("HE_coords")
-    if coords_t is not None and isinstance(coords_t, torch.Tensor) and coords_t.numel() > 0:
-        if coords_t.dtype == torch.float16: coords_t = coords_t.float()
-        entry["HE_coords"] = coords_t
+    for coords_key in ("HE_coords", "CT_coords"):
+        coords_t = inp.get(coords_key)
+        if coords_t is not None and isinstance(coords_t, torch.Tensor) and coords_t.numel() > 0:
+            if coords_t.dtype == torch.float16: coords_t = coords_t.float()
+            entry[coords_key] = coords_t
 
     raw_coh = data.get("cluster_count_onehot") or {}
     for mod, agg_key in [("HE","HE_cells"),("BAL","BAL_cells"),("CT","CT_cells")]:

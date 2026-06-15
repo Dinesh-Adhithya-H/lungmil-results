@@ -20,12 +20,15 @@ def hinge_loss(logit: torch.Tensor, target: torch.Tensor,
 
 
 def compute_class_weights(records) -> Tuple[float, float]:
-    """Inverse-frequency class weights capped at 20× to avoid extreme weighting."""
-    n_pos = sum(1 for r in records if r["label"] == 1)
-    n_neg = sum(1 for r in records if r["label"] == 0)
-    n_tot = max(n_pos + n_neg, 1)
-    w_pos = min(n_tot / (2.0 * max(n_pos, 1)), 20.0)
-    w_neg = min(n_tot / (2.0 * max(n_neg, 1)), 20.0)
+    """Balanced class weights via sklearn, capped at 20× to avoid extreme weighting."""
+    import numpy as np
+    from sklearn.utils.class_weight import compute_class_weight
+    labels = [r["label"] for r in records if r.get("label") in (0, 1)]
+    if not labels or len(set(labels)) < 2:
+        return (1.0, 1.0)
+    y = np.array(labels)
+    weights = compute_class_weight(class_weight="balanced", classes=np.array([0, 1]), y=y)
+    w_neg, w_pos = float(min(weights[0], 20.0)), float(min(weights[1], 20.0))
     return (w_neg, w_pos)
 
 
@@ -57,18 +60,12 @@ def cox_breslow_loss(cox_buffer) -> Optional[torch.Tensor]:
 
 
 def c_index(hazards, times, events) -> float:
-    """Harrell's concordance index (0.5 = random, 1.0 = perfect)."""
-    n          = len(hazards)
-    concordant = discordant = 0
-    for i in range(n):
-        for j in range(n):
-            if events[j] == 1 and times[j] < times[i]:
-                if hazards[j] > hazards[i]:
-                    concordant += 1
-                elif hazards[j] < hazards[i]:
-                    discordant += 1
-    total = concordant + discordant
-    return concordant / total if total > 0 else 0.5
+    """Harrell's C-index via lifelines.utils.concordance_index."""
+    from lifelines.utils import concordance_index as _ci
+    try:
+        return float(_ci(times, [-h for h in hazards], events))
+    except Exception:
+        return 0.5
 
 
 def surv_con_loss(

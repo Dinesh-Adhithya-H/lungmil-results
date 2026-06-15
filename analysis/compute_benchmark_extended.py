@@ -34,15 +34,24 @@ MODALITIES = ["HE", "BAL", "CT", "Clinical"]
 
 TASKS = [
     # (task_key,  metrics_json_key,  display_label)
-    ("acr_cls",   "bacc",    "ACR cls (BACC)"),
-    ("acr_surv",  "c_index", "ACR surv (C-idx)"),
-    ("clad_surv", "c_index", "CLAD surv (C-idx)"),
-    ("death_surv","c_index", "Death surv (C-idx)"),
+    ("acr_cls",   "bacc",          "ACR cls (BACC)"),
+    ("acr_surv",  "c_index",       "ACR surv (C-idx)"),
+    ("clad_surv", "c_index",       "CLAD surv (C-idx)"),
+    ("death_surv","c_index",       "Death surv (C-idx)"),
 ]
 TASK_KEYS = [t[0] for t in TASKS]
 
 P1PT = {"acr_cls":"acr", "acr_surv":"acr_surv", "clad_surv":"clad", "death_surv":"death"}
 SUFF = {"acr_cls":"_cls", "acr_surv":"_acr_surv", "clad_surv":"_clad_surv", "death_surv":"_death_surv"}
+
+# Slot mega model: all tasks in one JSON, CLAD/death use distinct keys
+SLOT_MEGA_DIR  = "slot_mega_tss"
+SLOT_MEGA_KEYS = {
+    "acr_cls":   "bacc",
+    "acr_surv":  "c_index",
+    "clad_surv": "clad_c_index",
+    "death_surv": "death_c_index",
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -74,7 +83,7 @@ def collect_all() -> dict[str, dict[str, list[float]]]:
                     res[f"P1-{mod}"][tl].append(v)
 
     for tl, mk, _ in TASKS:
-        for base in ["early", "middle", "late", "slot"]:
+        for base in ["early", "middle", "late"]:
             for fold in range(4):
                 mf = P2DIR / f"split1_fold{fold}/{base}{SUFF[tl]}/metrics_{base}.json"
                 if not mf.exists():
@@ -89,6 +98,22 @@ def collect_all() -> dict[str, dict[str, list[float]]]:
                     v2 = ab.get(mk)
                     if v2 is not None:
                         res[f"P2-{base}-abl-{mod}"][tl].append(float(v2))
+
+    # Slot mega model: one JSON per fold, CLAD/death use distinct metric keys
+    for tl, _, _ in TASKS:
+        mega_mk = SLOT_MEGA_KEYS[tl]
+        for fold in range(4):
+            mf = P2DIR / f"split1_fold{fold}/{SLOT_MEGA_DIR}/metrics_slot.json"
+            d  = load_json(mf)
+            v  = get_test(d, mega_mk)
+            if v is not None:
+                res["P2-slot"][tl].append(v)
+
+            # unimodal ablation — ablation uses same key as task primary metric
+            for mod, ab in d.get("unimodal_ablation", {}).items():
+                v2 = ab.get(mega_mk)
+                if v2 is not None:
+                    res[f"P2-slot-abl-{mod}"][tl].append(float(v2))
 
     return res
 
