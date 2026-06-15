@@ -1,15 +1,83 @@
 """
-Model classes are defined in train_mm_abmil_v7.py and importable via the
-package once src/ is on the Python path.  Use build_model_v7() as the
-canonical factory — it handles all fusion variants.
+Multimodal ABMIL model classes and factory.
+
+Two-phase design
+----------------
+Phase 1 — per-modality pre-training: each modality's encoder is trained
+independently to compress raw patch features into compact summary tokens
+that are already predictive before any cross-modal fusion is attempted.
+See ``phase1.py`` (SingleModalMIL).
+
+Phase 2 — multimodal fusion: takes the Phase 1 summary tokens from all
+available modalities and fuses them using one of several strategies.
+See ``phase2.py`` (EarlyFusionMIL, LateFusionMIL, MiddleFusionMIL,
+TaskSpecificSlotMIL, DualGatedPool, MultiTaskHead).
+
+The canonical entry point is ``build_model`` (alias for ``build_model_v8``)
+from ``builders.py``.
 
 Example
 -------
->>> import sys; sys.path.insert(0, "/path/to/chicago_mil/src")
->>> from mil.models.builders import build_model_v7
->>> model = build_model_v7("middle")
-
-The full extraction of model classes into submodules is tracked in the
-project roadmap and will be completed incrementally to avoid breaking
-existing SLURM jobs.
+>>> from mil.models.builders import build_model
+>>> model = build_model("slot", task="mega")
 """
+
+from .encoders import (
+    GatedAttentionEncoder,
+    PositionEncoding2D,
+    ProjectionHead,
+    MHASlotAttn,
+    FFN,
+    CrossModalTransformer,
+)
+from .phase1 import SingleModalMIL
+from .phase2 import (
+    EarlyFusionMIL,
+    LateFusionMIL,
+    MiddleFusionMIL,
+    TaskSpecificSlotMIL,
+    DualGatedPool,
+    MultiTaskHead,
+    _load_p1_encoder,
+    _load_p1_proj_head,
+    _abmil_pool,
+    _pool,
+)
+from .builders import (
+    build_model,
+    build_model_v8,
+    TASK_GROUPS,
+    P2_VARIANTS,
+    HIDDEN_DIM,
+    DROPOUT,
+)
+
+__all__ = [
+    # encoders
+    "GatedAttentionEncoder",
+    "PositionEncoding2D",
+    "ProjectionHead",
+    "MHASlotAttn",
+    "FFN",
+    "CrossModalTransformer",
+    # phase1
+    "SingleModalMIL",
+    # phase2
+    "EarlyFusionMIL",
+    "LateFusionMIL",
+    "MiddleFusionMIL",
+    "TaskSpecificSlotMIL",
+    "DualGatedPool",
+    "MultiTaskHead",
+    "_load_p1_encoder",
+    "_load_p1_proj_head",
+    "_abmil_pool",
+    "_pool",
+    # factory
+    "build_model",
+    "build_model_v8",
+    "TASK_GROUPS",
+    "P2_VARIANTS",
+    "HIDDEN_DIM",
+    "DROPOUT",
+]
