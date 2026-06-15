@@ -19,7 +19,7 @@
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=220G
 #SBATCH --gres=gpu:1 --constraint="a100_80gb|h100_80gb"
 #SBATCH --time=24:00:00
-#SBATCH --signal=B:SIGTERM@120
+#SBATCH --signal=B:SIGUSR1@120
 #SBATCH --output=/home/aih/dinesh.haridoss/chicago_mil/results_mm_abmil_v8/slurm_logs/%j_slot_shared_f%x.out
 #SBATCH --error=/home/aih/dinesh.haridoss/chicago_mil/results_mm_abmil_v8/slurm_logs/%j_slot_shared_f%x.err
 #SBATCH --mail-type=NONE
@@ -74,9 +74,9 @@ echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | hea
 RESUBMIT=0
 PY_PID=""
 
-sigterm_handler() {
+walltime_handler() {
     echo ""
-    echo "[SIGTERM] Wall-time approaching. Stopping Python and resubmitting..."
+    echo "[SIGUSR1] Wall-time approaching. Stopping Python and resubmitting..."
     RESUBMIT=1
     if [[ -n "${PY_PID}" ]]; then
         kill -SIGTERM "${PY_PID}" 2>/dev/null
@@ -87,7 +87,7 @@ sigterm_handler() {
         kill -SIGKILL "${PY_PID}" 2>/dev/null || true
     fi
 }
-trap sigterm_handler SIGTERM
+trap walltime_handler SIGUSR1
 
 python3 -u "${HOME_MIL}/train_mm_abmil_v8.py" \
     --samples-dir    "${SAMPLES}"    \
