@@ -122,8 +122,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--phase",        choices=["p1", "p2", "both"], default="both")
     p.add_argument("--p2-variant",     default="slot",
                    help="Phase 2 fusion variant: slot (recommended) / early / late / middle")
-    p.add_argument("--slot-k",         type=int, default=8,
-                   help="Number of slot tokens per modality (HP; sweep [4, 8, 16])")
+    p.add_argument("--slot-k",         type=int, default=128,
+                   help="Number of shared slot tokens (default 128 for SharedSlotMIL)")
     p.add_argument("--n-cross-layers", type=int, default=4,
                    help="CrossModalTransformer depth (HP)")
     p.add_argument("--modal-dropout",  type=float, default=0.3,

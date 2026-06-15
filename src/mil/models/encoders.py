@@ -87,8 +87,10 @@ class ModalFFNEncoder(nn.Module):
     width (hidden_dim*2) lets the model learn a modality-specific geometry
     transform before slot attention aligns representations across modalities.
 
-    Tanh preserves both positive and negative directions (no dead units, output in (-1,1)).
-    No final activation on last layer — let MHASlotAttn norms handle scale.
+    Tanh preserves both positive and negative directions (no dead units).
+    Final L2 normalization keeps patch features on the unit sphere — preserving
+    the cosine-similarity geometry of foundation model (UNI-2) embeddings so
+    that slot attention computes meaningful dot products.
     Compatible with the encode_patches(x, coords) interface used by all encoders.
     """
     def __init__(self, feat_dim: int = 1024, hidden_dim: int = 256,
@@ -102,8 +104,8 @@ class ModalFFNEncoder(nn.Module):
         )
 
     def encode_patches(self, x: torch.Tensor, coords=None) -> torch.Tensor:
-        """x: (N, feat_dim) → (N, hidden_dim)"""
-        return self.net(x)
+        """x: (N, feat_dim) → (N, hidden_dim), L2-normalized (unit sphere)."""
+        return F.normalize(self.net(x), dim=-1)
 
 
 class GeoMAESpatialBackbone(nn.Module):
@@ -228,8 +230,13 @@ class MHASlotAttn(nn.Module):
     already carries Phase-1 trained representations.
 
     Per iteration (n_iters rounds):
-      slots ← slots + MHA(norm_q(slots), norm_kv(h), norm_kv(h))
+      slots ← slots + MHA(norm_q(slots), L2_norm(h), L2_norm(h))
       slots ← slots + FFN(norm(slots))
+
+    Keys/values use L2 normalisation (not LayerNorm) so that dot-product attention
+    computes cosine similarities — preserving the spherical geometry of foundation
+    model (UNI-2) embeddings that enter via ModalFFNEncoder.
+    Queries (slot tokens) keep LayerNorm since they are learned, not pre-spherical.
     """
     def __init__(self, hidden_dim: int, n_slots: int = 8,
                  n_iters: int = 3, n_heads: int = 4, dropout: float = 0.1):
@@ -238,7 +245,6 @@ class MHASlotAttn(nn.Module):
         self.slot_init = nn.Parameter(torch.empty(n_slots, hidden_dim))
         nn.init.normal_(self.slot_init, std=0.02)
         self.norm_q  = nn.LayerNorm(hidden_dim)
-        self.norm_kv = nn.LayerNorm(hidden_dim)
         self.mha     = nn.MultiheadAttention(hidden_dim, n_heads,
                                               dropout=dropout, batch_first=True)
         self.mlp     = nn.Sequential(
@@ -256,7 +262,7 @@ class MHASlotAttn(nn.Module):
         Returns: (K, H) — slot features
         """
         slots = (init if init is not None else self.slot_init).clone()  # (K, H)
-        kv    = self.norm_kv(h).unsqueeze(0)           # (1, N, H)
+        kv    = F.normalize(h, dim=-1).unsqueeze(0)    # (1, N, H) — L2 norm preserves sphere
         for _ in range(self.n_iters):
             q      = self.norm_q(slots).unsqueeze(0)   # (1, K, H)
             out, _ = self.mha(q, kv, kv)               # (1, K, H); softmax over N

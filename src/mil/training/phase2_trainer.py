@@ -584,6 +584,13 @@ def p2_train_one_epoch_multitask(
 
     total_hinge = 0.0; total_cox = 0.0; n_hinge = 0; n_cox_steps = 0
     accum_step = 0
+    # batch distribution counters (reset each epoch)
+    batch_stats = {
+        "n_cls": 0, "n_cls_pos": 0,
+        "acr_surv_event": 0, "acr_surv_cens": 0,
+        "clad_event": 0,     "clad_cens": 0,
+        "death_event": 0,    "death_cens": 0,
+    }
 
     # Accumulate losses as LIVE tensors — do NOT backward per-record.
     # All graphs stay alive until _flush() calls a single backward.
@@ -659,6 +666,8 @@ def p2_train_one_epoch_multitask(
                     pending_loss = L_h if pending_loss is None else pending_loss + L_h
                     total_hinge += L_h.item() * grad_accum
                     n_hinge += 1
+                    batch_stats["n_cls"] += 1
+                    batch_stats["n_cls_pos"] += int(label)
 
             # ── Accumulate hazard tensors (graph stays alive) ─────────
             for tk, (tk_key, ev_key, _) in surv_spec.items():
@@ -671,6 +680,12 @@ def p2_train_one_epoch_multitask(
                     e_safe = (float(e_val) if (e_val is not None and
                               not math.isnan(float(e_val))) else 0.0)
                     cox_bufs[tk].append((hazard_val.float(), float(t_val), e_safe))
+                    # track event/censoring counts
+                    _tk_short = tk.replace("_surv", "").replace("acr_surv", "acr_surv")
+                    if e_safe > 0:
+                        batch_stats[f"{_tk_short}_event"] = batch_stats.get(f"{_tk_short}_event", 0) + 1
+                    else:
+                        batch_stats[f"{_tk_short}_cens"] = batch_stats.get(f"{_tk_short}_cens", 0) + 1
 
             accum_step += 1
 
@@ -691,8 +706,9 @@ def p2_train_one_epoch_multitask(
         _flush()
 
     return {
-        "hinge": total_hinge / max(n_hinge, 1),
-        "cox":   total_cox_ref[0] / max(n_cox_steps, 1),
+        "hinge":       total_hinge / max(n_hinge, 1),
+        "cox":         total_cox_ref[0] / max(n_cox_steps, 1),
+        "batch_stats": batch_stats,
     }
 
 
@@ -1467,7 +1483,7 @@ def run_single_modal_eval(
     return result
 
 
-# ── Phase 2 final trainer (train+val, fixed epochs, no val leakage) ──────────
+# ── Phase 2 final trainer (train only, val early-stopping, test eval) ──────────
 
 def run_phase2_final(
     model: nn.Module,
@@ -1482,77 +1498,142 @@ def run_phase2_final(
     tag: Optional[str] = None,
     lr: float = P2_LR,
     weight_decay: float = P2_WEIGHT_DECAY,
-    n_epochs: int = P2_HP_SWEEP_EPOCHS,  # same as HP sweep — honest epoch count
+    n_epochs: int = P2_HP_SWEEP_EPOCHS,
     warmup_frac: float = P2_WARMUP_FRAC,
     task: str = "mega",
+    patience: int = 10,
+    eval_every: int = P2_EVAL_EVERY,
+    grad_accum: int = 32,
 ) -> dict:
     """
-    Final Phase 2 training using the proper nested CV protocol:
+    Final Phase 2 training with val-monitored early stopping.
 
-      1. HP sweep already selected best (lr, wd) on val set  (on train only).
-      2. THIS function retrains on train+val combined for n_epochs fixed epochs
-         — no held-out val, no early stopping, no val leakage.
-      3. Saves the final (last-epoch) model and evaluates once on test.
+    Protocol
+    --------
+      1. HP sweep already selected best (lr, wd) on val (train split only).
+      2. THIS function trains on train_recs ONLY — val_recs remain independent.
+      3. Evaluates val every eval_every epochs; saves best-val checkpoint.
+      4. Early stopping if val BACC (or Cox loss for surv) does not improve
+         for `patience` consecutive eval periods.
+      5. Loads best-val checkpoint and evaluates ONCE on test.
 
-    n_epochs defaults to P2_HP_SWEEP_EPOCHS (150) — the epoch count used in
-    the HP sweep. That is the honest estimate of how long to train before
-    memorisation kicks in. Using more epochs with no stopping signal risks
-    overfitting.
+    Val is independent throughout (never in training data) so early stopping
+    is an honest overfitting signal.  Max 150 epochs guards against runaway.
     """
     vtag     = tag or variant
     is_mega  = task in ("mega", "both", "both_alt")
     _surv_ep = "acr"
+    is_surv_only = task in ("acr_surv", "surv", "clad_surv", "death_surv")
 
     print(f"\n  {'='*60}")
-    print(f"  Phase 2 FINAL [{vtag}]  fold={fold}  task={task}  epochs={n_epochs}")
-    print(f"  lr={lr:.0e}  wd={weight_decay:.0e}  train+val combined (no early stopping)")
+    print(f"  Phase 2 FINAL [{vtag}]  fold={fold}  task={task}  max_epochs={n_epochs}")
+    print(f"  lr={lr:.0e}  wd={weight_decay:.0e}  patience={patience}  "
+          f"eval_every={eval_every}")
+    print(f"  train={len(train_recs)}  val={len(val_recs)} (independent, for early-stop)")
     print(f"  {'='*60}")
     save_dir.mkdir(parents=True, exist_ok=True)
 
     status_path = save_dir / f"status_{vtag}_final.json"
     if _is_completed(save_dir, tag=f"status_{vtag}_final"):
         st = _read_status(status_path)
-        print(f"  [{vtag}_final] Already completed (ep={st.get('last_epoch')}). Skipping.")
+        print(f"  [{vtag}_final] Already completed "
+              f"(best_ep={st.get('best_epoch')}). Skipping.")
         mf = save_dir / f"metrics_{vtag}_final.json"
         if mf.exists():
             with open(mf) as f: return json.load(f)
         return {}
 
-    # Combine train+val — no held-out set during training
-    all_train = train_recs + val_recs
-    print(f"  Combined train+val: {len(all_train)} records  "
-          f"(train={len(train_recs)}, val={len(val_recs)})")
-
     n_tr = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Trainable={n_tr:,}")
 
-    cw        = compute_class_weights(all_train)
+    cw        = compute_class_weights(train_recs)
     optimizer = torch.optim.Adam(
         [p for p in model.parameters() if p.requires_grad],
         lr=lr, weight_decay=weight_decay)
     scheduler = _flat_cosine_scheduler(optimizer, n_epochs, warmup_frac)
     scaler    = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
 
-    print(f"  cw=(neg={cw[0]:.3f}, pos={cw[1]:.3f})")
+    best_metric  = float("inf") if is_surv_only else -1.0
+    best_epoch   = 0
+    no_improve   = 0
+    ckpt_dir     = save_dir / f"ckpts_{vtag}_final"
+    ckpt_dir.mkdir(exist_ok=True)
+
+    print(f"  cw=(neg={cw[0]:.3f}, pos={cw[1]:.3f})  grad_accum={grad_accum}")
 
     for epoch in range(n_epochs):
+        model.train()
         loss_d = p2_train_epoch(
-            model, all_train, optimizer, cw, device, bag_cache,
-            scaler, P2_GRAD_ACCUM, mode="simultaneous")
-        tl = loss_d["hinge"] + loss_d["cox"]
+            model, train_recs, optimizer, cw, device, bag_cache,
+            scaler, grad_accum, mode="simultaneous")
         scheduler.step()
-        if (epoch + 1) % 50 == 0 or epoch == n_epochs - 1:
-            print(f"  [{vtag}_final] ep {epoch+1:3d}/{n_epochs}  train_loss={tl:.4f}  "
-                  f"lr={optimizer.param_groups[0]['lr']:.2e}")
+
+        if (epoch + 1) % eval_every == 0 or epoch == n_epochs - 1:
+            # Evaluate val — BACC + all C-indices for mega task
+            vp, vl, val_loss, ci_acr, *_ = p2_evaluate(
+                model, val_recs, device, bag_cache,
+                surv_endpoint="acr", task=task)
+            val_m   = compute_metrics(vl, vp) if len(np.unique(vl)) > 1 else {}
+            val_bacc = val_m.get("bacc", 0.0)
+            val_auc  = val_m.get("auc",  0.0)
+
+            ci_vals: dict = {}
+            if is_mega:
+                for ep_name in ("acr", "clad", "death"):
+                    _, _, _, ci_ep, *_ = p2_evaluate(
+                        model, val_recs, device, bag_cache,
+                        surv_endpoint=ep_name, task=task)
+                    if ci_ep is not None:
+                        ci_vals[ep_name] = ci_ep
+
+            # Combined early-stopping metric: mean(BACC, all available C-indices)
+            ci_list = list(ci_vals.values())
+            metric  = (val_bacc + sum(ci_list)) / (1 + len(ci_list))
+            improved = metric > best_metric
+
+            bs    = loss_d.get("batch_stats", {})
+            ci_str = "  ".join(f"ci_{k}={v:.4f}" for k, v in ci_vals.items())
+            print(f"  [{vtag}_final] ep {epoch+1:3d}/{n_epochs}"
+                  f"  hinge={loss_d.get('hinge', 0):.4f}"
+                  f"  cox={loss_d.get('cox', 0):.4f}"
+                  f"  lr={optimizer.param_groups[0]['lr']:.2e}"
+                  f"  | cls={bs.get('n_cls',0)}(pos={bs.get('n_cls_pos',0)})"
+                  f"  acr_surv={bs.get('acr_surv_event',0)}ev/{bs.get('acr_surv_cens',0)}cs"
+                  f"  clad={bs.get('clad_event',0)}ev/{bs.get('clad_cens',0)}cs"
+                  f"  death={bs.get('death_event',0)}ev/{bs.get('death_cens',0)}cs"
+                  f"  | val_bacc={val_bacc:.4f}  val_auc={val_auc:.4f}"
+                  + (f"  {ci_str}" if ci_str else "")
+                  + f"  combined={metric:.4f}"
+                  + ("  *best*" if improved else
+                     f"  (no_improve={no_improve+1}/{patience})"))
+
+            if improved:
+                best_metric = metric
+                best_epoch  = epoch + 1
+                no_improve  = 0
+                torch.save(model.state_dict(), ckpt_dir / "best_val.pt")
+            else:
+                no_improve += 1
+                if no_improve >= patience:
+                    print(f"  [{vtag}_final] Early stop at ep {epoch+1} "
+                          f"(best_ep={best_epoch}  combined={best_metric:.4f})")
+                    break
         _gc()
 
-    # Save final model (last epoch — no checkpoint selection bias)
+    # Load best-val checkpoint
+    best_ckpt = ckpt_dir / "best_val.pt"
+    if best_ckpt.exists():
+        model.load_state_dict(torch.load(best_ckpt, map_location=device,
+                                         weights_only=True))
+        print(f"  [{vtag}_final] Loaded best-val checkpoint (ep={best_epoch})")
+    else:
+        print(f"  [{vtag}_final] No best-val checkpoint found; using last epoch.")
+
     torch.save(model.state_dict(), save_dir / f"model_{vtag}_final.pt")
-    _write_status(status_path, completed=True, last_epoch=n_epochs,
-                  lr=lr, weight_decay=weight_decay)
+    _write_status(status_path, completed=True, best_epoch=best_epoch,
+                  best_val_metric=best_metric, lr=lr, weight_decay=weight_decay)
     print(f"\n  [{vtag}_final] Training complete. Evaluating on test set...")
 
-    # Evaluate on test only (train/val used for training — can't give unbiased estimate)
     all_metrics: dict = {}
     for sn, recs in [("test", test_recs)]:
         p, l, _, ci, h_list, t_list, e_list = p2_evaluate(
