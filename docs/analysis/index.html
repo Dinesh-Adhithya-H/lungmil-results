@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lung Transplant — Nature-level Multimodal Analysis</title>
+<style>
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, sans-serif; margin: 0; padding: 20px; }
+  h1 { color: #58a6ff; font-size: 1.6rem; border-bottom: 1px solid #30363d; padding-bottom: 12px; }
+  h2 { color: #79c0ff; font-size: 1.1rem; margin-top: 32px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: 16px; margin-top: 12px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  .card img { width: 100%; display: block; cursor: zoom-in; }
+  .card p { margin: 8px 12px; font-size: 0.78rem; color: #8b949e; }
+  .card:hover { border-color: #58a6ff; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+<h1>🫁 Lung Transplant · Multimodal MIL Analysis</h1>
+<p style="color:#8b949e">Nature-quality multimodal analysis of lung-transplant patient data (BAL scRNA · H&amp;E histology · CT imaging · Clinical)</p>
+
+<h2>Figure 1 — Cohort Characterisation</h2>
+<div class="grid">
+  <div class="card"><a href="fig1_cohort.png" target="_blank"><img src="fig1_cohort.png" loading="lazy"></a><p>Modality availability, ACR/CLAD/Death distributions, samples per patient</p></div>
+</div>
+
+<h2>Figure 2 — Embedding-Space UMAPs</h2>
+<div class="grid">
+  <div class="card"><a href="fig2_umap_clinical.png" target="_blank"><img src="fig2_umap_clinical.png" loading="lazy"></a><p>Clinical feature UMAP coloured by ACR/CLAD/Death</p></div>
+  <div class="card"><a href="fig2_umap_he_cells.png" target="_blank"><img src="fig2_umap_he_cells.png" loading="lazy"></a><p>H&amp;E patch embedding UMAP</p></div>
+  <div class="card"><a href="fig2_umap_ct_cells.png" target="_blank"><img src="fig2_umap_ct_cells.png" loading="lazy"></a><p>CT patch embedding UMAP</p></div>
+  <div class="card"><a href="fig2_umap_bal_cells.png" target="_blank"><img src="fig2_umap_bal_cells.png" loading="lazy"></a><p>BAL scRNA embedding UMAP</p></div>
+  <div class="card"><a href="fig2_umap_joint.png" target="_blank"><img src="fig2_umap_joint.png" loading="lazy"></a><p>Joint multimodal embedding UMAP</p></div>
+</div>
+
+<h2>Figure 3 — K-Means Cluster Analysis</h2>
+<div class="grid">
+  <div class="card"><a href="fig3_clusters_bal_counts.png" target="_blank"><img src="fig3_clusters_bal_counts.png" loading="lazy"></a><p>BAL cluster composition heatmap + ACR rate per cluster</p></div>
+  <div class="card"><a href="fig3_clusters_he_counts.png" target="_blank"><img src="fig3_clusters_he_counts.png" loading="lazy"></a><p>H&amp;E tissue cluster composition + ACR rate</p></div>
+  <div class="card"><a href="fig3_clusters_ct_counts.png" target="_blank"><img src="fig3_clusters_ct_counts.png" loading="lazy"></a><p>CT imaging cluster composition + ACR rate</p></div>
+</div>
+
+<h2>Figure 4 — Cluster × Outcome Associations</h2>
+<div class="grid">
+  <div class="card"><a href="fig4_assoc_bal_counts.png" target="_blank"><img src="fig4_assoc_bal_counts.png" loading="lazy"></a><p>BAL cluster association with ACR / CLAD / Death (FDR-corrected)</p></div>
+  <div class="card"><a href="fig4_assoc_he_counts.png" target="_blank"><img src="fig4_assoc_he_counts.png" loading="lazy"></a><p>H&amp;E cluster association with outcomes</p></div>
+  <div class="card"><a href="fig4_assoc_ct_counts.png" target="_blank"><img src="fig4_assoc_ct_counts.png" loading="lazy"></a><p>CT cluster association with outcomes</p></div>
+</div>
+
+<h2>Figure 5 — Multi-Modal Factor Analysis (PCA)</h2>
+<div class="grid">
+  <div class="card"><a href="fig5_factor_analysis.png" target="_blank"><img src="fig5_factor_analysis.png" loading="lazy"></a><p>Joint PCA across Clinical + HE + CT + BAL counts</p></div>
+</div>
+
+<h2>Figure 6 — Differential Abundance Volcanos</h2>
+<div class="grid">
+  <div class="card"><a href="fig6_volcano_ACR_ct_counts.png" target="_blank"><img src="fig6_volcano_ACR_ct_counts.png" loading="lazy"></a><p>CT clusters: ACR+ vs ACR−</p></div>
+  <div class="card"><a href="fig6_volcano_ACR_he_counts.png" target="_blank"><img src="fig6_volcano_ACR_he_counts.png" loading="lazy"></a><p>H&amp;E clusters: ACR+ vs ACR−</p></div>
+  <div class="card"><a href="fig6_volcano_CLAD_ct_counts.png" target="_blank"><img src="fig6_volcano_CLAD_ct_counts.png" loading="lazy"></a><p>CT clusters: CLAD vs no CLAD</p></div>
+  <div class="card"><a href="fig6_volcano_CLAD_ct_radiomics.png" target="_blank"><img src="fig6_volcano_CLAD_ct_radiomics.png" loading="lazy"></a><p>CT radiomics: CLAD vs no CLAD</p></div>
+  <div class="card"><a href="fig6_volcano_Death_ct_counts.png" target="_blank"><img src="fig6_volcano_Death_ct_counts.png" loading="lazy"></a><p>CT clusters: Death vs survived</p></div>
+  <div class="card"><a href="fig6_volcano_Death_he_counts.png" target="_blank"><img src="fig6_volcano_Death_he_counts.png" loading="lazy"></a><p>H&amp;E clusters: Death vs survived</p></div>
+</div>
+
+<h2>Figure 7 — Cross-Modal Correlation</h2>
+<div class="grid">
+  <div class="card"><a href="fig7_cross_modal_corr.png" target="_blank"><img src="fig7_cross_modal_corr.png" loading="lazy"></a><p>Spearman ρ between PC1 of each modality (Clinical / HE / CT / BAL)</p></div>
+</div>
+
+<h2>Figure 9 — MOFA+ Multi-Omics Factor Analysis</h2>
+<div class="grid">
+  <div class="card"><a href="fig9_mofa_variance.png" target="_blank"><img src="fig9_mofa_variance.png" loading="lazy"></a><p>Variance explained per factor per view (BAL / HE / CT / Clinical)</p></div>
+</div>
+
+<h2>Figure 11 — Pseudobulk Differential Expression (BAL scRNA)</h2>
+<div class="grid">
+  <div class="card"><a href="fig11_deg_composition.png" target="_blank"><img src="fig11_deg_composition.png" loading="lazy"></a><p>Cell type composition per patient coloured by ACR status</p></div>
+  <div class="card"><a href="fig11_deg_volcano.png" target="_blank"><img src="fig11_deg_volcano.png" loading="lazy"></a><p>Volcano plot: ACR+ vs ACR− differential genes</p></div>
+  <div class="card"><a href="fig11_deg_heatmap.png" target="_blank"><img src="fig11_deg_heatmap.png" loading="lazy"></a><p>Top DEG heatmap across pseudobulk samples</p></div>
+</div>
+
+<hr style="border-color:#30363d;margin-top:40px">
+<p style="color:#8b949e;font-size:0.75rem">Generated by multimodal MIL pipeline · Helmholtz Munich · <a href="https://github.com/Dinesh-Adhithya-H/lungmil-results">GitHub repo</a></p>
+</body>
+</html>
