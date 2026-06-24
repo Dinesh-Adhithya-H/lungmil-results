@@ -1,30 +1,16 @@
 """
 Encoder building blocks for the multimodal ABMIL MIL framework.
 
-Two-phase design context
-------------------------
-Phase 1 (per-modality pre-training): these modules are used directly inside
-``SingleModalMIL`` (see ``phase1.py``).  The goal of Phase 1 is to train
-each modality's backbone + attention encoder independently so that the
-resulting representations are already predictive before any cross-modal
-fusion is attempted.
-
-Phase 2 (multimodal fusion): the trained encoder weights are loaded into
-the Phase 2 fusion models (see ``phase2.py``).  ``ModalFFNEncoder`` is the
-per-modality 2-layer FFN used by ``SharedSlotMIL``.  ``GatedAttentionEncoder``
-is kept for Phase 1 and ablation baselines.  ``MHASlotAttn`` is the
-within-modality slot compression.  ``CrossModalTransformer`` and ``FFN``
-are the cross-modal interaction modules.
-
 Classes exported
 ----------------
-GatedAttentionEncoder
-ModalFFNEncoder
-PositionEncoding2D
-ProjectionHead
-MHASlotAttn
-FFN
-CrossModalTransformer
+GatedAttentionEncoder   — Phase 1 gated-attention MIL encoder
+ModalFFNEncoder         — per-modality FFN projector for SetTransformerMIL
+PositionEncoding2D      — 2-D sinusoidal PE for H&E tile coordinates
+ProjectionHead          — 2-layer MLP projection head (Phase 1 contrastive)
+FFN                     — pre-norm FFN residual block
+CrossModalTransformer   — self-attention over concatenated modality tokens
+PMA                     — Pooling by Multihead Attention (Set Transformer seed compression)
+SAB                     — Set Attention Block (cross-modal seed interaction)
 """
 
 from typing import Optional, Tuple
@@ -80,17 +66,11 @@ class GatedAttentionEncoder(nn.Module):
 
 class ModalFFNEncoder(nn.Module):
     """
-    Per-modality 2-layer FFN encoder for SharedSlotMIL.
+    Per-modality 2-layer FFN projector for SetTransformerMIL.
 
-    Projects raw patch features (e.g. L2-normalized UNI-2 1024-dim) into a
-    shared hidden_dim slot space using a wider intermediate layer.  The extra
-    width (hidden_dim*2) lets the model learn a modality-specific geometry
-    transform before slot attention aligns representations across modalities.
-
-    Tanh preserves both positive and negative directions (no dead units).
-    Final L2 normalization keeps patch features on the unit sphere — preserving
-    the cosine-similarity geometry of foundation model (UNI-2) embeddings so
-    that slot attention computes meaningful dot products.
+    Projects raw patch features into hidden_dim space.  L2 normalization at
+    the output preserves cosine-similarity geometry of foundation model embeddings
+    so cross-attention dot products are geometrically meaningful.
     Compatible with the encode_patches(x, coords) interface used by all encoders.
     """
     def __init__(self, feat_dim: int = 1024, hidden_dim: int = 256,
@@ -218,59 +198,6 @@ class ProjectionHead(nn.Module):
         return F.normalize(self.net(x), dim=-1)
 
 
-class MHASlotAttn(nn.Module):
-    """
-    Within-modality non-competitive slot attention.
-
-    Q = K learned slot tokens (nn.Parameter),
-    K = V = pretrained backbone patch features h (N, H).
-
-    Standard MHA: softmax over N patches, so every patch can contribute to
-    every slot — no competition between slots.  No cold-start: backbone h
-    already carries Phase-1 trained representations.
-
-    Per iteration (n_iters rounds):
-      slots ← slots + MHA(norm_q(slots), L2_norm(h), L2_norm(h))
-      slots ← slots + FFN(norm(slots))
-
-    Keys/values use L2 normalisation (not LayerNorm) so that dot-product attention
-    computes cosine similarities — preserving the spherical geometry of foundation
-    model (UNI-2) embeddings that enter via ModalFFNEncoder.
-    Queries (slot tokens) keep LayerNorm since they are learned, not pre-spherical.
-    """
-    def __init__(self, hidden_dim: int, n_slots: int = 8,
-                 n_iters: int = 3, n_heads: int = 4, dropout: float = 0.1):
-        super().__init__()
-        self.n_iters   = n_iters
-        self.slot_init = nn.Parameter(torch.empty(n_slots, hidden_dim))
-        nn.init.normal_(self.slot_init, std=0.02)
-        self.norm_q  = nn.LayerNorm(hidden_dim)
-        self.mha     = nn.MultiheadAttention(hidden_dim, n_heads,
-                                              dropout=dropout, batch_first=True)
-        self.mlp     = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, hidden_dim * 2), nn.Tanh(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim))
-
-    def forward(self, h: torch.Tensor,
-                init: "Optional[torch.Tensor]" = None) -> torch.Tensor:
-        """
-        h:    (N, H) — pretrained backbone patch features
-        init: (K, H) — optional external slot init (overrides self.slot_init).
-              Pass per-task slot tokens for task-specific routing.
-        Returns: (K, H) — slot features
-        """
-        slots = (init if init is not None else self.slot_init).clone()  # (K, H)
-        kv    = F.normalize(h, dim=-1).unsqueeze(0)    # (1, N, H) — L2 norm preserves sphere
-        for _ in range(self.n_iters):
-            q      = self.norm_q(slots).unsqueeze(0)   # (1, K, H)
-            out, _ = self.mha(q, kv, kv)               # (1, K, H); softmax over N
-            slots  = slots + out.squeeze(0)
-            slots  = slots + self.mlp(slots)
-        return slots   # (K, H)
-
-
 class FFN(nn.Module):
     def __init__(self, dim, dropout=0.1):
         super().__init__()
@@ -295,3 +222,107 @@ class CrossModalTransformer(nn.Module):
             a, _ = L["attn"](x, x, x)
             x = L["ffn"](L["norm"](x + a))
         return x
+
+
+class PMA(nn.Module):
+    """Pooling by Multihead Attention (Lee et al., Set Transformer 2019).
+
+    K learned seed vectors (queries) cross-attend to N patch tokens (KV)
+    → (K, H) compressed representation per modality.
+
+    Standard softmax over N patches per seed — no GRU, no iterative routing.
+    Seeds stay diverse: each seed has a distinct learned query vector and
+    receives independent gradients with no shared hidden state.
+    """
+    def __init__(self, hidden_dim: int, n_seeds: int,
+                 n_heads: int = 4, n_layers: int = 2, dropout: float = 0.1):
+        super().__init__()
+        self.seeds   = nn.Parameter(torch.empty(1, n_seeds, hidden_dim))
+        nn.init.trunc_normal_(self.seeds, std=0.02)
+        self.norm_in = nn.LayerNorm(hidden_dim)
+        self.layers  = nn.ModuleList([nn.ModuleDict({
+            "cross": nn.MultiheadAttention(hidden_dim, n_heads,
+                                            dropout=dropout, batch_first=True),
+            "norm":  nn.LayerNorm(hidden_dim),
+            "ffn":   FFN(hidden_dim, dropout),
+        }) for _ in range(n_layers)])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (N, H) → (K, H)"""
+        kv = self.norm_in(x).unsqueeze(0)        # (1, N, H)
+        s  = self.seeds                           # (1, K, H)
+        for L in self.layers:
+            a, _ = L["cross"](s, kv, kv)         # q=seeds attend to patches
+            s = L["norm"](s + a)
+            s = L["ffn"](s)
+        return s.squeeze(0)                       # (K, H)
+
+
+class SAB(nn.Module):
+    """Set Attention Block — self-attention over M*K seed tokens.
+
+    After per-modality PMA compression, seeds from all modalities are
+    concatenated and passed through SAB so they can exchange information
+    across modalities before ABMIL aggregation.
+    """
+    def __init__(self, hidden_dim: int, n_heads: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(hidden_dim, n_heads,
+                                           dropout=dropout, batch_first=True)
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.ffn  = FFN(hidden_dim, dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (T, H) → (T, H)"""
+        x_b = x.unsqueeze(0)                     # (1, T, H)
+        a, _ = self.attn(x_b, x_b, x_b)
+        return self.ffn(self.norm(x_b + a)).squeeze(0)   # (T, H)
+
+
+class TemporalSAB(nn.Module):
+    """SAB with causal masking and ALiBi temporal attention bias.
+
+    For a longitudinal sequence of biopsy seeds ordered in time:
+      attn_logit[q,k] += -|slope_h| * |days_q - days_k| / (days_range + 1)
+    Causal mask: seeds from future biopsies (days_k > days_q) → -inf.
+
+    Slopes are learned per attention head, starting at 0.1.
+    """
+    def __init__(self, hidden_dim: int, n_heads: int = 4, dropout: float = 0.1,
+                 n_layers: int = 1):
+        super().__init__()
+        self.n_heads = n_heads
+        self.layers  = nn.ModuleList([nn.ModuleDict({
+            "attn": nn.MultiheadAttention(hidden_dim, n_heads,
+                                           dropout=dropout, batch_first=True),
+            "norm": nn.LayerNorm(hidden_dim),
+            "ffn":  FFN(hidden_dim, dropout),
+        }) for _ in range(n_layers)])
+        self.alibi_slopes = nn.Parameter(torch.ones(n_heads) * 0.1)
+
+    def forward(self, x: torch.Tensor, days: torch.Tensor) -> torch.Tensor:
+        """
+        x:    (N, H) — concatenated seeds from all biopsies in temporal order
+        days: (N,)   — days post-transplant for each token
+        Returns: (N, H) causally contextualized tokens
+        """
+        N = x.shape[0]
+        # delta[q,k] = days_q - days_k  (positive = q is more recent than k)
+        delta      = days.unsqueeze(1) - days.unsqueeze(0)   # (N, N)
+        days_range = (days.max() - days.min() + 1.0).clamp(min=1.0)
+        dist       = delta.abs() / days_range                 # (N, N) in [0, 1]
+
+        # ALiBi bias: closer tokens attend more strongly
+        slopes = self.alibi_slopes.abs()                      # (n_heads,)
+        alibi  = -slopes.view(-1, 1, 1) * dist.unsqueeze(0)  # (n_heads, N, N)
+
+        # Causal: q cannot attend to future tokens (delta < 0 means k is future)
+        causal = (delta < 0).to(x.dtype) * -1e9              # (N, N)
+        bias   = (alibi + causal.unsqueeze(0)).to(x.dtype)   # (n_heads, N, N)
+
+        x_b = x.unsqueeze(0)   # (1, N, H)
+        for L in self.layers:
+            a, _ = L["attn"](x_b, x_b, x_b,
+                             attn_mask=bias.view(self.n_heads, N, N))
+            x_b = L["ffn"](L["norm"](x_b + a))
+        return x_b.squeeze(0)  # (N, H)

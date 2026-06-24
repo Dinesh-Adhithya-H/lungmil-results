@@ -42,11 +42,12 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 
 from mil.data.registry import MODALITIES
 from mil.training.losses import (
-    hinge_loss, compute_class_weights,
+    hinge_loss, bce_loss, compute_class_weights,
     cox_breslow_loss, c_index,
     batch_supcon_loss,
 )
@@ -58,22 +59,47 @@ BagCache = Dict[str, Dict[str, Optional[torch.Tensor]]]
 # ── Phase 2 hyperparameter defaults ──────────────────────────────────────────
 P2_LR             = 5e-5
 P2_WEIGHT_DECAY   = 1e-3
-P2_EPOCHS         = 600    # early/late/middle — enough for cosine to converge
+P2_EPOCHS         = 1000   # early/late/middle — extended after ceiling hits at 600
 P2_EPOCHS_SLOT    = 1000   # slot needs more iterations (K slots × cross-attn × 4 tasks)
-P2_EVAL_EVERY     = 20
-P2_GRAD_ACCUM     = 8      # larger effective batch improves stability
+P2_EVAL_EVERY     = 5
+P2_GRAD_ACCUM     = 32     # effective batch size (patients per backward step)
 P2_MODAL_DROPOUT  = 0.3    # 0.3 → trains with each single modality ~24% of epochs
 P2_WARMUP_FRAC    = 0.10   # 10% warmup → cosine decay over remaining 90%
+
+# Slot diversity regularisation — penalises cosine similarity between slot pairs
+SLOT_DIV_WEIGHT   = 0.0    # disabled: orthogonal init already separates slots; penalty prevented routing learning
+
+
+def _slot_div_loss(shared_slots: torch.Tensor) -> torch.Tensor:
+    """
+    Diversity regularisation on shared slot init tokens.
+
+    Computes mean squared cosine similarity between all pairs of slots and
+    returns SLOT_DIV_WEIGHT * that value.  Gradients push slots toward
+    orthogonality so each slot specialises to a distinct region.
+
+    shared_slots: (K, H)  — model.shared_slots parameter
+    """
+    s   = F.normalize(shared_slots.float(), dim=-1)            # (K, H) unit sphere
+    sim = s @ s.T                                               # (K, K) cosine sims
+    eye = torch.eye(sim.shape[0], device=sim.device, dtype=sim.dtype)
+    return SLOT_DIV_WEIGHT * (sim * (1 - eye)).pow(2).mean()
 
 # HP sweep search space
 P2_HP_LR_GRID     = [1e-4, 5e-5, 1e-5]
 P2_HP_WD_GRID     = [1e-3, 1e-4]
-P2_HP_SWEEP_EPOCHS = 150   # longer sweep for more reliable HP selection
+P2_HP_SWEEP_EPOCHS  = 150  # HP selection sweep
+P2_HP_EVAL_EVERY    = 5    # eval interval inside HP sweep (finer than final training)
+P2_HP_PATIENCE      = 10   # early-stop if no improvement for this many evals in sweep
+P2_FINAL_EPOCHS     = 150  # max epochs for run_phase2_final
 
 # Task Cox lambdas for multitask loss
 P2_COX_LAMBDA_ACR   = 0.5   # ACR survival Cox weight
 P2_COX_LAMBDA_CLAD  = 0.3   # CLAD Cox weight
 P2_COX_LAMBDA_DEATH = 0.2   # Death Cox weight
+
+# BCE scale: Cox losses are ~4× larger than BCE; multiply BCE to match gradient magnitude
+P2_BCE_LOSS_SCALE   = 4.0
 
 # CLR defaults (kept for backward compat, not used in v8)
 P1_CLR_TAU    = 0.07
@@ -104,6 +130,93 @@ def _malloc_trim():
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
+
+
+def _slot_collapse_stats(model) -> str:
+    """
+    Collapse diagnostics from slot Gaussian params (no forward pass needed).
+    slot_mu_std : std of slot_mu — near 0=all slots start at same point
+    slot_sigma  : mean exp(log_sigma) — spread of slot init distribution
+    """
+    if not hasattr(model, "slot_mu"):
+        return ""
+    with torch.no_grad():
+        mu_std    = model.slot_mu.std().item()
+        sigma_mean = model.slot_log_sigma.exp().mean().item()
+    return f"  slot_mu_std={mu_std:.3f}  slot_sigma={sigma_mean:.3f}"
+
+
+def _routing_entropy_stats(model, bag_cache, records, device) -> str:
+    """
+    Run one patient through slot attention to compute per-patch routing entropy.
+
+    Uses the pre-renorm competitive softmax (scores.softmax over K slots) — this
+    IS the per-patch distribution over slots. Entropy near log(K) = random routing;
+    near 0 = sharp single-slot assignment.
+
+    Also reports per-task ABMIL slot importance: run slots through each task's gate
+    and show top-5 slots by attention weight + entropy of the distribution.
+    """
+    if not hasattr(model, "slot_attns") or not hasattr(model, "slot_mu"):
+        return ""
+    rec = next((r for r in records if any(bag_cache.get(r.get("stem"), {}).get(m) is not None
+                                           for m in MODALITIES)), None)
+    if rec is None:
+        return ""
+    entry    = bag_cache.get(rec["stem"], {})
+    K        = model.n_slots
+    log_K    = math.log(K)
+    parts    = []
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            # Use slot_mu as deterministic init for diagnostics (no randomness)
+            slots_init = model.slot_mu.float()  # (K, H) — per-slot learned means
+            mod_slots = []
+            for mod, slot_attn in model.slot_attns.items():
+                t = entry.get(mod)
+                if t is None:
+                    continue
+                t = t.to(device)
+                h = model.encoders[mod].encode_patches(t)          # (N, H)
+                N, H = h.shape
+                nh = slot_attn.n_heads
+                dk = slot_attn.d_k
+
+                # Replicate the competitive softmax to get the true per-patch distribution
+                h_norm  = slot_attn.norm_in(F.normalize(h.float(), dim=-1))
+                k_feat  = slot_attn.to_k(h_norm)                   # (N, H)
+                q_feat  = slot_attn.to_q(slot_attn.norm_q(slots_init))  # (K, H)
+                q_h = q_feat.view(K, nh, dk).permute(1, 0, 2)     # (nh, K, dk)
+                k_h = k_feat.view(N, nh, dk).permute(1, 0, 2)     # (nh, N, dk)
+                scores  = torch.bmm(q_h, k_h.transpose(1, 2)) * slot_attn.scale  # (nh, K, N)
+                # competitive softmax over K slots: per-patch distribution over slots
+                attn_patch = scores.softmax(dim=1).mean(0)         # (K, N) avg over heads
+                H_patch = -(attn_patch * (attn_patch + 1e-8).log()).sum(dim=0)   # (N,)
+                parts.append(f"{mod}={H_patch.mean().item():.2f}/{log_K:.2f}")
+
+                # run slot attn fully to get slot representations for ABMIL
+                slots_out = slot_attn(h, slots_init)               # (K, H)
+                mod_slots.append(slots_out)
+
+            routing_str = "  routing_entr=" + " ".join(parts) if parts else ""
+
+            # Per-task ABMIL: which slots get highest attention weight
+            abmil_str = ""
+            if mod_slots and hasattr(model, "abmil_V") and hasattr(model, "abmil_w"):
+                slots_agg = torch.stack(mod_slots).mean(0).float()  # (K, H)
+                for tname in model.task_names:
+                    gate  = model.abmil_V[tname](slots_agg) * model.abmil_U[tname](slots_agg)
+                    alpha = torch.softmax(model.abmil_w[tname](gate), dim=0).squeeze()  # (K,)
+                    entr  = -(alpha * (alpha + 1e-8).log()).sum().item()
+                    top5  = alpha.topk(5).indices.tolist()
+                    abmil_str += f"\n      [{tname}] abmil_entr={entr:.2f}/{log_K:.2f} top_slots={top5}"
+
+    finally:
+        if was_training:
+            model.train()
+    return routing_str + abmil_str
 
 
 def _gc():
@@ -169,22 +282,15 @@ _DEFAULT_COX_LAMBDAS = {
     "death":    P2_COX_LAMBDA_DEATH,
 }
 # Alternating task sampling distribution (un-normalised; gets normalised at use)
+# Inverse-frequency weights so all tasks contribute equally:
+# observed freq: cls≈0.37, acr_surv≈0.64, clad≈0.66, death≈0.73
+# inv-freq norm to sum=1: 1/f / sum(1/f)
 DEFAULT_TASK_WEIGHTS = {
-    "acr_cls":  0.20,
-    "acr_surv": 0.20,
+    "acr_cls":  0.25,
+    "acr_surv": 0.25,
     "clad":     0.25,
     "death":    0.25,
 }
-# With GeoMAE reconstruction regularisation — recon keeps backbone from forgetting
-GEOMAE_TASK_WEIGHTS = {
-    "recon":    0.15,
-    "acr_cls":  0.18,
-    "acr_surv": 0.18,
-    "clad":     0.22,
-    "death":    0.22,
-}
-GEOMAE_RECON_MASK_RATIO = 0.50   # same as pretraining
-
 
 def _parse_model_output(result) -> dict:
     """Normalise any model output to a task-keyed dict of (tensor, rep) tuples."""
@@ -387,14 +493,14 @@ def p2_train_one_epoch(model, records, optimizer, cw, device, bag_cache,
             # ── Accumulate losses (no backward per-record) ───────────────
             if task == 'acr':
                 with torch.amp.autocast("cuda", enabled=(scaler is not None)):
-                    loss = hinge_loss(logit.unsqueeze(0), target, cw) / grad_accum
+                    loss = bce_loss(logit.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
                     if L_recon is not None and recon_lambda > 0:
-                        loss = loss + recon_lambda * L_recon / grad_accum
+                        loss = loss + recon_lambda * L_recon
                 pending_loss_ref[0] = (loss if pending_loss_ref[0] is None
                                        else pending_loss_ref[0] + loss)
                 if hazard is not None and cox_lambda > 0 and has_surv_data:
                     cox_buffer.append((hazard.float(), rec[surv_time_key], rec[surv_event_key]))
-                total_loss += loss.item() * grad_accum
+                total_loss += loss.item()
                 grad_accumulated = True
                 n += 1; accum_step += 1
 
@@ -415,6 +521,9 @@ def p2_train_one_epoch(model, records, optimizer, cw, device, bag_cache,
                         if task == 'survival':
                             total_loss += L_cox.item()
                 cox_buffer.clear()
+                if hasattr(model, "shared_slots"):
+                    L_div = _slot_div_loss(model.shared_slots)
+                    combined = L_div if combined is None else combined + L_div
                 if combined is not None and combined.requires_grad:
                     if scaler is not None:
                         scaler.scale(combined).backward()
@@ -453,6 +562,9 @@ def p2_train_one_epoch(model, records, optimizer, cw, device, bag_cache,
                 if task == 'survival':
                     total_loss += L_cox.item()
         cox_buffer.clear()
+        if hasattr(model, "shared_slots"):
+            L_div = _slot_div_loss(model.shared_slots)
+            combined = L_div if combined is None else combined + L_div
         if combined is not None and combined.requires_grad:
             if scaler is not None:
                 scaler.scale(combined).backward()
@@ -508,7 +620,7 @@ def p2_evaluate(model, records, device, bag_cache, cw=None,
                 labels.append(label)
                 if cw is not None:
                     ta = logit.new_tensor([label])
-                    losses.append(hinge_loss(logit.unsqueeze(0), ta, cw).item())
+                    losses.append(bce_loss(logit.unsqueeze(0), ta, cw).item())
 
             # ── Survival (C-index): ALL records with valid TTE ────────
             # Do NOT require ACR label — CLAD/Death records may have none.
@@ -582,7 +694,7 @@ def p2_train_one_epoch_multitask(
     OOM_SKIP = 3
     oom_counts: dict = {}
 
-    total_hinge = 0.0; total_cox = 0.0; n_hinge = 0; n_cox_steps = 0
+    total_bce = 0.0; total_cox = 0.0; n_bce = 0; n_cox_steps = 0
     accum_step = 0
     # batch distribution counters (reset each epoch)
     batch_stats = {
@@ -662,10 +774,10 @@ def p2_train_one_epoch_multitask(
                 if isinstance(logit_val, torch.Tensor) and logit_val.grad_fn is not None:
                     target = torch.tensor([float(label)], device=device)
                     with torch.amp.autocast("cuda", enabled=use_amp):
-                        L_h = hinge_loss(logit_val.unsqueeze(0), target, cw) / grad_accum
+                        L_h = bce_loss(logit_val.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
                     pending_loss = L_h if pending_loss is None else pending_loss + L_h
-                    total_hinge += L_h.item() * grad_accum
-                    n_hinge += 1
+                    total_bce += L_h.item()
+                    n_bce += 1
                     batch_stats["n_cls"] += 1
                     batch_stats["n_cls_pos"] += int(label)
 
@@ -706,7 +818,7 @@ def p2_train_one_epoch_multitask(
         _flush()
 
     return {
-        "hinge":       total_hinge / max(n_hinge, 1),
+        "bce":       total_bce / max(n_bce, 1),
         "cox":         total_cox_ref[0] / max(n_cox_steps, 1),
         "batch_stats": batch_stats,
     }
@@ -748,6 +860,10 @@ def p2_train_one_epoch_alternating(
                 combined = term if combined is None else combined + term
                 total_loss_ref[0] += L_cox.item()
             cox_buffer.clear()
+        # Slot diversity: penalise inter-slot cosine similarity (once per step)
+        if hasattr(model, "shared_slots"):
+            L_div = _slot_div_loss(model.shared_slots)
+            combined = L_div if combined is None else combined + L_div
         if combined is not None and combined.requires_grad:
             if scaler:
                 scaler.scale(combined).backward()
@@ -789,9 +905,9 @@ def p2_train_one_epoch_alternating(
                     continue
                 target = torch.tensor([float(label)], device=device)
                 with torch.amp.autocast("cuda", enabled=use_amp):
-                    L = hinge_loss(logit_v.unsqueeze(0), target, cw) / grad_accum
+                    L = bce_loss(logit_v.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
                 pending_loss = L if pending_loss is None else pending_loss + L
-                total_loss += L.item() * grad_accum
+                total_loss += L.item()
 
             elif is_surv:
                 t_key, e_key = _SURV_SPEC_ALT[task_name]
@@ -823,108 +939,6 @@ def p2_train_one_epoch_alternating(
         _flush_step()
 
     return (total_loss + total_loss_ref[0]) / max(n, 1)
-
-
-# ── GeoMAE reconstruction regularisation epoch ───────────────────────────────
-
-def p2_recon_epoch(
-    model, records, optimizer, device, bag_cache,
-    scaler, grad_accum,
-    mask_ratio: float = GEOMAE_RECON_MASK_RATIO,
-) -> dict:
-    """
-    One reconstruction epoch using GeoMAE-backbone encoders.
-
-    For each record: if HE or CT bags exist AND the corresponding encoder is a
-    GeoMAESpatialBackbone, apply BFS-flood masking and compute the denoising
-    reconstruction loss.  Backprop keeps the spatial encoder from forgetting
-    its pretraining objective while fine-tuning on MIL tasks.
-
-    Records without spatial modalities (BAL-only, Clinical-only) are skipped.
-    """
-    from mil.models.encoders import GeoMAESpatialBackbone
-
-    model.train()
-    random.shuffle(records)
-
-    total_loss = 0.0
-    n_steps = 0
-    accum_step = 0
-    optimizer.zero_grad()
-
-    SPATIAL_MODS = ["HE", "CT"]
-
-    for rec in records:
-        losses_per_rec = []
-
-        for mod in SPATIAL_MODS:
-            enc = model.encoders.get(mod) if hasattr(model, "encoders") else None
-            if not isinstance(enc, GeoMAESpatialBackbone):
-                continue                   # not a GeoMAE backbone — skip
-
-            bag = bag_cache.get(rec["stem"], {}).get(mod)
-            if bag is None:
-                continue
-
-            coords_key = "HE_coords" if mod == "HE" else "CT_coords"
-            coords = bag_cache.get(rec["stem"], {}).get(coords_key)
-            if coords is None:
-                continue                   # no coords → can't do spatial masking
-
-            bag    = bag.to(device, non_blocking=True)
-            coords = coords.to(device, non_blocking=True)
-
-            try:
-                use_amp = (device.type == "cuda")
-                with torch.amp.autocast("cuda", enabled=use_amp):
-                    loss = enc.forward_recon(bag, coords, mask_ratio=mask_ratio)
-
-                if loss.requires_grad and torch.isfinite(loss):
-                    losses_per_rec.append(loss / grad_accum)
-            except torch.cuda.OutOfMemoryError:
-                _gc(); optimizer.zero_grad(); accum_step = 0
-                break
-            except Exception:
-                continue
-
-        if not losses_per_rec:
-            continue
-
-        combined = sum(losses_per_rec) / len(losses_per_rec)
-        if scaler:
-            scaler.scale(combined).backward()
-        else:
-            combined.backward()
-
-        total_loss  += combined.item() * grad_accum
-        n_steps     += 1
-        accum_step  += 1
-
-        if accum_step >= grad_accum:
-            if scaler:
-                scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                scaler.step(optimizer); scaler.update()
-            else:
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-            optimizer.zero_grad()
-            accum_step = 0
-            _gc()
-
-    # Final flush
-    if accum_step > 0:
-        if scaler:
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            scaler.step(optimizer); scaler.update()
-        else:
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-        optimizer.zero_grad()
-
-    n = max(n_steps, 1)
-    return {"loss": total_loss / n, "n_records": n_steps, "task": "recon"}
 
 
 # ── Unified Phase 2 training epoch ───────────────────────────────────────────
@@ -960,34 +974,23 @@ def p2_train_epoch(
     tw   = task_weights or DEFAULT_TASK_WEIGHTS
     cl   = cox_lambdas  or _DEFAULT_COX_LAMBDAS
 
-    # For alternating: pick ONE task for this whole epoch
+    # Build task sampling distribution for per-batch alternating
+    _alt_tasks   = list(tw.keys())
+    _alt_weights = [tw[t] for t in _alt_tasks]
+    _alt_total   = sum(_alt_weights)
+    _alt_weights = [w / _alt_total for w in _alt_weights]
+
+    def _sample_task() -> str:
+        return _random.choices(_alt_tasks, weights=_alt_weights, k=1)[0]
+
     if mode == "alternating":
-        tasks   = list(tw.keys())
-        weights = [tw[t] for t in tasks]
-        total_w = sum(weights)
-        weights = [w / total_w for w in weights]
-        active_task = _random.choices(tasks, weights=weights, k=1)[0]
+        # Per-batch: start with a sampled task; _flush() resamples for next batch
+        active_task = _sample_task()
     else:
         active_task = mode   # 'simultaneous' or a specific task name
 
-    # Reconstruction task → GeoMAE backbone denoising epoch
-    if active_task == "recon":
-        stats = p2_recon_epoch(model, records, optimizer, device, bag_cache,
-                               scaler, grad_accum=4)
-        return {"mode": "recon", "recon_loss": stats["loss"],
-                "n_records": stats["n_records"], "hinge": 0.0, "cox": 0.0}
-
-    # Pure survival tasks → full-batch Cox (fixes all-censored mini-batch problem)
-    _PURE_SURV = {"acr_surv", "clad", "death"}
-    if active_task in _PURE_SURV:
-        cox_loss = p2_cox_full_epoch(
-            model, records, active_task, optimizer, device, bag_cache, scaler,
-            cox_lambda=cl.get(active_task, 1.0),
-        )
-        return {"mode": active_task, "hinge": 0.0, "cox": cox_loss}
-
-    # Stratify record order around the active task
-    strat_task = active_task if active_task != "simultaneous" else "acr_cls"
+    # Stratify by acr_cls for simultaneous; by active task for alternating (first batch task)
+    strat_task = "acr_cls" if active_task == "simultaneous" else active_task
     ordered    = _stratified_record_order(records, strat_task)
 
     model.train()
@@ -996,9 +999,19 @@ def p2_train_epoch(
     bags_buf["HE_coords"] = None
     OOM_SKIP  = 3; oom_counts: dict = {}
 
-    total_hinge = 0.0; total_cox = 0.0
-    n_hinge = 0; n_cox_steps = 0
+    total_bce = 0.0
+    n_bce = 0; n_cox_steps = 0
     accum_step = 0
+    per_cox: Dict[str, float] = {k: 0.0 for k in _SURV_KEYS}
+    per_cox_n: Dict[str, int]  = {k: 0   for k in _SURV_KEYS}
+    batch_stats = {
+        "n_cls": 0, "n_cls_pos": 0,
+        "acr_surv_event": 0, "acr_surv_cens": 0,
+        "clad_event": 0,     "clad_cens": 0,
+        "death_event": 0,    "death_cens": 0,
+    }
+    train_probs: List[float] = []
+    train_labels: List[int]  = []
 
     # Pending tensor loss — accumulate WITHOUT calling backward until flush
     pending: Optional[torch.Tensor] = None
@@ -1010,17 +1023,18 @@ def p2_train_epoch(
         return task == active_task
 
     def _flush():
-        nonlocal pending, n_cox_steps
+        nonlocal pending, n_cox_steps, active_task
         combined = pending
         for tk, buf in cox_bufs.items():
             if not buf or not _should_train(tk): continue
-            lam   = cl.get(tk, 1.0)
+            lam   = tw.get(tk, cl.get(tk, 1.0))
             L_cox = cox_breslow_loss(buf)
             if L_cox is not None and L_cox.requires_grad:
                 term     = L_cox * lam
                 combined = term if combined is None else combined + term
-                total_cox_ref[0] += L_cox.item()
-                n_cox_steps += 1
+                per_cox[tk]   += L_cox.item()
+                per_cox_n[tk] += 1
+                n_cox_steps   += 1
             buf.clear()
         if combined is not None and combined.requires_grad:
             if scaler:
@@ -1030,6 +1044,9 @@ def p2_train_epoch(
                 combined.backward(); optimizer.step()
         optimizer.zero_grad()
         pending = None
+        # Per-batch alternating: resample task for the next batch
+        if mode == "alternating":
+            active_task = _sample_task()
         _gc()
 
     total_cox_ref = [0.0]
@@ -1057,12 +1074,21 @@ def p2_train_epoch(
                         and logit.grad_fn is not None):
                     target = torch.tensor([float(label)], device=device)
                     with torch.amp.autocast("cuda", enabled=use_amp):
-                        L_h = hinge_loss(logit.unsqueeze(0), target, cw) / grad_accum
+                        L_h = bce_loss(logit.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE * tw.get("acr_cls", 1.0)
                     pending = L_h if pending is None else pending + L_h
-                    total_hinge += L_h.item() * grad_accum
-                    n_hinge += 1
+                    total_bce += L_h.item()
+                    n_bce += 1
+                    batch_stats["n_cls"] += 1
+                    batch_stats["n_cls_pos"] += int(label)
+                    train_probs.append(torch.sigmoid(logit.detach().float()).item())
+                    train_labels.append(int(label))
 
             # ── Cox losses ────────────────────────────────────────────
+            _surv_stat_keys = {
+                "acr_surv": ("acr_surv_event", "acr_surv_cens"),
+                "clad":     ("clad_event",     "clad_cens"),
+                "death":    ("death_event",    "death_cens"),
+            }
             for tk, (tk_key, ev_key) in _SURV_KEYS.items():
                 if not _should_train(tk): continue
                 haz = task_out.get(tk, (None,))[0]
@@ -1073,6 +1099,10 @@ def p2_train_epoch(
                     e_s = float(e_v) if (e_v is not None
                                          and not math.isnan(float(e_v))) else 0.0
                     cox_bufs[tk].append((haz.float(), float(t_v), e_s))
+                    ev_k, ce_k = _surv_stat_keys.get(tk, (None, None))
+                    if ev_k:
+                        if e_s > 0: batch_stats[ev_k] += 1
+                        else:       batch_stats[ce_k] += 1
 
             accum_step += 1
 
@@ -1094,18 +1124,27 @@ def p2_train_epoch(
     # For simultaneous mode: CLAD and Death used mini-batch Cox above, which
     # suffers from all-censored windows. Supplement with a full-batch Cox pass
     # for low-event-rate endpoints to ensure every patient contributes.
+    # (Alternating mode uses per-batch Cox for all survival tasks — no extra pass.)
     extra_cox = 0.0
-    if active_task == "simultaneous":
+    if mode == "simultaneous":
         for tk in ("clad", "death"):
             extra_cox += p2_cox_full_epoch(
                 model, records, tk, optimizer, device, bag_cache, scaler,
-                cox_lambda=cl.get(tk, 1.0),
+                cox_lambda=tw.get(tk, cl.get(tk, 1.0)),
             )
 
+    train_bacc = compute_metrics(
+        np.array(train_labels), np.array(train_probs))["bacc"] if train_labels else 0.5
+
     return {
-        "mode":  active_task,
-        "hinge": total_hinge / max(n_hinge, 1),
-        "cox":   (total_cox_ref[0] / max(n_cox_steps, 1)) + extra_cox,
+        "mode":    mode if mode == "alternating" else active_task,
+        "bce":   total_bce / max(n_bce, 1),
+        "cox_acr": per_cox["acr_surv"] / max(per_cox_n["acr_surv"], 1),
+        "cox_clad":  per_cox["clad"]   / max(per_cox_n["clad"],   1),
+        "cox_death": per_cox["death"]  / max(per_cox_n["death"],  1),
+        "cox_extra": extra_cox,
+        "batch_stats": batch_stats,
+        "train_bacc": train_bacc,
     }
 
 
@@ -1177,7 +1216,8 @@ def run_phase2_hp_sweep(
     wd_grid: List[float] = P2_HP_WD_GRID,
     alternating: bool = False,
     sweep_epochs: int = P2_HP_SWEEP_EPOCHS,
-    eval_every: int = P2_EVAL_EVERY,
+    eval_every: int = P2_HP_EVAL_EVERY,
+    hp_patience: int = P2_HP_PATIENCE,
 ) -> Tuple[float, float]:
     """
     Grid-search (lr, weight_decay) on val BACC for Phase 2.
@@ -1216,33 +1256,92 @@ def run_phase2_hp_sweep(
     results = []
 
     for lr, wd in iproduct(lr_grid, wd_grid):
-        print(f"  [P2-HP] lr={lr:.0e}  wd={wd:.0e}", end="  ", flush=True)
+        print(f"  [P2-HP] lr={lr:.0e}  wd={wd:.0e}", flush=True)
         model = model_factory().to(device)
         opt   = torch.optim.Adam(
             [p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=wd)
         scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
-        best_ep_metric = -1.0
 
         best_ep_metric = float("inf") if _is_surv_only else -1.0
+        no_improve = 0
+        stopped_ep = sweep_epochs
         for ep in range(sweep_epochs):
-            p2_train_epoch(model, records_train, opt, cw, device, bag_cache,
-                           scaler, P2_GRAD_ACCUM, mode=train_mode)
+            if hasattr(model, 'routing_temperature'):
+                model.routing_temperature = max(0.1, 1.0 - ep / max(sweep_epochs - 1, 1) * 0.9)
+            tr = p2_train_epoch(model, records_train, opt, cw, device, bag_cache,
+                                scaler, P2_GRAD_ACCUM, mode=train_mode)
             if (ep + 1) % eval_every == 0:
-                vp, vl, val_loss_ep, ci, *_ = p2_evaluate(
+                # primary eval (cls BACC or survival Cox)
+                vp, vl, val_loss_ep, ci_primary, *_ = p2_evaluate(
                     model, records_val, device, bag_cache,
                     cw=(cw if not _is_surv_only else None),
                     surv_endpoint=_hp_surv_ep, task=task)
-                if _is_surv_only:
-                    # Use Cox loss (lower = better) — more stable than C-index on small val
-                    metric = float(val_loss_ep) if val_loss_ep > 0.0 else float("inf")
-                    best_ep_metric = min(best_ep_metric, metric)
-                else:
-                    metric = compute_metrics(vl, vp)["bacc"]
-                    best_ep_metric = max(best_ep_metric, metric)
-                _gc()
+                # C-indices for all 3 survival endpoints (mega only)
+                ci_acr = ci_clad = ci_death = None
+                if task == "mega":
+                    for ep_name in ("acr", "clad", "death"):
+                        _, _, _, _ci, *_ = p2_evaluate(
+                            model, records_val, device, bag_cache,
+                            cw=None, surv_endpoint=ep_name, task=f"{ep_name}_surv")
+                        if ep_name == "acr":   ci_acr   = _ci
+                        elif ep_name == "clad": ci_clad  = _ci
+                        else:                   ci_death = _ci
 
-        metric_label = "val_cox" if _is_surv_only else "val_bacc"
-        print(f"{metric_label}={best_ep_metric:.4f}")
+                val_bacc = compute_metrics(vl, vp)["bacc"] if not _is_surv_only else 0.5
+                if _is_surv_only:
+                    metric = float(val_loss_ep) if val_loss_ep > 0.0 else float("inf")
+                    improved = metric < best_ep_metric
+                    best_ep_metric = min(best_ep_metric, metric)
+                elif task == "mega":
+                    # Combined metric: mean of BACC + all available C-indices
+                    parts = [val_bacc]
+                    for _ci in (ci_acr, ci_clad, ci_death):
+                        if _ci is not None:
+                            parts.append(_ci)
+                    metric = sum(parts) / len(parts)
+                    improved = metric > best_ep_metric
+                    best_ep_metric = max(best_ep_metric, metric)
+                else:
+                    metric = val_bacc
+                    improved = metric > best_ep_metric
+                    best_ep_metric = max(best_ep_metric, metric)
+                no_improve = 0 if improved else no_improve + 1
+                metric_label = "val_cox" if _is_surv_only else ("combined" if task == "mega" else "val_bacc")
+                stop_flag = f"  [stop in {hp_patience - no_improve}]" if no_improve > 0 else ""
+
+                # batch distribution
+                bs = tr.get("batch_stats", {})
+                active_str = f"[{tr.get('mode','?')}]" if alternating else ""
+                print(
+                    f"  ep {ep+1:3d}/{sweep_epochs}{active_str}"
+                    f"  bce={tr.get('bce', 0):.4f}"
+                    f"  cox_acr={tr.get('cox_acr', 0):.4f}"
+                    f"  cox_clad={tr.get('cox_clad', 0):.4f}"
+                    f"  cox_death={tr.get('cox_death', 0):.4f}"
+                    f"  | train_bacc={tr.get('train_bacc', 0.5):.4f}"
+                    f"  val_bacc={val_bacc:.4f}  {metric_label}={metric:.4f}  best={best_ep_metric:.4f}"
+                    + (f"  ci_acr={ci_acr:.3f}" if ci_acr is not None else "")
+                    + (f"  ci_clad={ci_clad:.3f}" if ci_clad is not None else "")
+                    + (f"  ci_death={ci_death:.3f}" if ci_death is not None else "")
+                    + f"{stop_flag}"
+                    + f"\n    batch: cls={bs.get('n_cls',0)}(pos={bs.get('n_cls_pos',0)})"
+                    f"  acr={bs.get('acr_surv_event',0)}ev/{bs.get('acr_surv_cens',0)}ce"
+                    f"  clad={bs.get('clad_event',0)}ev/{bs.get('clad_cens',0)}ce"
+                    f"  death={bs.get('death_event',0)}ev/{bs.get('death_cens',0)}ce"
+                    + _slot_collapse_stats(model)
+                    + (f"  temp={model.routing_temperature:.3f}" if hasattr(model, 'routing_temperature') else "")
+                    + (_routing_entropy_stats(model, bag_cache, records_train, device)
+                       if (ep + 1) % (eval_every * 2) == 0 else ""),
+                    flush=True)
+                _gc()
+                if no_improve >= hp_patience:
+                    stopped_ep = ep + 1
+                    print(f"  [HP early-stop] no improvement for {hp_patience} evals — stopping combo", flush=True)
+                    break
+
+        metric_label = "val_cox" if _is_surv_only else ("combined" if task == "mega" else "val_bacc")
+        print(f"  [P2-HP] lr={lr:.0e}  wd={wd:.0e}  DONE  {metric_label}={best_ep_metric:.4f}"
+              f"  (stopped ep {stopped_ep}/{sweep_epochs})", flush=True)
         results.append({"lr": lr, "wd": wd, metric_label: best_ep_metric})
         # For survival: lower Cox loss wins; for cls: higher BACC wins
         if _is_surv_only:
@@ -1498,12 +1597,14 @@ def run_phase2_final(
     tag: Optional[str] = None,
     lr: float = P2_LR,
     weight_decay: float = P2_WEIGHT_DECAY,
-    n_epochs: int = P2_HP_SWEEP_EPOCHS,
+    n_epochs: int = P2_EPOCHS,
     warmup_frac: float = P2_WARMUP_FRAC,
     task: str = "mega",
-    patience: int = 10,
+    patience: int = 20,
     eval_every: int = P2_EVAL_EVERY,
     grad_accum: int = 32,
+    combined_train: bool = False,
+    alternating: bool = False,
 ) -> dict:
     """
     Final Phase 2 training with val-monitored early stopping.
@@ -1519,17 +1620,29 @@ def run_phase2_final(
 
     Val is independent throughout (never in training data) so early stopping
     is an honest overfitting signal.  Max 150 epochs guards against runaway.
+
+    If combined_train=True: train_recs already contains train+val merged by caller.
+    No early stopping is applied — model trains for full n_epochs and final
+    checkpoint is used (all folds share the same test set so val is not independent).
     """
     vtag     = tag or variant
     is_mega  = task in ("mega", "both", "both_alt")
-    _surv_ep = "acr"
+    _task_surv_ep_map = {
+        "acr_surv": "acr", "surv": "acr",
+        "clad_surv": "clad", "death_surv": "death",
+    }
+    _surv_ep = _task_surv_ep_map.get(task, "acr")
     is_surv_only = task in ("acr_surv", "surv", "clad_surv", "death_surv")
 
     print(f"\n  {'='*60}")
     print(f"  Phase 2 FINAL [{vtag}]  fold={fold}  task={task}  max_epochs={n_epochs}")
     print(f"  lr={lr:.0e}  wd={weight_decay:.0e}  patience={patience}  "
           f"eval_every={eval_every}")
-    print(f"  train={len(train_recs)}  val={len(val_recs)} (independent, for early-stop)")
+    if combined_train:
+        print(f"  train={len(train_recs)} (train+val combined)  "
+              f"val={len(val_recs)} (monitoring only, no early-stop)")
+    else:
+        print(f"  train={len(train_recs)}  val={len(val_recs)} (independent, for early-stop)")
     print(f"  {'='*60}")
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1553,7 +1666,7 @@ def run_phase2_final(
     scheduler = _flat_cosine_scheduler(optimizer, n_epochs, warmup_frac)
     scaler    = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
 
-    best_metric  = float("inf") if is_surv_only else -1.0
+    best_metric  = -1.0  # always maximize (C-index for surv, BACC for cls)
     best_epoch   = 0
     no_improve   = 0
     start_epoch  = 0
@@ -1584,62 +1697,97 @@ def run_phase2_final(
             print(f"  [{vtag}_final] Could not resume from {rc.name}: {e}. Starting fresh.")
             start_epoch = 0
 
-    print(f"  cw=(neg={cw[0]:.3f}, pos={cw[1]:.3f})  grad_accum={grad_accum}")
+    train_mode = "alternating" if alternating else "simultaneous"
+    print(f"  cw=(neg={cw[0]:.3f}, pos={cw[1]:.3f})  grad_accum={grad_accum}  mode={train_mode}")
 
     for epoch in range(start_epoch, n_epochs):
+        if hasattr(model, 'routing_temperature'):
+            model.routing_temperature = max(0.1, 1.0 - epoch / max(n_epochs - 1, 1) * 0.9)
         model.train()
         loss_d = p2_train_epoch(
             model, train_recs, optimizer, cw, device, bag_cache,
-            scaler, grad_accum, mode="simultaneous")
+            scaler, grad_accum, mode=train_mode)
         scheduler.step()
 
         if (epoch + 1) % eval_every == 0 or epoch == n_epochs - 1:
-            # Evaluate val — BACC + all C-indices for mega task
-            vp, vl, val_loss, ci_acr, *_ = p2_evaluate(
-                model, val_recs, device, bag_cache,
-                surv_endpoint="acr", task=task)
-            val_m   = compute_metrics(vl, vp) if len(np.unique(vl)) > 1 else {}
-            val_bacc = val_m.get("bacc", 0.0)
-            val_auc  = val_m.get("auc",  0.0)
-
             ci_vals: dict = {}
+            if is_surv_only:
+                # Survival-only task: evaluate the task-specific endpoint, use C-index
+                _, _, _, ci_task, *_ = p2_evaluate(
+                    model, val_recs, device, bag_cache,
+                    surv_endpoint=_surv_ep, task=task)
+                val_bacc = float(ci_task) if ci_task is not None else 0.0
+                val_auc  = val_bacc
+                ci_vals[_surv_ep] = val_bacc
+                metric = val_bacc
+            else:
+                # Cls or mega: BACC (+ all C-indices for mega)
+                vp, vl, val_loss, ci_acr, *_ = p2_evaluate(
+                    model, val_recs, device, bag_cache,
+                    surv_endpoint="acr", task=task)
+                val_m    = compute_metrics(vl, vp) if len(np.unique(vl)) > 1 else {}
+                val_bacc = val_m.get("bacc", 0.0)
+                val_auc  = val_m.get("auc",  0.0)
+                if is_mega:
+                    for ep_name in ("acr", "clad", "death"):
+                        _, _, _, ci_ep, *_ = p2_evaluate(
+                            model, val_recs, device, bag_cache,
+                            surv_endpoint=ep_name, task=task)
+                        if ci_ep is not None:
+                            ci_vals[ep_name] = ci_ep
+                ci_list = list(ci_vals.values())
+                metric  = (val_bacc + sum(ci_list)) / (1 + len(ci_list))
+
+            improved = metric > best_metric
+
+            # Test evaluation — logging only, never used for HP/early-stop decisions
+            te_p, te_l, _, te_ci_acr, *_ = p2_evaluate(
+                model, test_recs, device, bag_cache, surv_endpoint=_surv_ep, task=task)
+            te_m_metrics = compute_metrics(te_l, te_p) if len(np.unique(te_l)) > 1 else {}
+            te_bacc = te_m_metrics.get("bacc", float("nan"))
+            te_auc  = te_m_metrics.get("auc",  float("nan"))
+            te_ci: dict = {}
             if is_mega:
                 for ep_name in ("acr", "clad", "death"):
                     _, _, _, ci_ep, *_ = p2_evaluate(
-                        model, val_recs, device, bag_cache,
+                        model, test_recs, device, bag_cache,
                         surv_endpoint=ep_name, task=task)
                     if ci_ep is not None:
-                        ci_vals[ep_name] = ci_ep
-
-            # Combined early-stopping metric: mean(BACC, all available C-indices)
-            ci_list = list(ci_vals.values())
-            metric  = (val_bacc + sum(ci_list)) / (1 + len(ci_list))
-            improved = metric > best_metric
+                        te_ci[ep_name] = ci_ep
+            if te_ci_acr is not None and not is_mega:
+                te_ci[_surv_ep] = float(te_ci_acr) if te_ci_acr is not None else float("nan")
 
             bs    = loss_d.get("batch_stats", {})
             ci_str = "  ".join(f"ci_{k}={v:.4f}" for k, v in ci_vals.items())
-            print(f"  [{vtag}_final] ep {epoch+1:3d}/{n_epochs}"
-                  f"  hinge={loss_d.get('hinge', 0):.4f}"
-                  f"  cox={loss_d.get('cox', 0):.4f}"
+            te_ci_str = "  ".join(f"te_ci_{k}={v:.4f}" for k, v in te_ci.items())
+            active_tag = f"[{loss_d.get('mode','?')}]" if alternating else ""
+            print(f"  [{vtag}_final] ep {epoch+1:3d}/{n_epochs}{active_tag}"
+                  f"  bce={loss_d.get('bce',0):.4f}"
+                  f"  cox_acr={loss_d.get('cox_acr',0):.4f}"
+                  f"  cox_clad={loss_d.get('cox_clad',0):.4f}"
+                  f"  cox_death={loss_d.get('cox_death',0):.4f}"
                   f"  lr={optimizer.param_groups[0]['lr']:.2e}"
-                  f"  | cls={bs.get('n_cls',0)}(pos={bs.get('n_cls_pos',0)})"
-                  f"  acr_surv={bs.get('acr_surv_event',0)}ev/{bs.get('acr_surv_cens',0)}cs"
-                  f"  clad={bs.get('clad_event',0)}ev/{bs.get('clad_cens',0)}cs"
-                  f"  death={bs.get('death_event',0)}ev/{bs.get('death_cens',0)}cs"
-                  f"  | val_bacc={val_bacc:.4f}  val_auc={val_auc:.4f}"
+                  f"\n    batch: cls={bs.get('n_cls',0)}(pos={bs.get('n_cls_pos',0)})"
+                  f"  acr={bs.get('acr_surv_event',0)}ev/{bs.get('acr_surv_cens',0)}ce"
+                  f"  clad={bs.get('clad_event',0)}ev/{bs.get('clad_cens',0)}ce"
+                  f"  death={bs.get('death_event',0)}ev/{bs.get('death_cens',0)}ce"
+                  + _slot_collapse_stats(model)
+                  + f"\n    val_bacc={val_bacc:.4f}  val_auc={val_auc:.4f}"
                   + (f"  {ci_str}" if ci_str else "")
                   + f"  combined={metric:.4f}"
-                  + ("  *best*" if improved else
-                     f"  (no_improve={no_improve+1}/{patience})"))
+                  + ("  *best*" if improved else f"  (no_improve={no_improve+1}/{patience})")
+                  + f"\n    [test] te_bacc={te_bacc:.4f}  te_auc={te_auc:.4f}"
+                  + (f"  {te_ci_str}" if te_ci_str else ""))
 
             if improved:
                 best_metric = metric
                 best_epoch  = epoch + 1
                 no_improve  = 0
-                torch.save(model.state_dict(), ckpt_dir / "best_val.pt")
+                if not combined_train:
+                    torch.save(model.state_dict(), ckpt_dir / "best_val.pt")
             else:
                 no_improve += 1
-                if no_improve >= patience:
+                if not combined_train and no_improve >= patience:
                     print(f"  [{vtag}_final] Early stop at ep {epoch+1} "
                           f"(best_ep={best_epoch}  combined={best_metric:.4f})")
                     _gc()
@@ -1664,9 +1812,11 @@ def run_phase2_final(
                     old.unlink(missing_ok=True)
         _gc()
 
-    # Load best-val checkpoint
+    # Load best-val checkpoint (skip in combined_train mode — use last epoch)
     best_ckpt = ckpt_dir / "best_val.pt"
-    if best_ckpt.exists():
+    if combined_train:
+        print(f"  [{vtag}_final] combined_train: using last epoch weights.")
+    elif best_ckpt.exists():
         model.load_state_dict(torch.load(best_ckpt, map_location=device,
                                          weights_only=True))
         print(f"  [{vtag}_final] Loaded best-val checkpoint (ep={best_epoch})")
@@ -1722,7 +1872,7 @@ def run_phase2_variant(model: nn.Module, variant: str, fold: int,
                        train_recs: List[dict], val_recs: List[dict],
                        test_recs: List[dict], save_dir: Path,
                        tag: Optional[str] = None,
-                       patience: int = 10,
+                       patience: int = 2,
                        cox_lambda: float = 0.0,
                        surv_endpoint: str = 'clad',
                        task: str = 'acr',
@@ -1816,24 +1966,21 @@ def run_phase2_variant(model: nn.Module, variant: str, fold: int,
             model.to(device); start_epoch = resume_epoch
             print(f"  [{vtag}] Resumed from ep {resume_epoch}")
 
-    # Survival: track val Cox loss (lower = better). Cls: val BACC (higher = better).
-    if _is_surv_only:
-        _p2_best_metric: float = min(history["val_loss"]) if history.get("val_loss") else float("inf")
-    else:
-        _p2_best_metric: float = max(history["val_bacc"]) if history["val_bacc"] else -1.0
+    # Always maximize: C-index for survival tasks, BACC for cls tasks.
+    _p2_best_metric: float = max(history["val_bacc"]) if history.get("val_bacc") else -1.0
     _p2_best_ep:   int   = 0
     _p2_no_improve: int  = 0
 
     for epoch in range(start_epoch, total_eps):
+        if hasattr(model, 'routing_temperature'):
+            model.routing_temperature = max(0.1, 1.0 - epoch / max(total_eps - 1, 1) * 0.9)
         loss_d = p2_train_epoch(
             model, train_recs, optimizer, cw, device, bag_cache,
             scaler, P2_GRAD_ACCUM,
             mode=_default_train_mode,
-            task_weights=(GEOMAE_TASK_WEIGHTS if task == "geomae_alt"
-                          else DEFAULT_TASK_WEIGHTS if alternating
-                          else None),
+            task_weights=(DEFAULT_TASK_WEIGHTS if alternating else None),
         )
-        tl = loss_d["hinge"] + loss_d["cox"]
+        tl = loss_d["bce"] + loss_d["cox"]
         scheduler.step()
         history["train_loss"].append(tl)
         history["lr"].append(optimizer.param_groups[0]["lr"])
@@ -1854,8 +2001,8 @@ def run_phase2_variant(model: nn.Module, variant: str, fold: int,
                 history["val_bacc"].append(cidx_val)
                 history["val_mcc"].append(0.0)
                 metric_str = f"cox_loss={val_loss:.4f}  cidx={cidx_val:.3f}"
-                # Checkpoint: lower Cox loss is better (more principled than val C-idx)
-                improved = (val_loss > 0.0 and val_loss < _p2_best_metric)
+                # Checkpoint: higher C-index is better (directly optimizes the metric)
+                improved = (cidx_val > _p2_best_metric)
             else:
                 vm = compute_metrics(vl_l, vl_p)
                 primary_metric = vm["bacc"]
@@ -1876,7 +2023,7 @@ def run_phase2_variant(model: nn.Module, variant: str, fold: int,
             }, ckpt_dir / f"ep{epoch+1:04d}.pt")
 
             if improved:
-                _p2_best_metric = val_loss if _is_surv_only else primary_metric
+                _p2_best_metric = cidx_val if _is_surv_only else primary_metric
                 _p2_best_ep     = epoch + 1
                 _p2_no_improve  = 0
                 torch.save(model.state_dict(), save_dir / f"model_{vtag}.pt")
@@ -1884,10 +2031,22 @@ def run_phase2_variant(model: nn.Module, variant: str, fold: int,
             else:
                 _p2_no_improve += 1
                 ckpt_tag = "[ckpt]"
+            # Test eval — logging only, not used for early stopping
+            te_p, te_l, _, te_ci, *_ = p2_evaluate(
+                model, test_recs, device, bag_cache,
+                surv_endpoint=_surv_ep, task=task)
+            model.train()
+            if _is_surv_only:
+                te_str = f"  [test] ci={float(te_ci):.3f}" if te_ci is not None else ""
+            else:
+                te_vm  = compute_metrics(te_l, te_p) if len(np.unique(te_l)) > 1 else {}
+                te_ci_s = f"  ci={te_ci:.3f}" if te_ci is not None else ""
+                te_str = f"  [test] bacc={te_vm.get('bacc', float('nan')):.3f}  auc={te_vm.get('auc', float('nan')):.3f}{te_ci_s}"
+
             improve_str = (f"  no_improve={_p2_no_improve}/{patience}"
                            if patience > 0 else "")
             print(f"  [{vtag}] ep {epoch+1:3d}  loss={tl:.4f}/{val_loss:.4f}  "
-                  f"{metric_str}  {ckpt_tag}{improve_str}")
+                  f"{metric_str}  {ckpt_tag}{improve_str}{te_str}")
             _gc()
             if patience > 0 and _p2_no_improve >= patience:
                 print(f"  [{vtag}] Early stop: {_p2_no_improve} eval periods "
@@ -1988,5 +2147,343 @@ def run_phase2_variant(model: nn.Module, variant: str, fold: int,
         json.dump(all_metrics, f, indent=2)
     with open(save_dir / f"history_{vtag}.json", "w") as f:
         json.dump(history, f)
+    del model, optimizer, scaler; _gc()
+    return all_metrics
+
+
+# ── Longitudinal training/eval/hp-sweep/final ─────────────────────────────────
+
+def p2_train_longitudinal_epoch(
+    model, patient_records, optimizer, cw, device, bag_cache, scaler, grad_accum,
+    cox_lambda_acr:   float = P2_COX_LAMBDA_ACR,
+    cox_lambda_clad:  float = P2_COX_LAMBDA_CLAD,
+    cox_lambda_death: float = P2_COX_LAMBDA_DEATH,
+) -> dict:
+    """Training epoch for LongitudinalMIL. One forward pass per patient."""
+    model.train()
+    random.shuffle(patient_records)
+    use_amp  = (scaler is not None)
+    OOM_SKIP = 3
+    oom_counts: dict = {}
+
+    total_bce = 0.0; n_bce = 0; n_steps = 0
+    pending_loss: Optional[torch.Tensor] = None
+    cox_bufs: Dict[str, list] = {"acr_surv": [], "clad": [], "death": []}
+    accum_step = 0
+    optimizer.zero_grad()
+
+    surv_lam = {"acr_surv": cox_lambda_acr, "clad": cox_lambda_clad, "death": cox_lambda_death}
+
+    def _flush():
+        nonlocal pending_loss, n_steps
+        combined = pending_loss
+        for tk, buf in cox_bufs.items():
+            if not buf:
+                continue
+            L_cox = cox_breslow_loss(buf)
+            if L_cox is not None and L_cox.requires_grad:
+                combined = L_cox * surv_lam[tk] if combined is None else combined + L_cox * surv_lam[tk]
+            buf.clear()
+        if combined is not None and combined.requires_grad:
+            if scaler:
+                scaler.scale(combined).backward(); scaler.step(optimizer); scaler.update()
+            else:
+                combined.backward(); optimizer.step()
+        optimizer.zero_grad(); pending_loss = None; n_steps += 1; _gc()
+
+    for pat in patient_records:
+        pid = pat["patient_id"]
+        if oom_counts.get(pid, 0) >= OOM_SKIP:
+            continue
+
+        stems   = pat["stems"]
+        days    = pat["days"]
+        records = pat["records"]
+        bags_list = [{m: bag_cache.get(s, {}).get(m) for m in MODALITIES} for s in stems]
+
+        if all(all(b.get(m) is None for m in MODALITIES) for b in bags_list):
+            continue
+
+        try:
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                result = model({"bags_list": bags_list, "days": days, "records": records}, device)
+
+            if isinstance(result, torch.Tensor):
+                continue
+
+            # ACR surv (patient-level)
+            acr_out = result.get("acr_surv")
+            if acr_out is not None and isinstance(acr_out, tuple) and len(acr_out) == 4:
+                hazard, _, acr_t, acr_e = acr_out
+                if isinstance(hazard, torch.Tensor) and not math.isnan(acr_t):
+                    cox_bufs["acr_surv"].append((hazard.float(), acr_t, acr_e))
+
+            # CLAD + Death (per-biopsy gap-time)
+            for tk in ("clad", "death"):
+                for hazard, t_val, e_val in result.get(tk, []):
+                    if isinstance(hazard, torch.Tensor):
+                        cox_bufs[tk].append((hazard.float(), t_val, e_val))
+
+            # ACR cls (per labeled biopsy)
+            for logit, label in result.get("acr_cls", []):
+                if isinstance(logit, torch.Tensor):
+                    target = logit.new_tensor([float(label)])
+                    loss   = bce_loss(logit.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
+                    pending_loss = loss if pending_loss is None else pending_loss + loss
+                    total_bce += loss.item(); n_bce += 1
+
+            accum_step += 1
+            if accum_step >= grad_accum:
+                _flush(); accum_step = 0
+
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            oom_counts[pid] = oom_counts.get(pid, 0) + 1
+            pending_loss = None
+            for buf in cox_bufs.values(): buf.clear()
+            accum_step = 0; optimizer.zero_grad()
+            if oom_counts[pid] >= OOM_SKIP:
+                print(f"  [OOM-longitudinal] patient {pid} permanently skipped", flush=True)
+
+    if accum_step > 0:
+        _flush()
+
+    return {"bce": total_bce / max(n_bce, 1), "n_steps": n_steps}
+
+
+@torch.no_grad()
+def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None) -> dict:
+    """Evaluate LongitudinalMIL. Returns dict with metrics for all 4 tasks + val_score."""
+    model.eval()
+    use_amp = (device.type == "cuda")
+
+    cls_probs: List[float] = []; cls_labels: List[int] = []
+    surv_data: Dict[str, dict] = {
+        "acr_surv": {"h": [], "t": [], "e": []},
+        "clad":     {"h": [], "t": [], "e": []},
+        "death":    {"h": [], "t": [], "e": []},
+    }
+
+    for pat in patient_records:
+        stems   = pat["stems"]; days = pat["days"]; records = pat["records"]
+        bags_list = [{m: bag_cache.get(s, {}).get(m) for m in MODALITIES} for s in stems]
+        if all(all(b.get(m) is None for m in MODALITIES) for b in bags_list):
+            continue
+        try:
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                result = model({"bags_list": bags_list, "days": days, "records": records}, device)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache(); continue
+
+        if isinstance(result, torch.Tensor):
+            continue
+
+        acr_out = result.get("acr_surv")
+        if acr_out is not None and isinstance(acr_out, tuple) and len(acr_out) == 4:
+            hazard, _, acr_t, acr_e = acr_out
+            if isinstance(hazard, torch.Tensor) and not math.isnan(acr_t):
+                surv_data["acr_surv"]["h"].append(hazard.float().item())
+                surv_data["acr_surv"]["t"].append(acr_t)
+                surv_data["acr_surv"]["e"].append(acr_e)
+
+        for tk in ("clad", "death"):
+            for hazard, t_val, e_val in result.get(tk, []):
+                if isinstance(hazard, torch.Tensor):
+                    surv_data[tk]["h"].append(hazard.float().item())
+                    surv_data[tk]["t"].append(t_val)
+                    surv_data[tk]["e"].append(e_val)
+
+        for logit, label in result.get("acr_cls", []):
+            if isinstance(logit, torch.Tensor):
+                cls_probs.append(torch.sigmoid(logit.float()).item())
+                cls_labels.append(label)
+
+    metrics: dict = {}
+
+    if cls_probs and cls_labels:
+        m = compute_metrics(np.array(cls_labels), np.array(cls_probs))
+        metrics["acr_cls"] = m
+    else:
+        metrics["acr_cls"] = {"bacc": 0.5, "auc": 0.5}
+
+    for tk, sd in surv_data.items():
+        if len(sd["h"]) >= 2 and sum(sd["e"]) > 0:
+            ci = c_index(sd["h"], sd["t"], sd["e"])
+            metrics[tk] = {"c_index": ci if ci is not None else 0.5}
+        else:
+            metrics[tk] = {"c_index": 0.5}
+
+    bacc     = metrics["acr_cls"].get("bacc", 0.5)
+    ci_acr   = metrics["acr_surv"].get("c_index", 0.5)
+    ci_clad  = metrics["clad"].get("c_index", 0.5)
+    ci_death = metrics["death"].get("c_index", 0.5)
+    metrics["val_score"] = 0.5 * bacc + 0.5 * float(np.mean([ci_acr, ci_clad, ci_death]))
+    return metrics
+
+
+def run_longitudinal_hp_sweep(
+    model_factory,
+    patient_train: List[dict],
+    patient_val:   List[dict],
+    device: torch.device,
+    bag_cache: BagCache,
+    save_dir: Path,
+    lr_grid: List[float] = P2_HP_LR_GRID,
+    wd_grid: List[float] = P2_HP_WD_GRID,
+    sweep_epochs: int = P2_HP_SWEEP_EPOCHS,
+    eval_every:   int = P2_HP_EVAL_EVERY,
+    hp_patience:  int = P2_HP_PATIENCE,
+) -> Tuple[float, float]:
+    """HP sweep for LongitudinalMIL — same grid as mario_kempes."""
+    from itertools import product as iproduct
+    save_dir.mkdir(parents=True, exist_ok=True)
+    result_path = save_dir / "hp_sweep_p2.json"
+    if result_path.exists():
+        with open(result_path) as f:
+            res = json.load(f)
+        print(f"  [LMK-HP] Already done: lr={res['best_lr']}  wd={res['best_wd']}  "
+              f"val_score={res['best_val_bacc']:.4f}")
+        return res["best_lr"], res["best_wd"]
+
+    # Derive class weights from flattened biopsy records
+    flat_train = [r for pat in patient_train for r in pat["records"]]
+    cw = compute_class_weights(flat_train)
+
+    best_metric = -1.0
+    best_lr, best_wd = lr_grid[0], wd_grid[0]
+    results = []
+
+    for lr, wd in iproduct(lr_grid, wd_grid):
+        print(f"  [LMK-HP] lr={lr:.0e}  wd={wd:.0e}", flush=True)
+        model = model_factory().to(device)
+        opt   = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
+                                 lr=lr, weight_decay=wd)
+        scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
+        best_ep_metric = -1.0; no_improve = 0
+
+        for ep in range(sweep_epochs):
+            p2_train_longitudinal_epoch(model, patient_train, opt, cw, device,
+                                        bag_cache, scaler, P2_GRAD_ACCUM)
+            if (ep + 1) % eval_every == 0:
+                vm = p2_evaluate_longitudinal(model, patient_val, device, bag_cache, cw)
+                metric = vm["val_score"]
+                improved = metric > best_ep_metric
+                best_ep_metric = max(best_ep_metric, metric)
+                no_improve = 0 if improved else no_improve + 1
+                print(f"  ep {ep+1:3d}/{sweep_epochs}  val_score={metric:.4f}  "
+                      f"best={best_ep_metric:.4f}", flush=True)
+                _gc()
+                if no_improve >= hp_patience:
+                    print(f"  [LMK-HP] early stop", flush=True); break
+
+        print(f"  [LMK-HP] lr={lr:.0e}  wd={wd:.0e}  DONE  val_score={best_ep_metric:.4f}")
+        results.append({"lr": lr, "wd": wd, "val_bacc": best_ep_metric})
+        if best_ep_metric > best_metric:
+            best_metric, best_lr, best_wd = best_ep_metric, lr, wd
+        del model, opt, scaler; _gc()
+
+    res = {"best_lr": best_lr, "best_wd": best_wd, "best_val_bacc": best_metric,
+           "grid": results}
+    with open(result_path, "w") as f:
+        json.dump(res, f, indent=2)
+    return best_lr, best_wd
+
+
+def run_longitudinal_final(
+    model: nn.Module,
+    variant: str,
+    fold: int,
+    device: torch.device,
+    bag_cache: BagCache,
+    patient_train: List[dict],
+    patient_val:   List[dict],
+    patient_test:  List[dict],
+    save_dir: Path,
+    lr: float = P2_LR,
+    weight_decay: float = P2_WEIGHT_DECAY,
+    n_epochs: int = P2_FINAL_EPOCHS,
+    eval_every: int = P2_EVAL_EVERY,
+    patience: int = 20,
+    grad_accum: int = 32,
+    combined_train: bool = False,
+) -> dict:
+    """Final training + test eval for LongitudinalMIL."""
+    vtag = variant
+    save_dir.mkdir(parents=True, exist_ok=True)
+    status_path = save_dir / f"status_{vtag}_final.json"
+
+    if _is_completed(save_dir, tag=f"status_{vtag}_final"):
+        st = _read_status(status_path)
+        print(f"  [LMK_final] Already completed (best_ep={st.get('best_epoch')}). Skipping.")
+        mf = save_dir / f"metrics_{vtag}_final.json"
+        if mf.exists():
+            with open(mf) as f: return json.load(f)
+        return {}
+
+    flat_train = [r for pat in patient_train for r in pat["records"]]
+    cw = compute_class_weights(flat_train)
+    optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
+                                 lr=lr, weight_decay=weight_decay)
+    scheduler = _flat_cosine_scheduler(optimizer, n_epochs)
+    scaler    = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
+
+    best_metric = -1.0; best_epoch = 0; no_improve = 0
+    ckpt_dir = save_dir / f"ckpts_{vtag}_final"; ckpt_dir.mkdir(exist_ok=True)
+
+    train_pats = patient_train + patient_val if combined_train else patient_train
+    if combined_train:
+        print(f"  [LMK_final] combined_train: {len(train_pats)} patients")
+
+    for epoch in range(n_epochs):
+        loss_d = p2_train_longitudinal_epoch(model, train_pats, optimizer, cw,
+                                             device, bag_cache, scaler, grad_accum)
+        scheduler.step()
+
+        if (epoch + 1) % eval_every == 0 or epoch == n_epochs - 1:
+            vm = p2_evaluate_longitudinal(model, patient_val, device, bag_cache, cw)
+            metric = vm["val_score"]
+            improved = metric > best_metric
+            print(f"  [LMK_final] ep {epoch+1:3d}/{n_epochs}  bce={loss_d['bce']:.4f}"
+                  f"  val_score={metric:.4f}  best={best_metric:.4f}"
+                  + ("  *best*" if improved else f"  (no_improve={no_improve+1}/{patience})"),
+                  flush=True)
+            if improved:
+                best_metric = metric; best_epoch = epoch + 1; no_improve = 0
+                if not combined_train:
+                    torch.save(model.state_dict(), ckpt_dir / "best_val.pt")
+            else:
+                no_improve += 1
+                if not combined_train and no_improve >= patience:
+                    print(f"  [LMK_final] Early stop at ep {epoch+1}"); _gc(); break
+
+        if (epoch + 1) % 10 == 0:
+            ckpt_path = ckpt_dir / f"ep_{epoch+1:04d}.pt"
+            torch.save({"model": model.state_dict(), "epoch": epoch+1,
+                        "best_metric": best_metric, "best_epoch": best_epoch,
+                        "no_improve": no_improve}, ckpt_path)
+            for old in ckpt_dir.glob("ep_*.pt"):
+                if old != ckpt_path: old.unlink(missing_ok=True)
+        _gc()
+
+    best_ckpt = ckpt_dir / "best_val.pt"
+    if not combined_train and best_ckpt.exists():
+        model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=True))
+        print(f"  [LMK_final] Loaded best-val checkpoint (ep={best_epoch})")
+
+    torch.save(model.state_dict(), save_dir / f"model_{vtag}_final.pt")
+    _write_status(status_path, completed=True, best_epoch=best_epoch,
+                  best_val_metric=best_metric, lr=lr, weight_decay=weight_decay)
+
+    print(f"\n  [LMK_final] Evaluating on test set ({len(patient_test)} patients)...")
+    tm = p2_evaluate_longitudinal(model, patient_test, device, bag_cache)
+    all_metrics: dict = {"test": tm}
+    print(f"  [LMK_final] test  val_score={tm['val_score']:.4f}"
+          f"  bacc={tm['acr_cls'].get('bacc', 0):.4f}"
+          f"  ci_acr={tm['acr_surv'].get('c_index', 0):.4f}"
+          f"  ci_clad={tm['clad'].get('c_index', 0):.4f}"
+          f"  ci_death={tm['death'].get('c_index', 0):.4f}")
+
+    with open(save_dir / f"metrics_{vtag}_final.json", "w") as f:
+        json.dump(all_metrics, f, indent=2)
     del model, optimizer, scaler; _gc()
     return all_metrics

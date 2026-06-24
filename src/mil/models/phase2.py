@@ -16,24 +16,16 @@ Fusion variants
   early  : All patches from all modalities concatenated → DualGatedPool
   late   : Per-modality ABMIL summaries → learnable weighted combination
   middle : Per-modality ABMIL summaries → cross-modal transformer → pool
-  slot   : SharedSlotMIL — K=128 shared slots, per-modality MHASlotAttn, mean fairness, per-task gated ABMIL
-
-Helper functions
-----------------
-_load_p1_encoder   : load GatedAttentionEncoder from a Phase 1 checkpoint
-_load_p1_proj_head : load ProjectionHead from a Phase 1 checkpoint
-_abmil_pool        : shared gated-ABMIL pooling step
-_pool              : ABMIL or CLS-token pooling
+  slot   : SetTransformerMIL — PMA seed compression per modality → SAB cross-modal → ABMIL
 
 Classes exported
 ----------------
 EarlyFusionMIL
 LateFusionMIL
 MiddleFusionMIL
+SetTransformerMIL
 DualGatedPool
 MultiTaskHead
-TaskSpecificSlotMIL
-SharedSlotMIL
 """
 
 import random
@@ -50,7 +42,9 @@ from .encoders import (
     ProjectionHead,
     FFN,
     CrossModalTransformer,
-    MHASlotAttn,
+    PMA,
+    SAB,
+    TemporalSAB,
 )
 
 # ── Constants (mirror train_mm_abmil_v7.py) ───────────────────────────────────
@@ -428,218 +422,68 @@ class MiddleFusionMIL(nn.Module):
         return self.task_head(tokens, device)
 
 
-# ── Fusion variant: TaskSpecificSlotMIL ──────────────────────────────────────
-
-class TaskSpecificSlotMIL(nn.Module):
+class SetTransformerMIL(nn.Module):
     """
-    Multimodal slot MIL with per-task slot initialisation + per-task gated ABMIL.
-
-    Motivation: different tasks rely on different modalities
-    (BAL→CLAD, CT→Death, Clinical→ACR-TTE).  A cross-modal transformer
-    forces all modalities to interact, which can hurt tasks that only need
-    one modality and obscures which modality drives each prediction.
-
-    Design:
-      Stage 1 (per task × modality):
-          h_m (N, H)  →  MHASlotAttn(slot_inits[task])  →  K task-specific slots
-          Shared MHA weights; per-task slot queries → task-relevant patch routing.
-
-      Stage 2 (per task):
-          cat K*M slots  →  gated ABMIL  →  single rep (H,)
-          alpha = softmax(w · (tanh(V·s) ⊙ sigmoid(U·s)))   ∈ (K*M, 1)
-          rep   = alpha^T · slots
-          Attention weights reveal which modality's slots each task relies on
-          (interpretable modality importance per task).
-
-      Stage 3 (per task):
-          LayerNorm(rep) → task head → scalar
-
-    No cross-modal transformer: modalities do NOT share information.
-    Task selectivity is achieved purely through per-task slot queries + ABMIL.
-
-    Extra parameters vs MultimodalSlotMIL:
-        n_tasks × K × H slot inits  (4 × 8 × 256 = 8 192 floats)
-        n_tasks × 3 gated-ABMIL weight matrices (V, U, w per task)
-    """
-    def __init__(self, encoders, proj_heads, hidden_dim: int = 256,
-                 n_heads: int = 4, dropout: float = 0.1,
-                 modal_dropout: float = 0.3, n_slots: int = 8, n_slot_iters: int = 3,
-                 max_he_patches: int = P2_MAX_HE_BLOCK,
-                 tasks: Optional[List[str]] = None):
-        super().__init__()
-        self.encoders       = nn.ModuleDict(encoders)
-        self.modal_dropout  = modal_dropout
-        self.max_he_patches = max_he_patches
-        self.n_slots        = n_slots
-        _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
-        self.task_names     = _tasks
-
-        # Shared slot attention mechanism — only MHA weights are shared
-        self.slot_mha = MHASlotAttn(hidden_dim, n_slots, n_slot_iters, n_heads, dropout)
-
-        # Per-task slot init tokens — task-specific patch routing
-        self.slot_inits = nn.ParameterDict()
-        for t in _tasks:
-            p = nn.Parameter(torch.empty(n_slots, hidden_dim))
-            nn.init.normal_(p, std=0.02)
-            self.slot_inits[t] = p
-
-        # Per-task gated ABMIL over K*M slots — learns task-modality importance
-        self.abmil_V = nn.ModuleDict({t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())   for t in _tasks})
-        self.abmil_U = nn.ModuleDict({t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid()) for t in _tasks})
-        self.abmil_w = nn.ModuleDict({t: nn.Linear(hidden_dim, 1, bias=False)                          for t in _tasks})
-        self.norms   = nn.ModuleDict({t: nn.LayerNorm(hidden_dim)                                      for t in _tasks})
-
-        # Per-task output heads
-        heads: dict = {}
-        for t in _tasks:
-            if TASK_SPEC[t]["type"] == "cls":
-                heads[t] = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
-            else:
-                h = nn.Linear(hidden_dim, 1, bias=True)
-                nn.init.normal_(h.weight, 0.0, 0.01)
-                nn.init.zeros_(h.bias)
-                heads[t] = h
-        self.heads = nn.ModuleDict(heads)
-
-    def get_slot_attention_weights(self, bags: dict, device: torch.device) -> dict:
-        """
-        Return gated-ABMIL attention weights over slots for interpretability.
-        Returns {task: {"weights": (K*M,), "mod_labels": [str]×K*M}}
-        """
-        he_coords = bags.get("HE_coords")
-        patch_feats: dict = {}
-        for mod, enc in self.encoders.items():
-            t = bags.get(mod)
-            if t is None: continue
-            t = t.to(device, non_blocking=True)
-            crds = he_coords if mod == "HE" else None
-            patch_feats[mod] = enc.encode_patches(t, coords=crds)
-
-        result = {}
-        with torch.no_grad():
-            for task in self.task_names:
-                init = self.slot_inits[task]
-                slots_list, labels = [], []
-                for mod, h in patch_feats.items():
-                    s = self.slot_mha(h, init)
-                    slots_list.append(s)
-                    labels.extend([mod] * self.n_slots)
-                all_slots = torch.cat(slots_list, dim=0)
-                alpha = torch.softmax(
-                    self.abmil_w[task](self.abmil_V[task](all_slots) * self.abmil_U[task](all_slots)),
-                    dim=0).squeeze(-1)
-                result[task] = {"weights": alpha.cpu(), "mod_labels": labels}
-        return result
-
-    def forward(self, bags: dict, device: torch.device) -> dict:
-        he_coords = bags.get("HE_coords")
-
-        # Encode patches once — shared backbone (one forward pass per modality)
-        patch_feats: dict = {}
-        for mod, enc in self.encoders.items():
-            t = bags.get(mod)
-            if t is None: continue
-            if self.training and random.random() < self.modal_dropout: continue
-            t = t.to(device, non_blocking=True)
-            if mod == "HE" and t.shape[0] > self.max_he_patches:
-                idx = torch.randperm(t.shape[0], device=device)[:self.max_he_patches]
-                t = t[idx]
-            crds = he_coords if mod == "HE" else None
-            patch_feats[mod] = enc.encode_patches(t, coords=crds)   # (N, H)
-
-        if not patch_feats:
-            return torch.tensor(0.0, device=device, requires_grad=True)
-
-        out: dict = {}
-        for task in self.task_names:
-            init = self.slot_inits[task]   # (K, H) — task-specific slot queries
-
-            # Stage 1: task-specific slot attention (shared MHA, per-task init)
-            task_slots: List[torch.Tensor] = []
-            for h in patch_feats.values():
-                task_slots.append(self.slot_mha(h, init))   # (K, H) per modality
-
-            # Stage 2: gated ABMIL over K*M task-specific slots
-            all_slots = torch.cat(task_slots, dim=0)         # (K*M, H)
-            gate   = self.abmil_V[task](all_slots) * self.abmil_U[task](all_slots)
-            alpha  = torch.softmax(self.abmil_w[task](gate), dim=0)  # (K*M, 1)
-            rep    = self.norms[task]((alpha * all_slots).sum(0))     # (H,)
-
-            # Stage 3: task head
-            out[task] = (self.heads[task](rep).squeeze(), rep)
-
-        return out
-
-
-# ── SharedSlotMIL ─────────────────────────────────────────────────────────────
-
-class SharedSlotMIL(nn.Module):
-    """
-    Multimodal MIL with K globally shared slot tokens and per-modality routing.
+    Multimodal MIL via Set Transformer seed compression.
 
     Architecture
     ------------
     Stage 1  Per-modality ModalFFNEncoder: (N, feat_dim) → (N, H).
-             2-layer FFN (feat_dim → H*2 → H) learns a modality-specific
-             geometry transform so all modalities can route into the same slot space.
 
-    Stage 2  Per-modality MHASlotAttn (separate MHA weights per modality,
-             shared slot init tokens):
-               slots_m = slot_attn_m(queries=shared_slots, kv=h_m)  →  (K, H)
-             Different MHA weights: each modality learns its own patch→slot routing.
-             Shared slot init: forces slot i to represent the same latent concept
-             regardless of which modality fills it (OT-like cross-modal alignment).
+    Stage 2  Per-modality PMA (Pooling by Multihead Attention):
+               K learned seed vectors attend to N patch tokens via standard
+               cross-attention → (K, H) per modality.
+             Standard softmax over N patches per seed — no GRU, no competitive
+             routing, no iterative refinement.  Seeds stay diverse because they
+             have distinct learned query weights and independent gradient paths;
+             there is no shared GRU hidden state to force convergence.
 
-    Stage 3  Mean over present modalities → slots_agg (K, H).
-             Each modality contributes equally (1/M) regardless of patch count,
-             preventing HE (23k patches) from dominating CT (1k) or Clinical (100).
+    Stage 3  Concatenate seeds from all present modalities → (M*K, H).
+             SAB (self-attention) lets seeds from different modalities exchange
+             information for cross-modal interaction.
 
-    Stage 4  Per-task gated ABMIL over K shared slots → (H,) task representation.
-             alpha_t reveals which of the K conceptual slots matter per task
-             (interpretable slot importance per task).
+    Stage 4  Per-task gated ABMIL over M*K tokens → (H,) task representation.
 
-    Stage 5  Per-task classification or survival head.
+    Stage 5  Per-task cls / survival head.
     """
+
     def __init__(self, encoders, hidden_dim: int = 256,
-                 n_heads: int = 4, dropout: float = 0.1,
-                 modal_dropout: float = 0.3, n_slots: int = 128,
-                 n_slot_iters: int = 1,
+                 n_seeds: int = 16, n_pma_layers: int = 2,
+                 n_sab_layers: int = 1, n_heads: int = 4,
+                 dropout: float = 0.1, modal_dropout: float = 0.3,
                  max_he_patches: int = P2_MAX_HE_BLOCK,
                  tasks: Optional[List[str]] = None):
         super().__init__()
         self.encoders       = nn.ModuleDict(encoders)
         self.modal_dropout  = modal_dropout
         self.max_he_patches = max_he_patches
-        self.n_slots        = n_slots
+        self.n_seeds        = n_seeds
         _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
         self.task_names     = _tasks
 
-        # Globally shared slot init tokens — K × H
-        self.shared_slots = nn.Parameter(torch.empty(n_slots, hidden_dim))
-        nn.init.normal_(self.shared_slots, std=0.02)
-
-        # Per-modality slot attention (separate MHA weights, shared init above)
-        self.slot_attns = nn.ModuleDict({
-            mod: MHASlotAttn(hidden_dim, n_slots, n_slot_iters, n_heads, dropout)
+        # Per-modality PMA: compress N patches → K seeds
+        self.pma = nn.ModuleDict({
+            mod: PMA(hidden_dim, n_seeds, n_heads, n_pma_layers, dropout)
             for mod in encoders
         })
 
-        # Per-task gated ABMIL over K shared slots
+        # Cross-modal SAB: seeds from all modalities self-attend
+        self.sab = nn.ModuleList([SAB(hidden_dim, n_heads, dropout)
+                                   for _ in range(n_sab_layers)])
+
+        # Per-task gated ABMIL over M*K tokens
         self.abmil_V = nn.ModuleDict({
             t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())    for t in _tasks})
         self.abmil_U = nn.ModuleDict({
             t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid()) for t in _tasks})
         self.abmil_w = nn.ModuleDict({
             t: nn.Linear(hidden_dim, 1, bias=False)                           for t in _tasks})
-        self.norms   = nn.ModuleDict({
-            t: nn.LayerNorm(hidden_dim)                                       for t in _tasks})
 
         # Per-task output heads
         heads: dict = {}
         for t in _tasks:
             if TASK_SPEC[t]["type"] == "cls":
-                heads[t] = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+                heads[t] = nn.Linear(hidden_dim, 1)
             else:
                 h = nn.Linear(hidden_dim, 1, bias=True)
                 nn.init.normal_(h.weight, 0.0, 0.01)
@@ -650,8 +494,8 @@ class SharedSlotMIL(nn.Module):
     def forward(self, bags: dict, device: torch.device) -> dict:
         he_coords = bags.get("HE_coords")
 
-        # Stage 1+2: per-modality encode + slot attention
-        mod_slots: List[torch.Tensor] = []
+        # Stage 1+2: per-modality encode + compress to K seeds
+        mod_seeds: List[torch.Tensor] = []
         for mod, enc in self.encoders.items():
             t = bags.get(mod)
             if t is None:
@@ -663,22 +507,230 @@ class SharedSlotMIL(nn.Module):
                 idx = torch.randperm(t.shape[0], device=device)[:self.max_he_patches]
                 t = t[idx]
             crds = he_coords if mod == "HE" else None
-            h = enc.encode_patches(t, coords=crds)                    # (N, H)
-            s = self.slot_attns[mod](h, self.shared_slots)             # (K, H)
-            mod_slots.append(s)
+            h = enc.encode_patches(t, coords=crds)   # (N, H)
+            s = self.pma[mod](h)                      # (K, H)
+            mod_seeds.append(s)
 
-        if not mod_slots:
+        if not mod_seeds:
             return torch.tensor(0.0, device=device, requires_grad=True)
 
-        # Stage 3: mean over present modalities — equal contribution per modality
-        slots_agg = torch.stack(mod_slots, dim=0).mean(dim=0)          # (K, H)
+        # Stage 3: concatenate all modality seeds + cross-modal self-attention
+        tokens = torch.cat(mod_seeds, dim=0)          # (M*K, H)
+        for layer in self.sab:
+            tokens = layer(tokens)
 
         # Stage 4+5: per-task gated ABMIL → head
         out: dict = {}
         for task in self.task_names:
-            gate  = self.abmil_V[task](slots_agg) * self.abmil_U[task](slots_agg)  # (K, H)
-            alpha = torch.softmax(self.abmil_w[task](gate), dim=0)                  # (K, 1)
-            rep   = self.norms[task]((alpha * slots_agg).sum(0))                    # (H,)
+            gate  = self.abmil_V[task](tokens) * self.abmil_U[task](tokens)  # (M*K, H)
+            alpha = torch.softmax(self.abmil_w[task](gate), dim=0)            # (M*K, 1)
+            rep   = (alpha * tokens).sum(0)                                   # (H,)
             out[task] = (self.heads[task](rep).squeeze(), rep)
+
+        return out
+
+
+class LongitudinalMIL(nn.Module):
+    """
+    Temporal extension of SetTransformerMIL for longitudinal biopsy sequences.
+
+    Architecture
+    ------------
+    For a patient with T biopsies at days [d_0 < d_1 < ... < d_{T-1}]:
+
+    1. Per biopsy t, per modality m:
+       patches → ModalFFNEncoder → PMA → (K, H) seeds
+
+    2. Concatenate all biopsies' seeds: (T*M*K, H), track days per token.
+
+    3. TemporalSAB (causal + ALiBi): tokens attend to history; recent biopsies
+       down-weighted by temporal distance from the query token.
+
+    4. Per-task recency-weighted ABMIL:
+       alpha_i ∝ exp( w·tanh(V·h_i) − |gamma| * |days_i − anchor| / sigma )
+       anchor = last biopsy day for patient-level tasks (acr_surv, clad)
+               = current biopsy day for per-biopsy tasks (death, acr_cls)
+
+    Task supervision
+    ----------------
+    acr_cls  : per biopsy where acr_grade known → BCE loss
+    acr_surv : patient-level (acr_days fixed) → one Cox per patient
+    clad     : gap-time per biopsy → T Cox contributions per patient
+    death    : gap-time per biopsy → T Cox contributions per patient
+    """
+
+    def __init__(self, encoders, hidden_dim: int = 256,
+                 n_seeds: int = 16, n_pma_layers: int = 2,
+                 n_sab_layers: int = 1, n_heads: int = 4,
+                 dropout: float = 0.1, modal_dropout: float = 0.3,
+                 max_he_patches: int = 2048,
+                 tasks: Optional[List[str]] = None):
+        super().__init__()
+        self.encoders       = nn.ModuleDict(encoders)
+        self.modal_dropout  = modal_dropout
+        self.max_he_patches = max_he_patches
+        self.n_seeds        = n_seeds
+        _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
+        self.task_names     = _tasks
+
+        self.pma = nn.ModuleDict({
+            mod: PMA(hidden_dim, n_seeds, n_heads, n_pma_layers, dropout)
+            for mod in encoders
+        })
+        self.temporal_sab = TemporalSAB(hidden_dim, n_heads, dropout, n_sab_layers)
+
+        self.abmil_V = nn.ModuleDict({
+            t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())
+            for t in _tasks})
+        self.abmil_U = nn.ModuleDict({
+            t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
+            for t in _tasks})
+        self.abmil_w = nn.ModuleDict({
+            t: nn.Linear(hidden_dim, 1, bias=False)
+            for t in _tasks})
+
+        # Per-task recency decay (learned scalar)
+        self.recency_gamma = nn.ParameterDict({
+            t: nn.Parameter(torch.ones(1)) for t in _tasks})
+
+        heads: dict = {}
+        for t in _tasks:
+            if TASK_SPEC[t]["type"] == "cls":
+                heads[t] = nn.Linear(hidden_dim, 1)
+            else:
+                h = nn.Linear(hidden_dim, 1, bias=True)
+                nn.init.normal_(h.weight, 0.0, 0.01)
+                nn.init.zeros_(h.bias)
+                heads[t] = h
+        self.heads = nn.ModuleDict(heads)
+
+    def _abmil_rep(self, task: str, tokens: torch.Tensor,
+                   days: torch.Tensor, anchor_day: float) -> torch.Tensor:
+        """Recency-weighted ABMIL anchored at anchor_day."""
+        gate  = self.abmil_V[task](tokens) * self.abmil_U[task](tokens)  # (N, H)
+        raw   = self.abmil_w[task](gate).squeeze(-1)                      # (N,)
+        sigma = (days.max() - days.min() + 1.0).clamp(min=1.0)
+        bias  = -self.recency_gamma[task].abs() * (days - anchor_day).abs() / sigma
+        alpha = torch.softmax(raw + bias, dim=0)                          # (N,)
+        return (alpha.unsqueeze(1) * tokens).sum(0)                       # (H,)
+
+    def forward(self, patient_data: dict, device: torch.device) -> dict:
+        """
+        patient_data:
+          'bags_list' : list of T dicts, each {mod_name: tensor or None}
+          'days'      : list of T floats (days from first biopsy)
+          'records'   : list of T per-biopsy label dicts
+
+        Returns task-keyed dict:
+          'acr_surv' : (hazard, rep, acr_t, acr_e)     — patient-level
+          'clad'     : [(hazard, t_val, e_val), ...]    — per biopsy
+          'death'    : [(hazard, t_val, e_val), ...]    — per biopsy
+          'acr_cls'  : [(logit, label), ...]            — labeled biopsies only
+        """
+        import math as _math
+
+        days_list = patient_data["days"]
+        bags_list = patient_data["bags_list"]
+        records   = patient_data["records"]
+        T         = len(days_list)
+
+        all_seeds: List[torch.Tensor] = []
+        all_days:  List[torch.Tensor] = []
+        biopsy_ends: List[int]        = []  # token count cumsum after each biopsy
+
+        running_total = 0
+        for t_idx in range(T):
+            bags  = bags_list[t_idx]
+            d_val = float(days_list[t_idx])
+            mod_seeds = []
+            for mod, enc in self.encoders.items():
+                feat = bags.get(mod)
+                if feat is None:
+                    continue
+                if self.training and random.random() < self.modal_dropout:
+                    continue
+                feat = feat.to(device, non_blocking=True)
+                if mod == "HE" and feat.shape[0] > self.max_he_patches:
+                    idx  = torch.randperm(feat.shape[0], device=device)[:self.max_he_patches]
+                    feat = feat[idx]
+                h = enc.encode_patches(feat)    # (N, H)
+                s = self.pma[mod](h)             # (K, H)
+                mod_seeds.append(s)
+
+            if not mod_seeds:
+                biopsy_ends.append(running_total)
+                continue
+
+            biopsy_seeds = torch.cat(mod_seeds, dim=0)   # (n_present * K, H)
+            n_new        = biopsy_seeds.shape[0]
+            all_seeds.append(biopsy_seeds)
+            all_days.append(torch.full((n_new,), d_val, dtype=torch.float32, device=device))
+            running_total += n_new
+            biopsy_ends.append(running_total)
+
+        if not all_seeds:
+            dummy = torch.tensor(0.0, device=device, requires_grad=True)
+            return {t: dummy for t in self.task_names}
+
+        tokens   = torch.cat(all_seeds, dim=0)    # (total_tokens, H)
+        days_tok = torch.cat(all_days,  dim=0)    # (total_tokens,)
+
+        tokens = self.temporal_sab(tokens, days_tok)
+
+        out: dict = {}
+
+        # ACR survival: patient-level, anchor at last biopsy
+        if "acr_surv" in self.task_names:
+            anchor = days_tok[-1].item()
+            rep    = self._abmil_rep("acr_surv", tokens, days_tok, anchor)
+            hazard = self.heads["acr_surv"](rep).squeeze()
+            acr_t  = next(
+                (float(r.get("acr_days", float("nan"))) for r in records
+                 if not _math.isnan(float(r.get("acr_days", float("nan"))))),
+                float("nan"))
+            acr_e  = next(
+                (float(r.get("acr_status", float("nan"))) for r in records
+                 if not _math.isnan(float(r.get("acr_status", float("nan"))))),
+                float("nan"))
+            out["acr_surv"] = (hazard, rep, acr_t, acr_e)
+
+        # CLAD and Death: per-biopsy gap-time, causal context
+        for task_name, t_key, e_key in [
+            ("clad",  "clad_time",  "clad_event"),
+            ("death", "death_time", "death_event"),
+        ]:
+            if task_name not in self.task_names:
+                continue
+            biopsy_hazards = []
+            for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                if end_idx == 0:
+                    continue
+                t_val = float(rec.get(t_key, float("nan")))
+                e_val = float(rec.get(e_key, float("nan")))
+                if _math.isnan(t_val) or t_val < 0:
+                    continue
+                tok_t  = tokens[:end_idx]
+                days_t = days_tok[:end_idx]
+                anchor = float(days_list[t_idx])
+                rep    = self._abmil_rep(task_name, tok_t, days_t, anchor)
+                hazard = self.heads[task_name](rep).squeeze()
+                e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
+                biopsy_hazards.append((hazard, t_val, e_safe))
+            out[task_name] = biopsy_hazards
+
+        # ACR classification: per labeled biopsy, causal context
+        if "acr_cls" in self.task_names:
+            cls_out = []
+            for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                label = rec.get("label")
+                if label is None or end_idx == 0:
+                    continue
+                tok_t  = tokens[:end_idx]
+                days_t = days_tok[:end_idx]
+                anchor = float(days_list[t_idx])
+                rep    = self._abmil_rep("acr_cls", tok_t, days_t, anchor)
+                logit  = self.heads["acr_cls"](rep).squeeze()
+                cls_out.append((logit, label))
+            out["acr_cls"] = cls_out
 
         return out

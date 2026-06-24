@@ -10,12 +10,13 @@ In the two-phase workflow:
 
 v8 architecture
 ---------------
-  slot — SharedSlotMIL (recommended):
+  slot — SetTransformerMIL (recommended):
     1. Per-modality ModalFFNEncoder: 2-layer FFN (feat_dim → H*2 → H)
-    2. K=128 globally shared slot init tokens
-    3. Per-modality MHASlotAttn (separate weights) → (K, H) per modality
-    4. Mean over present modalities → fair cross-modal aggregation
-    5. Per-task gated ABMIL over K shared slots → task representation
+    2. Per-modality PMA: K learned seeds cross-attend to N patches → (K, H)
+       Standard softmax over N patches — no GRU, no collapse
+    3. Concatenate all modality seeds → (M*K, H)
+    4. SAB (self-attention) for cross-modal seed interaction
+    5. Per-task gated ABMIL over M*K tokens → task representation
     6. Per-task cls/survival heads
 
   Simpler ablation baselines (early / late / middle) kept for comparison.
@@ -31,13 +32,13 @@ from typing import Dict, List, Optional
 
 import torch
 
-from .encoders import GatedAttentionEncoder, ModalFFNEncoder, GeoMAESpatialBackbone
+from .encoders import GatedAttentionEncoder, ModalFFNEncoder
 from .phase2 import (
     EarlyFusionMIL,
     LateFusionMIL,
     MiddleFusionMIL,
-    TaskSpecificSlotMIL,
-    SharedSlotMIL,
+    SetTransformerMIL,
+    LongitudinalMIL,
 )
 from mil.data.registry import MODALITIES, _feat_dim
 
@@ -50,11 +51,11 @@ P2_N_CROSS_LAYERS = 1      # 1 layer sufficient for small dataset; 4 overfits
 P2_ATTN_DROPOUT   = 0.1
 P2_MAX_PATCHES    = 2048
 P2_MAX_HE_BLOCK   = 99999  # effectively uncapped — use all HE patches (A100/H100 80GB safe up to ~50k)
-P2_SLOT_K         = 128    # shared slots across modalities
-P2_SLOT_ITERS     = 1      # 1 iter sufficient; more risks overfitting
+P2_SLOT_K         = 16     # dot products ~1/√128 → softmax uniform)
+P2_PMA_LAYERS     = 2      # cross-attention layers inside PMA
 
 # Available variants
-P2_VARIANTS = ["slot", "early", "late", "middle"]
+P2_VARIANTS = ["mario_kempes", "early", "late", "middle", "longitudinal_mk"]
 
 # Maps task name → list of prediction heads to build
 TASK_GROUPS = {
@@ -65,9 +66,6 @@ TASK_GROUPS = {
     "clad_surv":  ["clad"],
     "death_surv": ["death"],
     "mega":       ["acr_cls", "acr_surv", "clad", "death"],
-    # GeoMAE-backed alternating: same prediction heads as mega,
-    # but training adds "recon" to the multinomial sampling distribution
-    "geomae_alt": ["acr_cls", "acr_surv", "clad", "death"],
 }
 
 
@@ -84,7 +82,7 @@ def build_model_v8(
 
     Parameters
     ----------
-    variant       : "slot" (recommended) | "early" | "late" | "middle"
+    variant       : "mario_kempes" (recommended) | "early" | "late" | "middle"
     modal_dropout : probability of dropping a modality during training
     slot_k        : number of slot tokens per modality (hyperparameter; default 8)
     n_cross_layers: unused for slot variant (kept for API compat with early/middle)
@@ -92,23 +90,25 @@ def build_model_v8(
                     mega recommended for slot (trains all 4 tasks jointly)
     """
     import torch.nn as nn
+    # GatedAttentionEncoder used by early/late/middle; ModalFFNEncoder used by slot
+    encoders   = {m: GatedAttentionEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
+                  for m in MODALITIES}
+    proj_heads = {}   # unused in v8; kept for API compat
     _task_list = TASK_GROUPS.get(task, ["acr_cls", "acr_surv"])
     kw = dict(hidden_dim=HIDDEN_DIM, dropout=DROPOUT, modal_dropout=modal_dropout)
 
-    if variant == "slot":
-        # SharedSlotMIL: K=128 globally shared slot tokens, per-modality FFN encoders,
-        # per-modality MHASlotAttn (separate weights), mean fairness aggregation,
-        # per-task gated ABMIL + per-task heads.
+    if variant == "mario_kempes":
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
-        return SharedSlotMIL(
+        return SetTransformerMIL(
             encoders,
             hidden_dim=HIDDEN_DIM,
+            n_seeds=slot_k,
+            n_pma_layers=2,
+            n_sab_layers=max(1, n_cross_layers),
             n_heads=P2_N_HEADS,
             dropout=P2_ATTN_DROPOUT,
             modal_dropout=modal_dropout,
-            n_slots=slot_k,
-            n_slot_iters=P2_SLOT_ITERS,
             max_he_patches=max_he_patches,
             tasks=_task_list,
         )
@@ -126,73 +126,22 @@ def build_model_v8(
                                 modal_dropout=modal_dropout,
                                 hidden_dim=HIDDEN_DIM,
                                 tasks=_task_list)
+    if variant == "longitudinal_mk":
+        encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
+                    for m in MODALITIES}
+        return LongitudinalMIL(
+            encoders,
+            hidden_dim=HIDDEN_DIM,
+            n_seeds=slot_k,
+            n_pma_layers=2,
+            n_sab_layers=max(1, n_cross_layers),
+            n_heads=P2_N_HEADS,
+            dropout=P2_ATTN_DROPOUT,
+            modal_dropout=modal_dropout,
+            max_he_patches=max_he_patches,
+            tasks=_task_list,
+        )
     raise ValueError(f"Unknown variant {variant!r}. Choose from: {P2_VARIANTS}")
 
 
 build_model = build_model_v8
-
-
-# ── GeoMAE-initialised MIL model ──────────────────────────────────────────────
-
-def load_geomae_weights(
-    model: "torch.nn.Module",
-    geomae_ckpt: str,
-    trainable: bool = True,
-) -> Dict[str, bool]:
-    """
-    Load pretrained GeoMAE backbone weights into a TaskSpecificSlotMIL model.
-
-    Replaces the simple Linear(1024→256) backbone in HE and CT encoders with
-    GeoMAESpatialBackbone (wrapping the pretrained SpatialDenoisingEncoder).
-    BAL and Clinical encoders keep their GatedAttentionEncoder backbones.
-
-    Returns dict of {modality: loaded} indicating which encoders were replaced.
-
-    Usage:
-        model = build_model_v8(variant="slot", task="mega")
-        loaded = load_geomae_weights(model, "results/geomae_pretrain/best_backbone.pt")
-        # model.encoders["HE"] and model.encoders["CT"] now use GeoMAE backbone
-    """
-    from .pretrain import SpatialDenoisingEncoder, ClinicalMaskedEncoder, GeoMAE
-
-    ckpt = torch.load(geomae_ckpt, map_location="cpu", weights_only=False)
-    # best_backbone.pt is saved by GeoMAE.get_backbone_weights() →
-    # {"he_encoder": state_dict, "ct_encoder": state_dict, "clin_encoder": state_dict}
-    if not isinstance(ckpt, dict) or "he_encoder" not in ckpt:
-        raise ValueError(
-            f"Expected GeoMAE backbone checkpoint with keys "
-            f"[he_encoder, ct_encoder, clin_encoder], got: {list(ckpt.keys())[:5]}")
-
-    loaded = {}
-
-    # ── HE encoder ────────────────────────────────────────────────────────────
-    if hasattr(model, "encoders") and "HE" in model.encoders:
-        he_enc = SpatialDenoisingEncoder(
-            feat_dim=1024, hidden_dim=HIDDEN_DIM, n_layers=3, n_heads=4,
-            knn_k=8, max_dist=32)
-        he_enc.load_state_dict(ckpt["he_encoder"], strict=True)
-        if not trainable:
-            for p in he_enc.parameters(): p.requires_grad_(False)
-        model.encoders["HE"] = GeoMAESpatialBackbone(he_enc)
-        loaded["HE"] = True
-        print(f"  [GeoMAE] HE encoder loaded  ({'trainable' if trainable else 'frozen'})")
-
-    # ── CT encoder ────────────────────────────────────────────────────────────
-    if hasattr(model, "encoders") and "CT" in model.encoders:
-        ct_enc = SpatialDenoisingEncoder(
-            feat_dim=1024, hidden_dim=HIDDEN_DIM, n_layers=3, n_heads=4,
-            knn_k=8, max_dist=32)
-        ct_enc.load_state_dict(ckpt["ct_encoder"], strict=True)
-        if not trainable:
-            for p in ct_enc.parameters(): p.requires_grad_(False)
-        model.encoders["CT"] = GeoMAESpatialBackbone(ct_enc)
-        loaded["CT"] = True
-        print(f"  [GeoMAE] CT encoder loaded  ({'trainable' if trainable else 'frozen'})")
-
-    # ── BAL / Clinical: keep GatedAttentionEncoder (no GeoMAE for these) ──────
-    for mod in ["BAL", "Clinical"]:
-        loaded[mod] = False
-
-    return loaded
-
-
