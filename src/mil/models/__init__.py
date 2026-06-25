@@ -9,9 +9,9 @@ that are already predictive before any cross-modal fusion is attempted.
 See ``phase1.py`` (SingleModalMIL).
 
 Phase 2 — multimodal fusion: takes the Phase 1 summary tokens from all
-available modalities and fuses them using one of several strategies.
-See ``phase2.py`` (EarlyFusionMIL, LateFusionMIL, MiddleFusionMIL,
-TaskSpecificSlotMIL, DualGatedPool, MultiTaskHead).
+available modalities and fuses them.
+  SharedSlotMIL  — K=128 competitive slots, recommended
+  EarlyFusionMIL / LateFusionMIL / MiddleFusionMIL — ablation baselines
 
 The canonical entry point is ``build_model`` (alias for ``build_model_v8``)
 from ``builders.py``.
@@ -19,7 +19,7 @@ from ``builders.py``.
 Example
 -------
 >>> from mil.models.builders import build_model
->>> model = build_model("slot", task="mega")
+>>> model = build_model("mario_kempes", task="mega")
 """
 
 from .encoders import (
@@ -27,17 +27,17 @@ from .encoders import (
     ModalFFNEncoder,
     PositionEncoding2D,
     ProjectionHead,
-    MHASlotAttn,
     FFN,
     CrossModalTransformer,
+    PMA,
+    SAB,
 )
 from .phase1 import SingleModalMIL
 from .phase2 import (
     EarlyFusionMIL,
     LateFusionMIL,
     MiddleFusionMIL,
-    TaskSpecificSlotMIL,
-    SharedSlotMIL,
+    SetTransformerMIL,
     DualGatedPool,
     MultiTaskHead,
     _load_p1_encoder,
@@ -60,17 +60,17 @@ __all__ = [
     "ModalFFNEncoder",
     "PositionEncoding2D",
     "ProjectionHead",
-    "MHASlotAttn",
     "FFN",
     "CrossModalTransformer",
+    "PMA",
+    "SAB",
     # phase1
     "SingleModalMIL",
     # phase2
     "EarlyFusionMIL",
     "LateFusionMIL",
     "MiddleFusionMIL",
-    "TaskSpecificSlotMIL",
-    "SharedSlotMIL",
+    "SetTransformerMIL",
     "DualGatedPool",
     "MultiTaskHead",
     "_load_p1_encoder",

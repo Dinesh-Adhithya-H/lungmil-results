@@ -14,12 +14,10 @@ from .phase1_trainer import (
 )
 from .phase2_trainer import (
     p2_train_epoch,
-    p2_recon_epoch,
     p2_evaluate,
     p2_evaluate_fair,
     run_phase2_variant,
     run_phase2_hp_sweep,
     evaluate_unimodal_ablation,
     DEFAULT_TASK_WEIGHTS,
-    GEOMAE_TASK_WEIGHTS,
 )

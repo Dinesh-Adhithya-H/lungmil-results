@@ -100,6 +100,7 @@ python3 -u "${HOME_MIL}/train_mm_abmil_v8.py" \
     --slot-k         128             \
     --task           mega            \
     --p2-hp-sweep                    \
+    --alternating                    \
     --p2-tag         shared          \
     --modal-dropout  0.3             \
     --max-he-patches 99999           \

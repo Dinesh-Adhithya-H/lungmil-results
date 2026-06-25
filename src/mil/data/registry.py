@@ -6,8 +6,8 @@ MODALITY_REGISTRY: Dict[str, Tuple[str, int, str]] = {
     "HE":       ("HE_cells",        1024, "has_HE"),
     "BAL":      ("BAL_cells",       10,   "has_BAL"),
     "CT":       ("CT_cells",        1024, "has_CT"),
-    # clinical_onehot (F, F*n_bins) = (F, F*4).  Falls back to raw (1,107).
-    "Clinical": ("clinical_onehot", 408,  "has_Clinical"),
+    # Clinical: 106 tokens × 491-dim one-hot (precomputed in .pt files; vocab=491).
+    "Clinical": ("clinical_onehot", 491,  "has_Clinical"),
 }
 
 MODALITIES         = list(MODALITY_REGISTRY.keys())

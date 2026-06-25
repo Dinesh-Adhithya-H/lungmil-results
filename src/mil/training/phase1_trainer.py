@@ -553,8 +553,20 @@ def run_phase1_modality(
             else:
                 no_improve += 1; ckpt_tag = "[ckpt]"
 
+            # Test eval — logging only, not used for early stopping
+            if task == "acr":
+                te_p, te_l_, _ = p1_evaluate(model, test_recs, mod_name, device,
+                                              bag_cache, use_spatial, cw)
+                te_vm  = compute_metrics(te_l_, te_p)
+                te_str = f"  [test] bacc={te_vm['bacc']:.3f}  auc={te_vm['auc']:.3f}"
+            else:
+                te_ci, _ = p1_evaluate_survival(model, test_recs, mod_name, device,
+                                                bag_cache, surv_endpoint, use_spatial)
+                te_str = f"  [test] ci={te_ci:.3f}"
+
             print(f"  [{mod_name}] ep {ep+1:3d}  {tag_str}  {ckpt_tag}"
-                  + (f"  no_improve={no_improve}/{patience}" if patience > 0 else ""))
+                  + (f"  no_improve={no_improve}/{patience}" if patience > 0 else "")
+                  + te_str)
             _gc()
 
             if patience > 0 and no_improve >= patience:

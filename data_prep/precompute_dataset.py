@@ -531,13 +531,10 @@ BAL_CLUSTER_COL = "resolution_v2"
 HE_CLUSTER_COL  = "subcluster_renamed"   # human-readable patch-type names
 CT_CLUSTER_COL  = "leiden"
 
-# Clinical columns that must be excluded — they are labels or directly derived from outcomes
+# Clinical columns that must be excluded — direct labels only.
+# delta_fvc/fev1 and pseudoslopes are derived from past measurements only (no future leakage).
 CLINICAL_LABEL_COLS = [
     "biopsy_grade_A",           # ACR biopsy rejection grade — the primary label
-    "delta_fvc_from_previous",  # change in FVC since prior visit — outcome-derived
-    "pseudoslope_fvc",          # longitudinal FVC slope — outcome-derived
-    "delta_fev1_from_previous", # change in FEV1 since prior visit — outcome-derived
-    "pseudoslope_fev1",         # longitudinal FEV1 slope — outcome-derived
 ]
 
 BAL_IDENTIFIER_COL = "record_id";  BAL_TIME_COL = "date_from_id"
@@ -1181,46 +1178,120 @@ def _remap_sample(
         c = raw_coords.get(old_key)
         coords[new_key] = c.float().cpu() if c is not None else None
 
-    # Clinical tokenization
-    clinical_token_ids: Optional[torch.Tensor] = None
-    clinical_vocab: Optional[list] = None
+    # Clinical features — three representations:
+    #   1. inputs["Clinical"]     — StandardScaler-normalized float tensor (already in inputs)
+    #   2. clinical_token_ids     — quantile-binned int64 token IDs (one per feature)
+    #   3. clinical_onehot        — (n_features, vocab_size) float32 one-hot matrix
+    #   4. clinical_raw           — dict {feature_name: raw value} from original CSV
+    #   5. clinical_raw_tensor    — raw float values as tensor (NaN→0), same order as feature_cols
+    clinical_token_ids:  Optional[torch.Tensor] = None
+    clinical_onehot:     Optional[torch.Tensor] = None
+    clinical_vocab:      Optional[list]         = None
+    clinical_raw:        Optional[dict]         = None   # {col: original value}
+    clinical_raw_tensor: Optional[torch.Tensor] = None   # (n_features,) raw floats
     if clinical_tok is not None:
         raw_clin_row = raw.get("_clinical_raw_row")
         if raw_clin_row is not None:
+            # Quantile-binned token IDs
             tids = clinical_tok.transform_row(raw_clin_row)
             clinical_token_ids = torch.tensor(tids, dtype=torch.int64)
             clinical_vocab = clinical_tok.vocab_list()
 
-    # Bag-level aggregates: centroids, cluster-count token IDs, cluster names
+            # One-hot matrix: (n_features, vocab_size) — each row is one-hot over quantile bins
+            import torch.nn.functional as _F
+            clinical_onehot = _F.one_hot(clinical_token_ids, num_classes=clinical_tok._n_tokens).float()
+
+            # Raw values — dict {feature_name: value} for interpretability
+            clinical_raw = {}
+            raw_float_vals = []
+            for col in clinical_tok.feature_cols:
+                v = raw_clin_row.get(col, np.nan) if hasattr(raw_clin_row, "get") else (
+                    raw_clin_row[col] if col in raw_clin_row.index else np.nan
+                )
+                # Store as native Python type (not numpy scalars) for JSON-safety
+                if pd.isna(v) if not isinstance(v, str) else False:
+                    clinical_raw[col] = None
+                    raw_float_vals.append(float("nan"))
+                else:
+                    try:
+                        fv = float(v)
+                        clinical_raw[col] = fv
+                        raw_float_vals.append(fv)
+                    except (ValueError, TypeError):
+                        clinical_raw[col] = str(v)
+                        raw_float_vals.append(float("nan"))
+            clinical_raw_tensor = torch.tensor(raw_float_vals, dtype=torch.float32)
+
+    # Per-cell UMAP coords (from obsm["X_umap"])
+    umap_coords: Dict[str, Optional[torch.Tensor]] = {}
+    raw_umap = raw.get("umap") or {}
+    for old_key, new_key in KEY_REMAP.items():
+        u = raw_umap.get(old_key)
+        umap_coords[new_key] = u.float().cpu() if u is not None else None
+    # Store UMAP as inputs.{MOD}_umap  (e.g. inputs.BAL_umap)
+    for new_key, u in umap_coords.items():
+        if u is not None:
+            # Derive modality prefix: "BAL_cells" → "BAL", "HE_cells" → "HE"
+            prefix = new_key.split("_")[0]
+            inputs[f"{prefix}_umap"] = u
+
+    # Bag-level aggregates: centroids, cluster-count token IDs, cluster names, raw proportions
     bag_centroids:       Dict[str, Optional[torch.Tensor]] = {}
     bag_count_token_ids: Dict[str, Optional[torch.Tensor]] = {}
     bag_cluster_names:   Dict[str, Optional[list]]         = {}
     bag_count_vocab:     Dict[str, Optional[list]]         = {}
+    bag_counts_raw:      Dict[str, Optional[torch.Tensor]] = {}  # non-negative proportions
+    bag_instance_cluster_ids: Dict[str, Optional[torch.Tensor]] = {}
 
     raw_bag_agg = raw.get("bag_aggregates") or {}
     for old_key, new_key in KEY_REMAP.items():
         agg = raw_bag_agg.get(old_key)
         if agg is None:
-            bag_centroids[new_key]       = None
-            bag_count_token_ids[new_key] = None
-            bag_cluster_names[new_key]   = None
-            bag_count_vocab[new_key]     = None
+            bag_centroids[new_key]            = None
+            bag_count_token_ids[new_key]      = None
+            bag_cluster_names[new_key]        = None
+            bag_count_vocab[new_key]          = None
+            bag_counts_raw[new_key]           = None
+            bag_instance_cluster_ids[new_key] = None
             continue
 
-        centroids = agg["centroids"]
+        centroids = agg.get("cluster_centroids")
+        if centroids is None:
+            centroids = agg.get("centroids")
         bag_centroids[new_key] = (
             centroids.float().cpu() if isinstance(centroids, torch.Tensor)
-            else torch.tensor(centroids, dtype=torch.float32)
-        )
+            else torch.tensor(np.array(centroids), dtype=torch.float32)
+        ) if centroids is not None else None
         bag_cluster_names[new_key] = agg.get("cluster_names")
 
-        # Tokenise cluster count vector
+        # Raw (non-negative) proportions
+        cr = agg.get("cluster_counts_raw")
+        if cr is not None:
+            bag_counts_raw[new_key] = (
+                cr.float().cpu() if isinstance(cr, torch.Tensor)
+                else torch.tensor(np.array(cr), dtype=torch.float32)
+            )
+        else:
+            bag_counts_raw[new_key] = None
+
+        # Per-instance cluster IDs (sorted, matches cluster_instances ordering)
+        iids = agg.get("instance_cluster_ids")
+        if iids is not None:
+            bag_instance_cluster_ids[new_key] = (
+                iids.int().cpu() if isinstance(iids, torch.Tensor)
+                else torch.tensor(np.array(iids), dtype=torch.int32)
+            )
+        else:
+            bag_instance_cluster_ids[new_key] = None
+
+        # Tokenise cluster count vector (CLR)
         cct = (cluster_count_toks or {}).get(new_key)
         if cct is not None:
+            clr_counts = agg.get("cluster_counts")
             counts_np = (
-                agg["counts"].cpu().numpy() if isinstance(agg["counts"], torch.Tensor)
-                else np.array(agg["counts"])
-            )
+                clr_counts.cpu().numpy() if isinstance(clr_counts, torch.Tensor)
+                else np.array(clr_counts)
+            ) if clr_counts is not None else np.zeros(len(bag_cluster_names[new_key] or []))
             bag_count_token_ids[new_key] = torch.tensor(
                 cct.transform(counts_np), dtype=torch.int64
             )
@@ -1229,27 +1300,71 @@ def _remap_sample(
             bag_count_token_ids[new_key] = None
             bag_count_vocab[new_key]     = None
 
+    # ── Per-modality summary dict ─────────────────────────────────────────────
+    # Consolidates date, n_cells, cluster names, sizes, proportions per modality.
+    # Only populated for modalities present in this sample (inputs tensor not None).
+    modality_info: Dict[str, dict] = {}
+    for old_key, new_key in KEY_REMAP.items():
+        tensor = inputs.get(new_key)
+        if tensor is None:
+            continue
+        n_cells = int(tensor.shape[0]) if tensor.ndim > 0 else 1
+
+        agg  = raw_bag_agg.get(old_key)
+        names     = agg.get("cluster_names")          if agg else None
+        abs_cnts  = agg.get("cluster_counts_abs")     if agg else None
+        prop_cnts = agg.get("cluster_counts_raw")     if agg else None
+        id2name   = agg.get("cluster_id_to_name")     if agg else None
+
+        cluster_sizes_dict = {}
+        cluster_prop_dict  = {}
+        if names is not None and abs_cnts is not None:
+            abs_arr  = np.array(abs_cnts)
+            prop_arr = np.array(prop_cnts) if prop_cnts is not None else (abs_arr / max(abs_arr.sum(), 1))
+            for k, nm in enumerate(names):
+                cluster_sizes_dict[nm] = int(abs_arr[k]) if k < len(abs_arr) else 0
+                cluster_prop_dict[nm]  = float(prop_arr[k]) if k < len(prop_arr) else 0.0
+
+        modality_info[new_key] = {
+            "date":                modality_times.get(new_key),   # ISO string of measurement date
+            "n_cells":             n_cells,                        # total cells/patches
+            "cluster_names":       names or [],                    # ordered list (index = cluster_id)
+            "cluster_id_to_name":  id2name or {},                  # {int: str} mapping
+            "cluster_sizes":       cluster_sizes_dict,             # {name: absolute count}
+            "cluster_proportions": cluster_prop_dict,              # {name: fraction 0-1}
+            "has_umap":            inputs.get(f"{new_key.split('_')[0]}_umap") is not None,
+        }
+
     out = {
         "inputs":             inputs,
         "label":              label_fn(raw),
         "identifier":         str(raw.get("identifier", "")),
         "anchor_time":        at,
-        "modality_times":     modality_times,
+        "modality_times":     modality_times,          # {mod_key: ISO date str | None}
         "transplant_date":    tx_date,
-        # Per-instance cluster/cell-type labels
-        "cluster_labels":     cluster_labels,
+        # Rich per-modality summary (date, n_cells, cluster names/sizes/proportions)
+        "modality_info":            modality_info,
+        # Per-instance cluster/cell-type labels (from leiden_cluster cols)
+        "cluster_labels":           cluster_labels,
         # Per-instance spatial coordinates
-        "coords":             coords,
+        "coords":                   coords,
         # Bag-level aggregates (computed inline from annotation)
-        "bag_centroids":         bag_centroids,
-        "bag_count_token_ids":   bag_count_token_ids,
-        "bag_cluster_names":     bag_cluster_names,
-        "metadata":           _clean(raw.get("metadata", {})),
-        "survival":           _clean(raw.get("survival", {})),
+        "bag_centroids":            bag_centroids,
+        "bag_count_token_ids":      bag_count_token_ids,
+        "bag_cluster_names":        bag_cluster_names,
+        "bag_counts_raw":           bag_counts_raw,           # non-negative proportions (K,)
+        "bag_instance_cluster_ids": bag_instance_cluster_ids, # per-instance cluster ID
+        "metadata":                 _clean(raw.get("metadata", {})),
+        "survival":                 _clean(raw.get("survival", {})),
     }
     if clinical_token_ids is not None:
-        out["clinical_token_ids"] = clinical_token_ids
-        out["clinical_vocab"]     = clinical_vocab
+        out["clinical_token_ids"]  = clinical_token_ids   # (n_features,) int64 — quantile bin IDs
+        out["clinical_onehot"]     = clinical_onehot      # (n_features, vocab_size) float32 one-hot
+        out["clinical_vocab"]      = clinical_vocab        # list of {id, feature, bin, label, range}
+    if clinical_raw is not None:
+        out["clinical_raw"]        = clinical_raw          # {col: raw float/str/None}
+        out["clinical_raw_tensor"] = clinical_raw_tensor   # (n_features,) float32 — raw values (NaN preserved)
+        out["clinical_feature_names"] = clinical_tok.feature_cols  # ordered feature name list
     for new_key, voc in bag_count_vocab.items():
         if voc is not None:
             out.setdefault("bag_count_vocab", {})[new_key] = voc
@@ -1347,6 +1462,16 @@ def precompute(
     dims = _collect_dims(ds)
     print(f"  Dims: {dims}")
 
+    # Extract BAL gene names from adata var_names (once, stored in info.json)
+    bal_gene_names: list = []
+    try:
+        bal_adata = ds.adata_dict.get("sc_rna")
+        if bal_adata is not None:
+            bal_gene_names = list(bal_adata.var_names)
+            print(f"  BAL gene names: {len(bal_gene_names)} genes")
+    except Exception as e:
+        print(f"  [warn] could not extract BAL gene names: {e}")
+
     # --- Pass 1: collect alignment metadata only — no tensors loaded yet --------
     # flat_samples entries are lightweight dicts (identifier + anchor_time + index
     # pointers).  We defer calling ds[idx] — which actually extracts tensors from
@@ -1397,7 +1522,7 @@ def precompute(
                 manifest_rows.append({"idx": idx, "identifier": "", "anchor_time": "", "label": -1})
                 continue
 
-            _, label, ident, at, err = _save_one((idx, raw_sample, out_path, clinical_tok))
+            _, label, ident, at, err = _save_one((idx, raw_sample, out_path, clinical_tok, None))
             del raw_sample  # free tensors immediately — do not accumulate in RAM
 
             if err:
@@ -1425,7 +1550,7 @@ def precompute(
                 return
             raw = ds[nidx]
             _attach_clinical_row(raw, ds.flat_samples[nidx])
-            fut = pool.submit(_save_one, (nidx, raw, npath, clinical_tok))
+            fut = pool.submit(_save_one, (nidx, raw, npath, clinical_tok, None))
             pending[fut] = nidx
             del raw
 
@@ -1482,6 +1607,7 @@ def precompute(
         "clinical_vocab_path": str(vocab_path),
         "clinical_n_tokens": clinical_tok._n_tokens,
         "clinical_n_features": len(clinical_tok.feature_cols),
+        "bal_gene_names": bal_gene_names,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "cache_dir": str(cache_dir),
     }
     info_path = cache_dir / "info.json"

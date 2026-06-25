@@ -24,14 +24,10 @@ def _load_one_bag(args):
 
     for mod in MODALITIES:
         if mod == "Clinical":
+            # Primary: precomputed (n_features, vocab_size) one-hot stored by precompute_dataset.py.
             coh = data.get("clinical_onehot")
             if coh is not None and isinstance(coh, torch.Tensor) and coh.numel() > 0:
-                entry["Clinical"] = coh.float(); continue
-            t = inp.get("Clinical")
-            if t is not None and isinstance(t, torch.Tensor) and t.numel() > 0:
-                if t.dtype == torch.float16: t = t.float()
-                if t.dim() == 1: t = t.unsqueeze(0)
-                entry["Clinical"] = t
+                entry["Clinical"] = coh.float()
         else:
             t = inp.get(_feat_key(mod))
             if t is None or not isinstance(t, torch.Tensor) or t.numel() == 0:

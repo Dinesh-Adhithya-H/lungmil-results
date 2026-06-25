@@ -399,12 +399,23 @@ def p2_cox_full_epoch(
         return 0.0
 
     loss_val = L_cox.item()
-    if scaler:
-        scaler.scale(L_cox * cox_lambda).backward()
-        scaler.step(optimizer); scaler.update()
-    else:
-        (L_cox * cox_lambda).backward()
-        optimizer.step()
+    try:
+        if scaler:
+            scaler.scale(L_cox * cox_lambda).backward()
+            scaler.step(optimizer); scaler.update()
+        else:
+            (L_cox * cox_lambda).backward()
+            optimizer.step()
+    except torch.cuda.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        print(f"  [OOM-cox-backward] {len(cox_buf)} records — skipping Cox update this step",
+              flush=True)
+        try:
+            optimizer.zero_grad()
+        except Exception:
+            pass
+        _gc()
+        return 0.0
     optimizer.zero_grad()
     _gc()
     return loss_val
@@ -1342,7 +1353,8 @@ def run_phase2_hp_sweep(
         metric_label = "val_cox" if _is_surv_only else ("combined" if task == "mega" else "val_bacc")
         print(f"  [P2-HP] lr={lr:.0e}  wd={wd:.0e}  DONE  {metric_label}={best_ep_metric:.4f}"
               f"  (stopped ep {stopped_ep}/{sweep_epochs})", flush=True)
-        results.append({"lr": lr, "wd": wd, metric_label: best_ep_metric})
+        results.append({"lr": lr, "wd": wd, metric_label: best_ep_metric,
+                        "stopped_ep": stopped_ep})
         # For survival: lower Cox loss wins; for cls: higher BACC wins
         if _is_surv_only:
             if best_ep_metric < best_metric:
@@ -2220,12 +2232,18 @@ def p2_train_longitudinal_epoch(
 
             # CLAD + Death (per-biopsy gap-time)
             for tk in ("clad", "death"):
-                for hazard, t_val, e_val in result.get(tk, []):
+                biopsy_hazards = result.get(tk, [])
+                if not isinstance(biopsy_hazards, list):
+                    continue  # degenerate: forward returned 0-d tensor
+                for hazard, t_val, e_val in biopsy_hazards:
                     if isinstance(hazard, torch.Tensor):
                         cox_bufs[tk].append((hazard.float(), t_val, e_val))
 
             # ACR cls (per labeled biopsy)
-            for logit, label in result.get("acr_cls", []):
+            cls_out = result.get("acr_cls", [])
+            if not isinstance(cls_out, list):
+                cls_out = []
+            for logit, label in cls_out:
                 if isinstance(logit, torch.Tensor):
                     target = logit.new_tensor([float(label)])
                     loss   = bce_loss(logit.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
@@ -2287,13 +2305,19 @@ def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None)
                 surv_data["acr_surv"]["e"].append(acr_e)
 
         for tk in ("clad", "death"):
-            for hazard, t_val, e_val in result.get(tk, []):
+            biopsy_hazards = result.get(tk, [])
+            if not isinstance(biopsy_hazards, list):
+                continue  # degenerate: forward returned 0-d tensor
+            for hazard, t_val, e_val in biopsy_hazards:
                 if isinstance(hazard, torch.Tensor):
                     surv_data[tk]["h"].append(hazard.float().item())
                     surv_data[tk]["t"].append(t_val)
                     surv_data[tk]["e"].append(e_val)
 
-        for logit, label in result.get("acr_cls", []):
+        cls_out = result.get("acr_cls", [])
+        if not isinstance(cls_out, list):
+            cls_out = []
+        for logit, label in cls_out:
             if isinstance(logit, torch.Tensor):
                 cls_probs.append(torch.sigmoid(logit.float()).item())
                 cls_labels.append(label)
@@ -2359,7 +2383,7 @@ def run_longitudinal_hp_sweep(
         opt   = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
                                  lr=lr, weight_decay=wd)
         scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
-        best_ep_metric = -1.0; no_improve = 0
+        best_ep_metric = -1.0; no_improve = 0; stopped_ep = sweep_epochs
 
         for ep in range(sweep_epochs):
             p2_train_longitudinal_epoch(model, patient_train, opt, cw, device,
@@ -2374,10 +2398,12 @@ def run_longitudinal_hp_sweep(
                       f"best={best_ep_metric:.4f}", flush=True)
                 _gc()
                 if no_improve >= hp_patience:
+                    stopped_ep = ep + 1
                     print(f"  [LMK-HP] early stop", flush=True); break
 
         print(f"  [LMK-HP] lr={lr:.0e}  wd={wd:.0e}  DONE  val_score={best_ep_metric:.4f}")
-        results.append({"lr": lr, "wd": wd, "val_bacc": best_ep_metric})
+        results.append({"lr": lr, "wd": wd, "val_bacc": best_ep_metric,
+                        "stopped_ep": stopped_ep})
         if best_ep_metric > best_metric:
             best_metric, best_lr, best_wd = best_ep_metric, lr, wd
         del model, opt, scaler; _gc()

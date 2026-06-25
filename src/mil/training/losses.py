@@ -19,6 +19,15 @@ def hinge_loss(logit: torch.Tensor, target: torch.Tensor,
     return (w * torch.clamp(1.0 - y * logit, min=0.0)).mean()
 
 
+def bce_loss(logit: torch.Tensor, target: torch.Tensor,
+             cw: Tuple[float, float]) -> torch.Tensor:
+    """BCE with pos_weight for class imbalance.  target ∈ {0,1};  cw = (w_neg, w_pos)."""
+    pos_weight = logit.new_full((), cw[1] / max(cw[0], 1e-8))
+    return F.binary_cross_entropy_with_logits(
+        logit, target.float(), pos_weight=pos_weight
+    )
+
+
 def compute_class_weights(records) -> Tuple[float, float]:
     """Balanced class weights via sklearn, capped at 20× to avoid extreme weighting."""
     import numpy as np

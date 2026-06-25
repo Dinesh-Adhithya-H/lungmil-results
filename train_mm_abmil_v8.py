@@ -128,7 +128,7 @@ def _aggregate_global_hp(out: Path, split: int, folds: range,
             data = json.load(fh)
         for row in data.get("grid", []):
             key = (row["lr"], row["wd"])
-            score = row.get("val_bacc", row.get("val_cidx", row.get("val_loss", None)))
+            score = row.get("val_bacc", row.get("val_cidx", row.get("val_cox", row.get("val_loss", None))))
             if score is not None:
                 combo_scores.setdefault(key, []).append(score)
         n_found += 1
@@ -154,6 +154,9 @@ def _aggregate_best_epoch(out: Path, split: int, folds: range,
     Used to set n_epochs for combined training (train+val) without a val set:
     the per-fold best_epoch is a cross-validated estimate of when to stop.
     A 10% buffer is added since combined data is ~25% larger → slightly longer convergence.
+
+    Falls back to hp_sweep JSON stopped_ep when no status file exists (e.g. folds
+    that only ran HP sweeps without combined training, such as mario_kempes folds 1-3).
     """
     from mil.training.phase2_trainer import P2_FINAL_EPOCHS
     best_epochs = []
@@ -162,17 +165,33 @@ def _aggregate_best_epoch(out: Path, split: int, folds: range,
         vtag   = tag or variant
         status_path = save_d / f"status_{vtag}_final.json"
         if not status_path.exists():
-            # fall back to variant-style status (run_phase2_variant, no _final suffix)
             status_path = save_d / f"status_{vtag}.json"
-        if not status_path.exists():
-            print(f"  [cv-epoch] fold {f} status not found — skipping")
+        ep = None
+        if status_path.exists():
+            with open(status_path) as fh:
+                st = json.load(fh)
+            ep = st.get("best_epoch")
+            if ep:
+                print(f"  [cv-epoch] fold {f}: best_epoch={ep}")
+        if not ep:
+            # Fall back: read stopped_ep of the best HP combo from hp_sweep JSON
+            fname = "hp_sweep_p2_alt.json" if alternating else "hp_sweep_p2.json"
+            sweep_path = save_d / "hp_sweep" / fname
+            if sweep_path.exists():
+                with open(sweep_path) as fh:
+                    sw = json.load(fh)
+                best_lr_sw = sw.get("best_lr")
+                best_wd_sw = sw.get("best_wd")
+                for row in sw.get("grid", []):
+                    if row.get("lr") == best_lr_sw and row.get("wd") == best_wd_sw:
+                        ep = row.get("stopped_ep")
+                        if ep:
+                            print(f"  [cv-epoch] fold {f}: best_epoch={ep} (from hp_sweep)")
+                        break
+        if not ep:
+            print(f"  [cv-epoch] fold {f}: no epoch info found — skipping")
             continue
-        with open(status_path) as fh:
-            st = json.load(fh)
-        ep = st.get("best_epoch")
-        if ep:
-            best_epochs.append(ep)
-            print(f"  [cv-epoch] fold {f}: best_epoch={ep}")
+        best_epochs.append(ep)
     if not best_epochs:
         print(f"  [cv-epoch] No fold results available; using P2_FINAL_EPOCHS={P2_FINAL_EPOCHS}")
         return P2_FINAL_EPOCHS
@@ -284,6 +303,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Tag of per-fold training dirs to read HP sweeps and best_epoch from. "
                         "Use when --p2-tag differs from the per-fold tag, e.g. "
                         "--p2-tag shared_combined --hp-source-tag shared")
+    p.add_argument("--p2-all-folds",   action="store_true",
+                   help="Load bags once and run HP sweeps for all 4 folds in one process. "
+                        "Eliminates 4x repeated disk I/O. Fold 0 also runs --global-hp and "
+                        "--combined-train. Overrides --fold (all folds are run).")
     p.add_argument("--combined-train", action="store_true",
                    help="Train final model on train+val combined (all folds share same test set). "
                         "Requires --global-hp or --p2-lr/--p2-wd. Trains for full P2_FINAL_EPOCHS "
@@ -381,9 +404,11 @@ def run_phase1(args, splits_dict, bag_cache, device, out: Path):
 
 # ── Phase 2 runner ────────────────────────────────────────────────────────────
 
-def run_phase2_longitudinal(args, bag_cache, device, out: Path):
+def run_phase2_longitudinal(args, bag_cache, device, out: Path,
+                            fold: Optional[int] = None):
     """Separate Phase 2 path for longitudinal_mk variant."""
-    split, fold = args.split, args.fold
+    split = args.split
+    fold  = fold if fold is not None else args.fold
 
     long_splits = build_splits_longitudinal(
         samples_dir=args.samples_dir,
@@ -459,9 +484,11 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path):
 
 
 def run_phase2(args, splits_dict, bag_cache, device, out: Path,
-               p1_paths: Optional[Dict[str, Path]] = None):
+               p1_paths: Optional[Dict[str, Path]] = None,
+               fold: Optional[int] = None):
     """Build fusion model, optionally load Phase 1 weights, run Phase 2 training."""
-    split, fold = args.split, args.fold
+    split = args.split
+    fold  = fold if fold is not None else args.fold
     train_recs  = splits_dict["train"]
     val_recs    = splits_dict["val"]
     test_recs   = splits_dict["test"]
@@ -623,6 +650,74 @@ def main():
     print(f"  out → {out}")
     print(f"{'='*60}\n")
 
+    # ── --p2-all-folds: load bags once, iterate over all folds (and tasks) ──────
+    if getattr(args, "p2_all_folds", False) and args.phase in ("p2", "both"):
+        # For multi-task variants (early/late/middle) iterate over all tasks with
+        # one bag load. mega variants (mario_kempes, longitudinal_mk) use args.task directly.
+        _MULTI_TASKS = {
+            "early":  ["cls", "acr_surv", "clad_surv", "death_surv"],
+            "late":   ["cls", "acr_surv", "clad_surv", "death_surv"],
+            "middle": ["cls", "acr_surv", "clad_surv", "death_surv"],
+        }
+        _task_list = _MULTI_TASKS.get(args.p2_variant, [args.task])
+
+        # Collect all stems across all 4 folds (union = full split).
+        all_stems: set = set()
+        for _f in range(4):
+            _sd = build_splits_multitask(args.samples_dir, args.splits_csv,
+                                         fold=_f, split=args.split)
+            for _r in _sd["train"] + _sd["val"] + _sd["test"]:
+                all_stems.add(_r["stem"])
+        if args.p2_variant == "longitudinal_mk":
+            for _f in range(4):
+                _ls = build_splits_longitudinal(args.samples_dir, args.splits_csv,
+                                                fold=_f, split=args.split)
+                for _pats in _ls.values():
+                    for _pat in _pats:
+                        all_stems.update(_pat["stems"])
+
+        print(f"\n  [all-folds] Loading {len(all_stems)} unique stems once for all folds/tasks ...")
+        bag_cache = preload_bags(list(all_stems), args.samples_dir, n_workers=args.workers)
+
+        _orig_task = args.task
+        for _task in _task_list:
+            args.task = _task
+            print(f"\n{'='*60}\n  [all-folds] task={_task}\n{'='*60}")
+
+            # Folds 1-3: HP sweep only (no combined training)
+            for _f in [1, 2, 3]:
+                print(f"\n{'='*60}\n  [all-folds] task={_task}  fold={_f}  (HP sweep only)\n{'='*60}")
+                _sd = build_splits_multitask(args.samples_dir, args.splits_csv,
+                                             fold=_f, split=args.split)
+                if args.p2_variant == "longitudinal_mk":
+                    run_phase2_longitudinal(args, bag_cache, device, out, fold=_f)
+                else:
+                    run_phase2(args, _sd, bag_cache, device, out, fold=_f)
+
+            # Fold 0: HP sweep + aggregate global HP + combined train
+            print(f"\n{'='*60}\n  [all-folds] task={_task}  fold=0  (HP sweep + global HP + combined train)\n{'='*60}")
+            _sd0 = build_splits_multitask(args.samples_dir, args.splits_csv,
+                                          fold=0, split=args.split)
+            _orig_global_hp      = args.global_hp
+            _orig_combined_train = args.combined_train
+            args.global_hp       = True
+            args.combined_train  = True
+            if args.p2_variant == "longitudinal_mk":
+                metrics = run_phase2_longitudinal(args, bag_cache, device, out, fold=0)
+            else:
+                metrics = run_phase2(args, _sd0, bag_cache, device, out, fold=0)
+            args.global_hp      = _orig_global_hp
+            args.combined_train = _orig_combined_train
+
+            summary_path = out / f"metrics_{_tag(args.split, 0)}_{args.p2_variant}_{args.task}.json"
+            with open(summary_path, "w") as f:
+                json.dump(metrics, f, indent=2)
+            print(f"\n  Results → {summary_path}")
+
+        args.task = _orig_task
+        return
+
+    # ── Single-fold path (original behaviour) ─────────────────────────────────
     # ── Load splits ───────────────────────────────────────────────────────────
     splits_dict = build_splits_multitask(
         samples_dir=args.samples_dir,

@@ -503,7 +503,7 @@ class SetTransformerMIL(nn.Module):
             if self.training and random.random() < self.modal_dropout:
                 continue
             t = t.to(device, non_blocking=True)
-            if mod == "HE" and t.shape[0] > self.max_he_patches:
+            if t.shape[0] > self.max_he_patches:
                 idx = torch.randperm(t.shape[0], device=device)[:self.max_he_patches]
                 t = t[idx]
             crds = he_coords if mod == "HE" else None
