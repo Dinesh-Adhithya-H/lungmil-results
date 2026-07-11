@@ -52,6 +52,53 @@ except ImportError:
     _wandb = None
     _WANDB_AVAILABLE = False
 
+
+def _update_live_benchmark(project: str, results_root: Path) -> None:
+    """Scan all fold-0 final metrics JSONs and push a live benchmark Table to wandb."""
+    if not _WANDB_AVAILABLE:
+        return
+    try:
+        import glob as _glob
+        rows = []
+        for fpath in _glob.glob(str(results_root / "metrics_split*_fold0_*.json")):
+            stem = Path(fpath).stem
+            import re as _re
+            m = _re.match(r"metrics_split(\d+)_fold0_(.+)", stem)
+            if not m:
+                continue
+            split = int(m.group(1))
+            rest = m.group(2)
+            variant, task = rest, "unknown"
+            for v in ("early", "late", "middle", "mario_kempes", "set_mil_mt",
+                      "longitudinal_mk_mt", "longitudinal_mk"):
+                if rest.startswith(v):
+                    variant = v
+                    task = rest[len(v):].lstrip("_") or "mega"
+                    break
+            with open(fpath) as f:
+                d = json.load(f)
+            t = d.get("test", {})
+            bacc = t.get("bacc")
+            ci = t.get("c_index")
+            primary = bacc if bacc is not None else ci
+            if primary is None:
+                continue
+            metric_name = "bacc" if bacc is not None else "c_index"
+            rows.append([split, variant, task, round(primary, 4), metric_name])
+
+        if not rows:
+            return
+        with _wandb.init(project=project, name="live_benchmark_table",
+                         id="live_benchmark_table", resume="allow",
+                         job_type="benchmark", reinit=True) as run:
+            table = _wandb.Table(
+                columns=["split", "variant", "task", "primary_metric", "metric_name"],
+                data=rows
+            )
+            run.log({"benchmark": table, "n_completed": len(rows)})
+    except Exception as _e:
+        print(f"  [wandb] live benchmark update failed: {_e}")
+
 from mil.data.registry import MODALITIES
 from mil.training.losses import (
     hinge_loss, bce_loss, compute_class_weights,
@@ -1979,6 +2026,11 @@ def run_phase2_final(
             pass
 
     del model, optimizer, scaler; _gc()
+
+    # Update the live benchmark table on wandb after every fold-0 final run
+    if wandb_project and _WANDB_AVAILABLE and fold == 0:
+        _update_live_benchmark(wandb_project, save_dir.parent.parent.parent)
+
     return all_metrics
 
 

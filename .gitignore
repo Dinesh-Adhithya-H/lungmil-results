@@ -37,7 +37,8 @@ results/
 results_tcga_os_only/
 results_gbmlgg_benchmark/
 results_tcga_competitors/
-# keep the aggregated benchmark table
+# keep only the aggregated benchmark table from TCGA multitask runs
+results_tcga_multitask/*/
 !results_tcga_multitask/benchmark_table.json
 
 # ── TensorBoard event files ───────────────────────────────────────────────────
