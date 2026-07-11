@@ -29,6 +29,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+try:
+    import wandb as _wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _wandb = None
+    _WANDB_AVAILABLE = False
+
 from mil.models.phase1 import SingleModalMIL
 from mil.data.registry import MODALITIES, _feat_dim, _pres_col
 from mil.training.losses import (
@@ -46,13 +53,13 @@ DROPOUT         = 0.4
 
 P1_LR           = 1e-5
 P1_WEIGHT_DECAY = 1e-3
-P1_EPOCHS       = 400
+P1_EPOCHS       = 150
 P1_EVAL_EVERY   = 25
 P1_GRAD_ACCUM   = 4
 
 # HP sweep search space (used by run_phase1_hp_sweep)
 HP_LR_GRID      = [1e-5, 5e-5, 1e-4]
-HP_WD_GRID      = [1e-3, 1e-4]
+HP_WD_GRID      = [1e-4, 1e-3, 1e-2, 1e-1]
 HP_SWEEP_EPOCHS = 100   # shorter run per HP candidate; pick best on val BACC
 
 
@@ -438,6 +445,8 @@ def run_phase1_modality(
     surv_endpoint: str = "clad",
     lr: float = P1_LR,
     weight_decay: float = P1_WEIGHT_DECAY,
+    wandb_project: str = "chicago-mil",
+    split: int = -1,
 ) -> Path:
     """
     Train Phase 1 for one modality.
@@ -473,6 +482,24 @@ def run_phase1_modality(
         print(f"  [{mod_name}] Already complete "
               f"(ep={st.get('best_epoch')}  metric={st.get('best_metric',0):.4f}). Skipping.")
         return save_dir / "best_model.pt"
+
+    _wb = None
+    if wandb_project and _WANDB_AVAILABLE:
+        try:
+            _wb = _wandb.init(
+                project=wandb_project,
+                name=f"p1_s{split}f{fold}_{mod_name}_{task}",
+                group=f"phase1_split{split}",
+                config={
+                    "phase": 1, "modality": mod_name, "fold": fold, "split": split,
+                    "task": task, "surv_endpoint": surv_endpoint,
+                    "lr": lr, "weight_decay": weight_decay, "n_epochs": n_epochs,
+                },
+                reinit=True,
+            )
+        except Exception as _we:
+            print(f"  [wandb] init failed: {_we} — continuing without wandb")
+            _wb = None
 
     use_spatial_for_mod = use_spatial and mod_name == "HE"
     cw = compute_class_weights(tr) if task == "acr" else (1.0, 1.0)
@@ -567,6 +594,19 @@ def run_phase1_modality(
             print(f"  [{mod_name}] ep {ep+1:3d}  {tag_str}  {ckpt_tag}"
                   + (f"  no_improve={no_improve}/{patience}" if patience > 0 else "")
                   + te_str)
+
+            if _wb is not None:
+                _log: dict = {"epoch": ep + 1, "train/loss": train_loss}
+                if task == "acr":
+                    _log.update({"val/bacc": metric, "val/auc": vm["auc"],
+                                 "test/bacc": te_vm["bacc"], "test/auc": te_vm["auc"]})
+                else:
+                    _log.update({"val/ci": metric, "test/ci": te_ci})
+                try:
+                    _wb.log(_log)
+                except Exception:
+                    pass
+
             _gc()
 
             if patience > 0 and no_improve >= patience:
@@ -635,6 +675,21 @@ def run_phase1_modality(
          "val_loss":   hist["val_loss"],
          "val_bacc":   hist["val_metric"]},
         save_dir / "plots", tag=mod_name)
+    if _wb is not None:
+        summary: dict = {}
+        for sn in ("train", "val", "test"):
+            m = metrics.get(sn, {})
+            if task == "acr":
+                summary[f"{sn}/bacc"] = m.get("bacc", float("nan"))
+                summary[f"{sn}/auc"]  = m.get("auc",  float("nan"))
+            else:
+                summary[f"{sn}/ci"] = m.get("c_index", float("nan"))
+        try:
+            _wb.summary.update(summary)
+            _wb.finish()
+        except Exception:
+            pass
+
     del model, opt, scaler
     _gc()
     return save_dir / "best_model.pt"

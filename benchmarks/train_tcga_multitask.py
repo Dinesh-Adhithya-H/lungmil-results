@@ -3,7 +3,7 @@
 train_tcga_multitask.py
 Multi-task MIL benchmark on TCGA: joint classification + survival.
 
-Architecture  (TCGASetTransformerMIL — "mario_kempes" applied to TCGA)
+Architecture  (TCGASetTransformerMIL — "set_mil" applied to TCGA)
 ──────────────────────────────────────────────────────────────────────
   Phase 1  Per-modality ABMIL backbone trained on OS (Cox PH loss).
            One model per (modality, fold).
@@ -56,6 +56,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
+
+try:
+    import wandb as _wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _wandb = None
+    _WANDB_AVAILABLE = False
 
 try:
     import ctypes
@@ -237,11 +244,11 @@ def build_splits(cancer: str, fold: int) -> Tuple[list, list, list]:
             "idx":         int(row["idx"]),
             "identifier":  str(row["identifier"]),
             "cls_label":   float(row["cls_label"]) if not _isnan(row["cls_label"]) else float("nan"),
-            "os_status":   float(row["os_status"])   if not _isnan(row["os_status"])   else float("nan"),
+            "os_status":   float(row["os_status"])   if not _isnan(row["os_status"])   else 0.0,
             "os_time":     float(row["os_time"])     if not _isnan(row["os_time"])     else float("nan"),
-            "dss_status":  float(row["dss_status"])  if not _isnan(row["dss_status"])  else float("nan"),
+            "dss_status":  float(row["dss_status"])  if not _isnan(row["dss_status"])  else 0.0,
             "dss_time":    float(row["dss_time"])    if not _isnan(row["dss_time"])    else float("nan"),
-            "pfi_status":  float(row["pfi_status"])  if not _isnan(row["pfi_status"])  else float("nan"),
+            "pfi_status":  float(row["pfi_status"])  if not _isnan(row["pfi_status"])  else 0.0,
             "pfi_time":    float(row["pfi_time"])    if not _isnan(row["pfi_time"])    else float("nan"),
             "has_WSI": False, "has_RNA": False, "has_CNV": False,
         }
@@ -269,6 +276,8 @@ def update_presence(records: list, bag_cache: BagCache):
 # ══════════════════════════════════════════════════════════════════
 
 def cox_ph_loss(logits: torch.Tensor, times: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
+    # logcumsumexp_backward is not implemented for float16; cast to float32
+    logits = logits.float(); times = times.float(); events = events.float()
     order        = torch.argsort(times, descending=True)
     h_sorted     = logits[order]
     e_sorted     = events[order]
@@ -765,13 +774,35 @@ def _p2_eval(model, records, tasks, device, cache) -> Dict[str, float]:
 
 
 def run_phase2(cancer: str, fold: int, device, cache, train_r, val_r, test_r,
-               save_dir: Path, p1_dir: Path, tasks: List[str]):
+               save_dir: Path, p1_dir: Path, tasks: List[str],
+               wandb_project: str = ""):
     save_dir.mkdir(parents=True, exist_ok=True)
     status_path = save_dir / "status.json"
+
+    _wb = None
+    if wandb_project and _WANDB_AVAILABLE:
+        try:
+            _wb = _wandb.init(
+                project=wandb_project,
+                name=f"tcga_{cancer}_f{fold}",
+                group=cancer,
+                config={
+                    "cancer": cancer, "fold": fold, "tasks": tasks,
+                    "pma_k": PMA_K, "n_sab": P2_N_SAB,
+                    "lr": P2_LR, "epochs": P2_EPOCHS,
+                },
+                reinit=True,
+            )
+        except Exception as _we:
+            print(f"  [wandb] init failed: {_we}")
+            _wb = None
 
     if _is_done(status_path):
         st = _read_json(status_path)
         print(f"  [P2:{cancer} fold={fold}] already done  primary={st.get('best_primary',0):.4f}")
+        if _wb is not None:
+            try: _wb.finish()
+            except Exception: pass
         return _read_json(save_dir / "metrics.json") or {}
 
     print(f"\n  [P2:{cancer} fold={fold}] tasks={tasks}")
@@ -841,6 +872,12 @@ def run_phase2(cancer: str, fold: int, device, cache, train_r, val_r, test_r,
             mstr = "  ".join(f"{k}={v:.4f}" for k,v in vm.items())
             print(f"  [P2] ep {ep+1:3d}  loss={tl:.4f}  {mstr}", flush=True)
 
+            if _wb is not None:
+                try:
+                    _wb.log({"epoch": ep+1, "train/loss": tl,
+                             **{f"val/{k}": v for k, v in vm.items()}})
+                except Exception: pass
+
             if prim > best_primary:
                 best_primary, best_ep, best_path = prim, ep+1, cp_path
             _gc()
@@ -868,6 +905,15 @@ def run_phase2(cancer: str, fold: int, device, cache, train_r, val_r, test_r,
         print(f"  [P2] {sn:5s}  {mstr}")
 
     _write_json(save_dir / "metrics.json", all_metrics)
+
+    if _wb is not None:
+        try:
+            _test = all_metrics.get("test", {})
+            _wb.summary.update({f"final/test_{k}": v for k, v in _test.items()})
+            _wb.summary["final/best_epoch"] = best_ep
+            _wb.finish()
+        except Exception: pass
+
     del model, optimizer, scaler; _gc()
     return all_metrics
 
@@ -877,7 +923,7 @@ def run_phase2(cancer: str, fold: int, device, cache, train_r, val_r, test_r,
 # ══════════════════════════════════════════════════════════════════
 
 def run_fold(cancer: str, fold: int, phase: Optional[int], device, bag_cache: BagCache,
-             save_root: Path, tasks: List[str]) -> dict:
+             save_root: Path, tasks: List[str], wandb_project: str = "") -> dict:
     set_seeds(SEED)
     fold_dir = save_root / f"fold_{fold}"
 
@@ -894,7 +940,7 @@ def run_fold(cancer: str, fold: int, phase: Optional[int], device, bag_cache: Ba
 
     if phase in (2, None):
         return run_phase2(cancer, fold, device, bag_cache, train_r, val_r, test_r,
-                          p2_dir, p1_dir, tasks)
+                          p2_dir, p1_dir, tasks, wandb_project=wandb_project)
     return {}
 
 
@@ -909,6 +955,10 @@ def parse_args():
     p.add_argument("--folds",   nargs="+", type=int, default=FOLDS)
     p.add_argument("--save_root", type=str, default=None)
     p.add_argument("--no_cls",  action="store_true", help="Skip classification task even if available")
+    p.add_argument("--tasks",   nargs="+", default=None,
+                   help="Restrict to these tasks, e.g. --tasks os  (default: all tasks)")
+    p.add_argument("--wandb-project", default="", dest="wandb_project",
+                   help="Weights & Biases project name for live metric tracking")
     return p.parse_args()
 
 
@@ -921,6 +971,8 @@ def main():
         tasks.append("cls")
     for ep in SURV_ENDPOINTS:
         tasks.append(ep.lower())  # os, dss, pfi
+    if args.tasks:
+        tasks = [t for t in tasks if t in args.tasks]
 
     save_root = Path(args.save_root) if args.save_root else SAVE_ROOT / args.cancer
     save_root.mkdir(parents=True, exist_ok=True)
@@ -964,7 +1016,8 @@ def main():
             cancer=args.cancer, fold=fold,
             phase=args.phase, device=DEVICE,
             bag_cache=bag_cache, save_root=save_root,
-            tasks=tasks)
+            tasks=tasks,
+            wandb_project=getattr(args, "wandb_project", ""))
 
     del bag_cache; _gc()
 

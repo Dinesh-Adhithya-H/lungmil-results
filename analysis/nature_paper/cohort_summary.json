@@ -1,0 +1,34 @@
+{
+  "n_samples": 4210,
+  "n_patients": 263,
+  "n_serial_patients": 254,
+  "acr_label_dist": {
+    "0": 2639,
+    "1": 1409,
+    "2": 16,
+    "3": 5,
+    "4": 112,
+    "6": 15,
+    "7": 1,
+    "8": 13
+  },
+  "acr_binary": {
+    "no_acr": 2639,
+    "acr": 1571
+  },
+  "clad": {
+    "events": 867,
+    "censored": 3343
+  },
+  "death": {
+    "events": 976,
+    "censored": 3234
+  },
+  "modality_n": {
+    "Clinical": 3340,
+    "CT_cells": 1835,
+    "CT_radiomics": 1297,
+    "HE_cells": 632,
+    "BAL_cells": 134
+  }
+}

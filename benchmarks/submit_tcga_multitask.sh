@@ -81,7 +81,8 @@ echo "=============================="
 python3 -u "${REPO}/benchmarks/train_tcga_multitask.py" \\
     --cancer ${C} ${PHASE_ARG} \\
     --folds 0 1 2 3 4 \\
-    --save_root "${REPO}/results_tcga_multitask/${C}" &
+    --save_root "${REPO}/results_tcga_multitask/${C}" \\
+    --wandb-project chicago-mil-tcga &
 PY_PID=\$!
 wait "\${PY_PID}"; EXIT_CODE=\$?
 

@@ -16,10 +16,10 @@ MAIL="dinesh.haridoss@helmholtz-munich.de"
 mkdir -p "${LOG_DIR}" "${SCRIPTS_DIR}"
 
 for SPLIT in 0 1 2 3 4; do
-for VARIANT in early late middle mario_kempes; do
+for VARIANT in early late middle set_mil; do
 
-# mario_kempes runs a single mega task; others run 4 tasks
-if [[ "${VARIANT}" == "mario_kempes" ]]; then
+# set_mil runs a single mega task; others run 4 tasks
+if [[ "${VARIANT}" == "set_mil" ]]; then
     TASKS="mega"
 else
     TASKS="cls acr_surv clad_surv death_surv"

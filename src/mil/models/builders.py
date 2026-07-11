@@ -13,7 +13,8 @@ v8 architecture
   slot — SetTransformerMIL (recommended):
     1. Per-modality ModalFFNEncoder: 2-layer FFN (feat_dim → H*2 → H)
     2. Per-modality PMA: K learned seeds cross-attend to N patches → (K, H)
-       Standard softmax over N patches — no GRU, no collapse
+       Standard multi-head attention (softmax over patches), exactly as in
+       Lee et al. Set Transformer 2019.
     3. Concatenate all modality seeds → (M*K, H)
     4. SAB (self-attention) for cross-modal seed interaction
     5. Per-task gated ABMIL over M*K tokens → task representation
@@ -46,7 +47,7 @@ from mil.data.registry import MODALITIES, _feat_dim
 HIDDEN_DIM        = 256
 DROPOUT           = 0.4
 P2_MODAL_DROPOUT  = 0.3    # 0.3 → model trains with each modality alone ~24% of the time
-P2_N_HEADS        = 4
+P2_N_HEADS        = 1
 P2_N_CROSS_LAYERS = 1      # 1 layer sufficient for small dataset; 4 overfits
 P2_ATTN_DROPOUT   = 0.1
 P2_MAX_PATCHES    = 2048
@@ -55,7 +56,8 @@ P2_SLOT_K         = 16     # dot products ~1/√128 → softmax uniform)
 P2_PMA_LAYERS     = 2      # cross-attention layers inside PMA
 
 # Available variants
-P2_VARIANTS = ["mario_kempes", "early", "late", "middle", "longitudinal_mk"]
+P2_VARIANTS = ["set_mil", "set_mil_mt", "early", "late", "middle",
+               "longitudinal_mk", "longitudinal_mk_mt"]
 
 # Maps task name → list of prediction heads to build
 TASK_GROUPS = {
@@ -82,7 +84,7 @@ def build_model_v8(
 
     Parameters
     ----------
-    variant       : "mario_kempes" (recommended) | "early" | "late" | "middle"
+    variant       : "set_mil" (recommended) | "set_mil_mt" | "early" | "late" | "middle"
     modal_dropout : probability of dropping a modality during training
     slot_k        : number of slot tokens per modality (hyperparameter; default 8)
     n_cross_layers: unused for slot variant (kept for API compat with early/middle)
@@ -97,9 +99,12 @@ def build_model_v8(
     _task_list = TASK_GROUPS.get(task, ["acr_cls", "acr_surv"])
     kw = dict(hidden_dim=HIDDEN_DIM, dropout=DROPOUT, modal_dropout=modal_dropout)
 
-    if variant == "mario_kempes":
+    if variant in ("set_mil", "set_mil_mt"):
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
+        # HE is rare (~20% of samples) — never drop it during training.
+        # Other modalities keep the standard modal_dropout rate.
+        he_aware_dropout = {m: (0.0 if m == "HE" else modal_dropout) for m in MODALITIES}
         return SetTransformerMIL(
             encoders,
             hidden_dim=HIDDEN_DIM,
@@ -108,9 +113,10 @@ def build_model_v8(
             n_sab_layers=max(1, n_cross_layers),
             n_heads=P2_N_HEADS,
             dropout=P2_ATTN_DROPOUT,
-            modal_dropout=modal_dropout,
+            modal_dropout=he_aware_dropout,
             max_he_patches=max_he_patches,
             tasks=_task_list,
+            use_task_gate=(variant == "set_mil_mt"),
         )
     if variant == "early":
         return EarlyFusionMIL(encoders, proj_heads, **kw,
@@ -126,7 +132,7 @@ def build_model_v8(
                                 modal_dropout=modal_dropout,
                                 hidden_dim=HIDDEN_DIM,
                                 tasks=_task_list)
-    if variant == "longitudinal_mk":
+    if variant in ("longitudinal_mk", "longitudinal_mk_mt"):
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
         return LongitudinalMIL(
@@ -140,6 +146,7 @@ def build_model_v8(
             modal_dropout=modal_dropout,
             max_he_patches=max_he_patches,
             tasks=_task_list,
+            use_task_gate=(variant == "longitudinal_mk_mt"),
         )
     raise ValueError(f"Unknown variant {variant!r}. Choose from: {P2_VARIANTS}")
 

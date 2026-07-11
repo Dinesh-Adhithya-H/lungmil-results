@@ -39,7 +39,7 @@ results/predictions/raw/split{S}_predictions.csv
 
     P2 classification prob (populated when model exists):
       p2_early_cls, p2_late_cls, p2_middle_cls
-      p2_mario_kempes_mega, p2_longitudinal_mk_mega
+      p2_set_mil_mega, p2_longitudinal_mk_mega
 
     P2 survival hazards (populated when model exists):
       h2_acr_{variant}_{task}, h2_clad_{variant}_{task}, h2_death_{variant}_{task}
@@ -81,7 +81,7 @@ P2_ALL = [
     ("middle",         "acr_surv"),
     ("middle",         "clad_surv"),
     ("middle",         "death_surv"),
-    ("mario_kempes",   "mega"),
+    ("set_mil",   "mega"),
     ("longitudinal_mk","mega"),
 ]
 

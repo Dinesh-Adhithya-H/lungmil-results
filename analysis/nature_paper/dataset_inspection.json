@@ -1,0 +1,205 @@
+{
+  "n_samples": 4210,
+  "n_patients": 263,
+  "n_with_serial_samples": 254,
+  "label_distribution_acr": {
+    "0": 2639,
+    "1": 1409,
+    "2": 16,
+    "3": 5,
+    "4": 112,
+    "6": 15,
+    "7": 1,
+    "8": 13
+  },
+  "survival": {
+    "CLAD_events": 867,
+    "CLAD_censored": 3343,
+    "Death_events": 976,
+    "Death_censored": 3234
+  },
+  "modality_availability": {
+    "BAL_cells": {
+      "n": 134,
+      "pct": 3.2
+    },
+    "BAL_centroids": {
+      "n": 134,
+      "pct": 3.2
+    },
+    "BAL_counts": {
+      "n": 134,
+      "pct": 3.2
+    },
+    "HE_cells": {
+      "n": 632,
+      "pct": 15.0
+    },
+    "HE_centroids": {
+      "n": 632,
+      "pct": 15.0
+    },
+    "HE_counts": {
+      "n": 632,
+      "pct": 15.0
+    },
+    "CT_cells": {
+      "n": 1835,
+      "pct": 43.6
+    },
+    "CT_centroids": {
+      "n": 1835,
+      "pct": 43.6
+    },
+    "CT_counts": {
+      "n": 1835,
+      "pct": 43.6
+    },
+    "CT_radiomics": {
+      "n": 1297,
+      "pct": 30.8
+    },
+    "Clinical": {
+      "n": 3340,
+      "pct": 79.3
+    }
+  },
+  "count_feature_dims": {
+    "CT_counts": 37,
+    "HE_counts": 15,
+    "BAL_counts": 43
+  },
+  "patch_counts": {
+    "BAL_cells": {
+      "n_samples": 134,
+      "mean": 10376.8,
+      "median": 9474.5,
+      "min": 617,
+      "max": 44193
+    },
+    "HE_cells": {
+      "n_samples": 632,
+      "mean": 23443.4,
+      "median": 21757.0,
+      "min": 2641,
+      "max": 72442
+    },
+    "CT_cells": {
+      "n_samples": 1835,
+      "mean": 1083.3,
+      "median": 1015.0,
+      "min": 84,
+      "max": 4676
+    }
+  },
+  "co_availability": {
+    "Clinical+Clinical": {
+      "n": 3340,
+      "pct": 79.3
+    },
+    "Clinical+HE_cells": {
+      "n": 518,
+      "pct": 12.3
+    },
+    "Clinical+CT_cells": {
+      "n": 1026,
+      "pct": 24.4
+    },
+    "Clinical+BAL_cells": {
+      "n": 116,
+      "pct": 2.8
+    },
+    "HE_cells+Clinical": {
+      "n": 518,
+      "pct": 12.3
+    },
+    "HE_cells+HE_cells": {
+      "n": 632,
+      "pct": 15.0
+    },
+    "HE_cells+CT_cells": {
+      "n": 335,
+      "pct": 8.0
+    },
+    "HE_cells+BAL_cells": {
+      "n": 94,
+      "pct": 2.2
+    },
+    "CT_cells+Clinical": {
+      "n": 1026,
+      "pct": 24.4
+    },
+    "CT_cells+HE_cells": {
+      "n": 335,
+      "pct": 8.0
+    },
+    "CT_cells+CT_cells": {
+      "n": 1835,
+      "pct": 43.6
+    },
+    "CT_cells+BAL_cells": {
+      "n": 81,
+      "pct": 1.9
+    },
+    "BAL_cells+Clinical": {
+      "n": 116,
+      "pct": 2.8
+    },
+    "BAL_cells+HE_cells": {
+      "n": 94,
+      "pct": 2.2
+    },
+    "BAL_cells+CT_cells": {
+      "n": 81,
+      "pct": 1.9
+    },
+    "BAL_cells+BAL_cells": {
+      "n": 134,
+      "pct": 3.2
+    }
+  },
+  "samples_per_patient": {
+    "mean": 16.01,
+    "median": 16.0,
+    "max": 41,
+    "distribution": {
+      "1": 9,
+      "2": 3,
+      "3": 3,
+      "4": 5,
+      "5": 5,
+      "6": 10,
+      "7": 9,
+      "8": 5,
+      "9": 8,
+      "10": 4,
+      "11": 9,
+      "12": 14,
+      "13": 11,
+      "14": 14,
+      "15": 15,
+      "16": 16,
+      "17": 18,
+      "18": 15,
+      "19": 11,
+      "20": 9,
+      "21": 6,
+      "22": 11,
+      "23": 12,
+      "24": 8,
+      "25": 2,
+      "26": 4,
+      "27": 9,
+      "28": 3,
+      "29": 3,
+      "30": 2,
+      "31": 3,
+      "32": 1,
+      "35": 1,
+      "36": 2,
+      "38": 1,
+      "39": 1,
+      "41": 1
+    }
+  }
+}

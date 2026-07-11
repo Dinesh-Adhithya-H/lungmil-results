@@ -45,6 +45,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 
+try:
+    import wandb as _wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _wandb = None
+    _WANDB_AVAILABLE = False
+
 from mil.data.registry import MODALITIES
 from mil.training.losses import (
     hinge_loss, bce_loss, compute_class_weights,
@@ -1617,6 +1624,9 @@ def run_phase2_final(
     grad_accum: int = 32,
     combined_train: bool = False,
     alternating: bool = False,
+    min_epochs: int = 200,
+    wandb_project: str = "chicago-mil",
+    split: int = -1,
 ) -> dict:
     """
     Final Phase 2 training with val-monitored early stopping.
@@ -1658,6 +1668,26 @@ def run_phase2_final(
     print(f"  {'='*60}")
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    _wb = None
+    if wandb_project and _WANDB_AVAILABLE:
+        try:
+            _wb = _wandb.init(
+                project=wandb_project,
+                name=f"{vtag}_s{split}_f{fold}",
+                group=f"split{split}",
+                config={
+                    "variant": variant, "split": split, "fold": fold,
+                    "task": task, "lr": lr, "weight_decay": weight_decay,
+                    "n_epochs": n_epochs, "patience": patience,
+                    "min_epochs": min_epochs, "combined_train": combined_train,
+                    "grad_accum": grad_accum,
+                },
+                reinit=True,
+            )
+        except Exception as _we:
+            print(f"  [wandb] init failed: {_we} — continuing without wandb")
+            _wb = None
+
     status_path = save_dir / f"status_{vtag}_final.json"
     if _is_completed(save_dir, tag=f"status_{vtag}_final"):
         st = _read_status(status_path)
@@ -1672,6 +1702,17 @@ def run_phase2_final(
     print(f"  Trainable={n_tr:,}")
 
     cw        = compute_class_weights(train_recs)
+
+    # Oversample HE-containing records so HE appears ~equally often as other modalities.
+    # HE is present in ~20% of samples; without oversampling the PMA for HE only gets
+    # gradient 20% of steps and the model learns to ignore it.
+    he_recs = [r for r in train_recs if bag_cache.get(r["stem"], {}).get("HE") is not None]
+    if 0 < len(he_recs) < len(train_recs) // 2:
+        repeat = max(1, round(len(train_recs) / len(he_recs)) - 1)
+        train_recs = list(train_recs) + he_recs * repeat
+        print(f"  HE oversampling: {len(he_recs)} HE records × {repeat+1} "
+              f"→ total train={len(train_recs)}")
+
     optimizer = torch.optim.Adam(
         [p for p in model.parameters() if p.requires_grad],
         lr=lr, weight_decay=weight_decay)
@@ -1791,6 +1832,34 @@ def run_phase2_final(
                   + f"\n    [test] te_bacc={te_bacc:.4f}  te_auc={te_auc:.4f}"
                   + (f"  {te_ci_str}" if te_ci_str else ""))
 
+            if _wb is not None:
+                _log = {
+                    "epoch": epoch + 1,
+                    "lr": optimizer.param_groups[0]["lr"],
+                    # train losses
+                    "train/bce":       loss_d.get("bce", 0),
+                    "train/cox_acr":   loss_d.get("cox_acr", 0),
+                    "train/cox_clad":  loss_d.get("cox_clad", 0),
+                    "train/cox_death": loss_d.get("cox_death", 0),
+                    "train/bacc":      loss_d.get("train_bacc", float("nan")),
+                    # val metrics
+                    "val/bacc":     val_bacc,
+                    "val/auc":      val_auc,
+                    "val/combined": metric,
+                    "val/no_improve": no_improve + (0 if improved else 1),
+                    # test metrics (logging only — never used for HP/early-stop)
+                    "test/bacc":    te_bacc,
+                    "test/auc":     te_auc,
+                }
+                for k, v in ci_vals.items():
+                    _log[f"val/ci_{k}"] = v
+                for k, v in te_ci.items():
+                    _log[f"test/ci_{k}"] = v
+                try:
+                    _wb.log(_log)
+                except Exception:
+                    pass
+
             if improved:
                 best_metric = metric
                 best_epoch  = epoch + 1
@@ -1799,7 +1868,7 @@ def run_phase2_final(
                     torch.save(model.state_dict(), ckpt_dir / "best_val.pt")
             else:
                 no_improve += 1
-                if not combined_train and no_improve >= patience:
+                if not combined_train and no_improve >= patience and epoch + 1 >= min_epochs:
                     print(f"  [{vtag}_final] Early stop at ep {epoch+1} "
                           f"(best_ep={best_epoch}  combined={best_metric:.4f})")
                     _gc()
@@ -1865,14 +1934,50 @@ def run_phase2_final(
     # Unimodal ablation
     try:
         model.eval()
-        uni_abl = evaluate_unimodal_ablation(
-            model, test_recs, device, bag_cache, surv_endpoint=_surv_ep, task=task)
+        if is_mega:
+            # For mega models call ablation for all 3 survival endpoints and merge.
+            # Each call computes bacc (acr_cls) + one survival c_index per modality.
+            uni_abl: dict = {}
+            for ep in ("acr", "clad", "death"):
+                ep_abl = evaluate_unimodal_ablation(
+                    model, test_recs, device, bag_cache, surv_endpoint=ep, task=task)
+                for mod, vals in ep_abl.items():
+                    if mod not in uni_abl:
+                        uni_abl[mod] = {"n": vals.get("n", 0)}
+                    if ep == "acr":
+                        uni_abl[mod]["bacc"]          = vals.get("bacc")
+                        uni_abl[mod]["auc"]           = vals.get("auc")
+                        uni_abl[mod]["acr_c_index"]   = vals.get("c_index")
+                    elif ep == "clad":
+                        uni_abl[mod]["clad_c_index"]  = vals.get("c_index")
+                    elif ep == "death":
+                        uni_abl[mod]["death_c_index"] = vals.get("c_index")
+        else:
+            uni_abl = evaluate_unimodal_ablation(
+                model, test_recs, device, bag_cache, surv_endpoint=_surv_ep, task=task)
         all_metrics["unimodal_ablation"] = uni_abl
     except Exception as e:
         print(f"  [{vtag}_final] unimodal ablation failed: {e}")
 
     with open(save_dir / f"metrics_{vtag}_final.json", "w") as f:
         json.dump(all_metrics, f, indent=2)
+
+    if _wb is not None:
+        try:
+            _test = all_metrics.get("test", {})
+            _wb.summary.update({
+                "final/test_bacc":         _test.get("bacc", float("nan")),
+                "final/test_auc":          _test.get("auc",  float("nan")),
+                "final/test_ci_acr":       _test.get("c_index", float("nan")),
+                "final/test_ci_clad":      _test.get("clad_c_index", float("nan")),
+                "final/test_ci_death":     _test.get("death_c_index", float("nan")),
+                "final/best_epoch":        best_epoch,
+                "final/best_val_combined": best_metric,
+            })
+            _wb.finish()
+        except Exception:
+            pass
+
     del model, optimizer, scaler; _gc()
     return all_metrics
 
@@ -2358,7 +2463,7 @@ def run_longitudinal_hp_sweep(
     eval_every:   int = P2_HP_EVAL_EVERY,
     hp_patience:  int = P2_HP_PATIENCE,
 ) -> Tuple[float, float]:
-    """HP sweep for LongitudinalMIL — same grid as mario_kempes."""
+    """HP sweep for LongitudinalMIL — same grid as set_mil."""
     from itertools import product as iproduct
     save_dir.mkdir(parents=True, exist_ok=True)
     result_path = save_dir / "hp_sweep_p2.json"

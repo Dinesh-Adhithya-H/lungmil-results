@@ -9,7 +9,7 @@ Layout per task (4 panels arranged 2×2 or single-row):
 Colour scheme (from analysis/CLAUDE.md):
   - P1 unimodal per-modality: distinct muted colours
   - P1 weighted ensemble: grey
-  - P2 variants: blue gradient (early→late→middle→mario_kempes→longitudinal_mk)
+  - P2 variants: blue gradient (early→late→middle→set_mil→longitudinal_mk)
 
 Output: results/predictions/figures/comparison_{task}.pdf + .png
 """
@@ -49,7 +49,7 @@ P2_COLORS = {
     "P2 early":          "#1565C0",
     "P2 late":           "#1976D2",
     "P2 middle":         "#42A5F5",
-    "P2 mario_kempes":   "#0D47A1",
+    "P2 set_mil":   "#0D47A1",
     "P2 longitudinal_mk":"#311B92",
 }
 
@@ -63,7 +63,7 @@ def short_label(label):
         .replace("P1 ", "")
         .replace("P2 ", "")
         .replace("longitudinal_mk", "long-MK")
-        .replace("mario_kempes", "mario-K")
+        .replace("set_mil", "mario-K")
         .replace("wtd ensemble", "wtd ens.")
         .replace("Clinical", "Clin.")
     )

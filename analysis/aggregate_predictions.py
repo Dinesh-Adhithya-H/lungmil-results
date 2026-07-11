@@ -15,7 +15,7 @@ Goal 1 — Unimodal vs multimodal fair comparison
 Goal 2 — Reannotation candidates
   For ACR classification (the only task with discrete, reannotatable labels):
     error = prob_of_wrong_class (high = confidently wrong)
-  Sorted by canonical model error (best available: mario_kempes > early_cls).
+  Sorted by canonical model error (best available: set_mil > early_cls).
   Includes per-modality errors to show whether all models agree (label noise)
   or only some are wrong (hard samples).
 
@@ -56,7 +56,7 @@ P2_SPECS = [
     ("middle",         "acr_surv"),
     ("middle",         "clad_surv"),
     ("middle",         "death_surv"),
-    ("mario_kempes",   "mega"),
+    ("set_mil",   "mega"),
     ("longitudinal_mk","mega"),
 ]
 
@@ -142,7 +142,7 @@ df["err_p1_ensemble_cls"] = cls_error(df["p1_ensemble_cls"], df["label"])
 
 # Canonical P2 error for ranking (best available model)
 CANONICAL_ORDER = [
-    ("mario_kempes",   "mega"),
+    ("set_mil",   "mega"),
     ("longitudinal_mk","mega"),
     ("early",          "cls"),
     ("late",           "cls"),

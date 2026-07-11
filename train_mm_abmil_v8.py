@@ -33,7 +33,7 @@ Usage
       --splits-csv   /path/to/splits.csv \\
       --split 1 --fold 0 \\
       --phase both \\
-      --p2-variant mario_kempes --slot-k 16 --task mega \\
+      --p2-variant set_mil --slot-k 16 --task mega \\
       --hp-sweep --p2-hp-sweep
 
   # Phase 1 only (run first for all folds in parallel):
@@ -128,7 +128,7 @@ def _aggregate_global_hp(out: Path, split: int, folds: range,
             data = json.load(fh)
         for row in data.get("grid", []):
             key = (row["lr"], row["wd"])
-            score = row.get("val_bacc", row.get("val_cidx", row.get("val_cox", row.get("val_loss", None))))
+            score = row.get("val_bacc", row.get("combined", row.get("val_cidx", row.get("val_cox", row.get("val_loss", None)))))
             if score is not None:
                 combo_scores.setdefault(key, []).append(score)
         n_found += 1
@@ -156,7 +156,7 @@ def _aggregate_best_epoch(out: Path, split: int, folds: range,
     A 10% buffer is added since combined data is ~25% larger → slightly longer convergence.
 
     Falls back to hp_sweep JSON stopped_ep when no status file exists (e.g. folds
-    that only ran HP sweeps without combined training, such as mario_kempes folds 1-3).
+    that only ran HP sweeps without combined training, such as set_mil folds 1-3).
     """
     from mil.training.phase2_trainer import P2_FINAL_EPOCHS
     best_epochs = []
@@ -265,8 +265,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fold",         type=int, default=0)
     p.add_argument("--out-dir",      default=str(DEFAULT_OUT))
     p.add_argument("--phase",        choices=["p1", "p2", "both"], default="both")
-    p.add_argument("--p2-variant",     default="mario_kempes",
-                   help="Phase 2 fusion variant: mario_kempes (recommended) / early / late / middle")
+    p.add_argument("--p2-variant",     default="set_mil",
+                   help="Phase 2 fusion variant: set_mil (recommended) / early / late / middle")
     p.add_argument("--slot-k",         type=int, default=16,
                    help="Number of seed tokens per modality (PMA, default 16)")
     p.add_argument("--n-cross-layers", type=int, default=4,
@@ -287,6 +287,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Fixed P2 weight decay (overrides HP sweep and default)")
     p.add_argument("--alternating",   action="store_true",
                    help="Use alternating task training in Phase 2 (one task per epoch, stratified)")
+    p.add_argument("--p2-min-epochs", type=int, default=200,
+                   help="Minimum epochs before early stopping is allowed (default 200)")
     p.add_argument("--geomae-ckpt",   default="",
                    help="Path to GeoMAE best_backbone.pt checkpoint. "
                         "When set, replaces HE/CT linear backbone with pretrained "
@@ -324,6 +326,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Keep Phase 1 encoders frozen during Phase 2 (default: fine-tune)")
     p.add_argument("--seed",         type=int, default=42)
     p.add_argument("--workers",      type=int, default=8)
+    p.add_argument("--wandb-project", default="chicago-mil",
+                   help="Weights & Biases project name (default: chicago-mil).")
     return p
 
 
@@ -394,6 +398,8 @@ def run_phase1(args, splits_dict, bag_cache, device, out: Path):
                 n_epochs=n_epochs, patience=P1_PATIENCE,
                 task=task_type, surv_endpoint=endpoint,
                 lr=lr, weight_decay=wd,
+                wandb_project=getattr(args, "wandb_project", "chicago-mil"),
+                split=split,
             )
             if p1_task == "acr":
                 p1_paths[mod] = ckpt
@@ -420,9 +426,11 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
     patient_val   = long_splits["val"]
     patient_test  = long_splits["test"]
 
+    _lmk_variant = args.p2_variant  # "longitudinal_mk" or "longitudinal_mk_mt"
+
     def _make_model():
         return build_model_v8(
-            variant="longitudinal_mk",
+            variant=_lmk_variant,
             slot_k=args.slot_k,
             n_cross_layers=args.n_cross_layers,
             task=args.task,
@@ -431,7 +439,7 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
         )
 
     model    = _make_model().to(device)
-    save_dir = _p2_dir(out, split, fold, "longitudinal_mk", args.task, tag=args.p2_tag)
+    save_dir = _p2_dir(out, split, fold, _lmk_variant, args.task, tag=args.p2_tag)
     p2_lr    = getattr(args, "p2_lr", None) or P2_LR
     p2_wd    = getattr(args, "p2_wd", None) or P2_WEIGHT_DECAY
 
@@ -452,14 +460,14 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
     _hp_tag = getattr(args, "hp_source_tag", None) or args.p2_tag
     if getattr(args, "global_hp", False):
         p2_lr, p2_wd = _aggregate_global_hp(
-            out, split, range(4), "longitudinal_mk", args.task, tag=_hp_tag)
+            out, split, range(4), _lmk_variant, args.task, tag=_hp_tag)
         print(f"  [LMK] global HP selected: lr={p2_lr}  wd={p2_wd}")
 
     use_combined = getattr(args, "combined_train", False)
     combined_n_epochs = None
     if use_combined:
         combined_n_epochs = _aggregate_best_epoch(
-            out, split, range(4), "longitudinal_mk", args.task, tag=_hp_tag)
+            out, split, range(4), _lmk_variant, args.task, tag=_hp_tag)
 
     final_kwargs = {}
     if combined_n_epochs is not None:
@@ -467,7 +475,7 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
 
     metrics = run_longitudinal_final(
         model=model,
-        variant="longitudinal_mk",
+        variant=_lmk_variant,
         fold=fold,
         device=device,
         bag_cache=bag_cache,
@@ -579,6 +587,7 @@ def run_phase2(args, splits_dict, bag_cache, device, out: Path,
     final_kwargs = {}
     if combined_n_epochs is not None:
         final_kwargs["n_epochs"] = combined_n_epochs
+    final_kwargs["min_epochs"] = args.p2_min_epochs
     metrics = run_phase2_final(
         model=model, variant=args.p2_variant, fold=fold,
         device=device, bag_cache=bag_cache,
@@ -588,6 +597,8 @@ def run_phase2(args, splits_dict, bag_cache, device, out: Path,
         lr=p2_lr, weight_decay=p2_wd,
         combined_train=use_combined,
         alternating=args.alternating,
+        wandb_project=getattr(args, "wandb_project", "chicago-mil"),
+        split=split,
         **final_kwargs,
     )
 
@@ -653,7 +664,7 @@ def main():
     # ── --p2-all-folds: load bags once, iterate over all folds (and tasks) ──────
     if getattr(args, "p2_all_folds", False) and args.phase in ("p2", "both"):
         # For multi-task variants (early/late/middle) iterate over all tasks with
-        # one bag load. mega variants (mario_kempes, longitudinal_mk) use args.task directly.
+        # one bag load. mega variants (set_mil, longitudinal_mk) use args.task directly.
         _MULTI_TASKS = {
             "early":  ["cls", "acr_surv", "clad_surv", "death_surv"],
             "late":   ["cls", "acr_surv", "clad_surv", "death_surv"],
@@ -668,7 +679,7 @@ def main():
                                          fold=_f, split=args.split)
             for _r in _sd["train"] + _sd["val"] + _sd["test"]:
                 all_stems.add(_r["stem"])
-        if args.p2_variant == "longitudinal_mk":
+        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
             for _f in range(4):
                 _ls = build_splits_longitudinal(args.samples_dir, args.splits_csv,
                                                 fold=_f, split=args.split)
@@ -689,7 +700,7 @@ def main():
                 print(f"\n{'='*60}\n  [all-folds] task={_task}  fold={_f}  (HP sweep only)\n{'='*60}")
                 _sd = build_splits_multitask(args.samples_dir, args.splits_csv,
                                              fold=_f, split=args.split)
-                if args.p2_variant == "longitudinal_mk":
+                if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
                     run_phase2_longitudinal(args, bag_cache, device, out, fold=_f)
                 else:
                     run_phase2(args, _sd, bag_cache, device, out, fold=_f)
@@ -702,7 +713,7 @@ def main():
             _orig_combined_train = args.combined_train
             args.global_hp       = True
             args.combined_train  = True
-            if args.p2_variant == "longitudinal_mk":
+            if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
                 metrics = run_phase2_longitudinal(args, bag_cache, device, out, fold=0)
             else:
                 metrics = run_phase2(args, _sd0, bag_cache, device, out, fold=0)
@@ -728,8 +739,8 @@ def main():
     all_recs  = (splits_dict["train"] + splits_dict["val"] + splits_dict["test"])
     all_stems = list({r["stem"] for r in all_recs})
 
-    # For longitudinal_mk: stems come from patient-level splits (same stems, but ensure all included)
-    if args.p2_variant == "longitudinal_mk" and args.phase in ("p2", "both"):
+    # For longitudinal_mk variants: stems come from patient-level splits
+    if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt") and args.phase in ("p2", "both"):
         _long_splits = build_splits_longitudinal(
             samples_dir=args.samples_dir,
             splits_csv=args.splits_csv,
@@ -749,7 +760,7 @@ def main():
         p1_paths = run_phase1(args, splits_dict, bag_cache, device, out)
 
     if args.phase in ("p2", "both"):
-        if args.p2_variant == "longitudinal_mk":
+        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
             metrics = run_phase2_longitudinal(args, bag_cache, device, out)
         else:
             metrics = run_phase2(args, splits_dict, bag_cache, device, out,

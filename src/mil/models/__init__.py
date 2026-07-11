@@ -19,7 +19,7 @@ from ``builders.py``.
 Example
 -------
 >>> from mil.models.builders import build_model
->>> model = build_model("mario_kempes", task="mega")
+>>> model = build_model("set_mil", task="mega")
 """
 
 from .encoders import (

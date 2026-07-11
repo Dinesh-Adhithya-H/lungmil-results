@@ -67,6 +67,47 @@ TASK_SPEC = {
 }
 
 
+# ── Task-specific adaptive modality gating ───────────────────────────────────
+
+class TaskModalGate(nn.Module):
+    """
+    Per-task modality importance gate.
+
+    Input : (n_mods,) float — 1.0 if modality present, 0.0 if absent.
+    Output: dict {task: (n_mods,) tensor of independent sigmoid weights in (0,1)}.
+
+    Each output dimension is independently sigmoided — no softmax competition.
+    All gates can be 1 (use everything) or all 0 (suppress everything).
+    A near-zero gate for modality m scales its K post-SAB seeds to ~0 before
+    the per-task ABMIL, suppressing that modality's contribution to that task.
+    """
+
+    def __init__(self, n_mods: int, tasks: List[str], gate_hidden: int = 32):
+        super().__init__()
+        self.n_mods     = n_mods
+        self.task_names = tasks
+        self.nets = nn.ModuleDict({
+            t: nn.Sequential(
+                nn.Linear(n_mods, gate_hidden),
+                nn.ReLU(),
+                nn.Linear(gate_hidden, n_mods),
+                nn.Sigmoid(),
+            )
+            for t in tasks
+        })
+        # Initialise output layer so gates start near 1 (sigmoid(2) ≈ 0.88).
+        # The model begins with all modalities active and learns to suppress
+        # uninformative ones. bias=2 ensures the default is "include", not
+        # "half-strength" (which bias=0 would give).
+        for t in tasks:
+            nn.init.constant_(self.nets[t][-2].bias, 2.0)
+            nn.init.normal_(self.nets[t][-2].weight, 0.0, 0.01)
+
+    def forward(self, presence: torch.Tensor) -> dict:
+        """presence: (n_mods,) float on the same device as the model."""
+        return {t: self.nets[t](presence) for t in self.task_names}
+
+
 # ── Shared pooling helpers ─────────────────────────────────────────────────────
 
 def _abmil_pool(h, att_V, att_U, att_w):
@@ -424,19 +465,16 @@ class MiddleFusionMIL(nn.Module):
 
 class SetTransformerMIL(nn.Module):
     """
-    Multimodal MIL via Set Transformer seed compression.
+    Multimodal MIL via Set Transformer seed compression (Lee et al. 2019).
 
     Architecture
     ------------
     Stage 1  Per-modality ModalFFNEncoder: (N, feat_dim) → (N, H).
 
     Stage 2  Per-modality PMA (Pooling by Multihead Attention):
-               K learned seed vectors attend to N patch tokens via standard
-               cross-attention → (K, H) per modality.
-             Standard softmax over N patches per seed — no GRU, no competitive
-             routing, no iterative refinement.  Seeds stay diverse because they
-             have distinct learned query weights and independent gradient paths;
-             there is no shared GRU hidden state to force convergence.
+               K learned seed vectors cross-attend to N patch tokens →  (K, H).
+               Standard multi-head attention with softmax over patches, exactly
+               as in the Set Transformer paper.
 
     Stage 3  Concatenate seeds from all present modalities → (M*K, H).
              SAB (self-attention) lets seeds from different modalities exchange
@@ -452,7 +490,8 @@ class SetTransformerMIL(nn.Module):
                  n_sab_layers: int = 1, n_heads: int = 4,
                  dropout: float = 0.1, modal_dropout: float = 0.3,
                  max_he_patches: int = P2_MAX_HE_BLOCK,
-                 tasks: Optional[List[str]] = None):
+                 tasks: Optional[List[str]] = None,
+                 use_task_gate: bool = False):
         super().__init__()
         self.encoders       = nn.ModuleDict(encoders)
         self.modal_dropout  = modal_dropout
@@ -460,14 +499,29 @@ class SetTransformerMIL(nn.Module):
         self.n_seeds        = n_seeds
         _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
         self.task_names     = _tasks
+        self.use_task_gate  = use_task_gate
 
-        # Per-modality PMA: compress N patches → K seeds
+        # Modality identity embedding: one learned vector per modality, added to
+        # all K slots from that modality before SAB so cross-attention knows the
+        # source modality of every token.
+        self._mod_order = list(encoders.keys())
+        self._mod_idx   = {mod: i for i, mod in enumerate(self._mod_order)}
+        self.modal_embed = nn.Embedding(len(self._mod_idx), hidden_dim)
+        nn.init.trunc_normal_(self.modal_embed.weight, std=0.02)
+
+        # Per-modality PMA: K learned seeds cross-attend to N patches (Set Transformer)
         self.pma = nn.ModuleDict({
             mod: PMA(hidden_dim, n_seeds, n_heads, n_pma_layers, dropout)
             for mod in encoders
         })
 
-        # Cross-modal SAB: seeds from all modalities self-attend
+        # Task-specific adaptive modality gate (applied BEFORE SAB to each modality's K seeds)
+        # Noisy modalities are suppressed pre-SAB so they cannot corrupt useful modalities
+        # via cross-attention. SAB then runs once per task with task-gated seeds.
+        # Only active when use_task_gate=True (_mt variants).
+        self.task_gate = TaskModalGate(len(self._mod_order), _tasks) if use_task_gate else None
+
+        # Cross-modal SAB: seeds from all modalities self-attend (run once per task)
         self.sab = nn.ModuleList([SAB(hidden_dim, n_heads, dropout)
                                    for _ in range(n_sab_layers)])
 
@@ -494,38 +548,69 @@ class SetTransformerMIL(nn.Module):
     def forward(self, bags: dict, device: torch.device) -> dict:
         he_coords = bags.get("HE_coords")
 
-        # Stage 1+2: per-modality encode + compress to K seeds
-        mod_seeds: List[torch.Tensor] = []
+        # Stage 1+2: per-modality encode + PMA → K seeds (shared across tasks)
+        present_mods: List[str] = []
+        mod_seeds:    List[torch.Tensor] = []
         for mod, enc in self.encoders.items():
             t = bags.get(mod)
             if t is None:
                 continue
-            if self.training and random.random() < self.modal_dropout:
+            p_drop = (self.modal_dropout.get(mod, 0.3)
+                      if isinstance(self.modal_dropout, dict)
+                      else self.modal_dropout)
+            if self.training and random.random() < p_drop:
                 continue
             t = t.to(device, non_blocking=True)
             if t.shape[0] > self.max_he_patches:
                 idx = torch.randperm(t.shape[0], device=device)[:self.max_he_patches]
                 t = t[idx]
             crds = he_coords if mod == "HE" else None
-            h = enc.encode_patches(t, coords=crds)   # (N, H)
-            s = self.pma[mod](h)                      # (K, H)
-            mod_seeds.append(s)
+            h = enc.encode_patches(t, coords=crds)            # (N, H)
+            s = self.pma[mod](h)                               # (K, H)
+            mod_idx = torch.tensor(self._mod_idx[mod], device=device)
+            s = s + self.modal_embed(mod_idx)
+            present_mods.append(mod)
+            mod_seeds.append(s)                                # (K, H)
 
         if not mod_seeds:
             return torch.tensor(0.0, device=device, requires_grad=True)
 
-        # Stage 3: concatenate all modality seeds + cross-modal self-attention
-        tokens = torch.cat(mod_seeds, dim=0)          # (M*K, H)
-        for layer in self.sab:
-            tokens = layer(tokens)
-
-        # Stage 4+5: per-task gated ABMIL → head
         out: dict = {}
-        for task in self.task_names:
-            gate  = self.abmil_V[task](tokens) * self.abmil_U[task](tokens)  # (M*K, H)
-            alpha = torch.softmax(self.abmil_w[task](gate), dim=0)            # (M*K, 1)
-            rep   = (alpha * tokens).sum(0)                                   # (H,)
-            out[task] = (self.heads[task](rep).squeeze(), rep)
+
+        if self.use_task_gate:
+            # Gated path: gate K seeds BEFORE SAB so noisy modalities cannot
+            # contaminate useful modalities via cross-attention.
+            # SAB runs once per task with task-specific gated seeds.
+            presence = torch.tensor(
+                [1.0 if m in present_mods else 0.0 for m in self._mod_order],
+                dtype=torch.float32, device=device,
+            )                                                  # (n_mods,)
+            gates = self.task_gate(presence)                   # {task: (n_mods,)}
+
+            for task in self.task_names:
+                gate_w = gates[task]                           # (n_mods,)
+                # Scale K seeds pre-SAB: gate ≈ 0 → modality excluded from SAB
+                gated: List[torch.Tensor] = []
+                for j, mod in enumerate(present_mods):
+                    i = self._mod_idx[mod]
+                    gated.append(mod_seeds[j] * gate_w[i])    # (K, H)
+                task_tokens = torch.cat(gated, dim=0)          # (M*K, H)
+                for layer in self.sab:
+                    task_tokens = layer(task_tokens)
+                attn  = self.abmil_V[task](task_tokens) * self.abmil_U[task](task_tokens)
+                alpha = torch.softmax(self.abmil_w[task](attn), dim=0)
+                rep   = (alpha * task_tokens).sum(0)           # (H,)
+                out[task] = (self.heads[task](rep).squeeze(), rep)
+        else:
+            # Ungated path: single shared SAB over all modalities
+            tokens = torch.cat(mod_seeds, dim=0)               # (M*K, H)
+            for layer in self.sab:
+                tokens = layer(tokens)
+            for task in self.task_names:
+                attn  = self.abmil_V[task](tokens) * self.abmil_U[task](tokens)
+                alpha = torch.softmax(self.abmil_w[task](attn), dim=0)
+                rep   = (alpha * tokens).sum(0)                # (H,)
+                out[task] = (self.heads[task](rep).squeeze(), rep)
 
         return out
 
@@ -564,7 +649,8 @@ class LongitudinalMIL(nn.Module):
                  n_sab_layers: int = 1, n_heads: int = 4,
                  dropout: float = 0.1, modal_dropout: float = 0.3,
                  max_he_patches: int = 2048,
-                 tasks: Optional[List[str]] = None):
+                 tasks: Optional[List[str]] = None,
+                 use_task_gate: bool = False):
         super().__init__()
         self.encoders       = nn.ModuleDict(encoders)
         self.modal_dropout  = modal_dropout
@@ -572,11 +658,26 @@ class LongitudinalMIL(nn.Module):
         self.n_seeds        = n_seeds
         _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
         self.task_names     = _tasks
+        self.use_task_gate  = use_task_gate
+
+        # Modality identity embedding: one learned vector per modality, added to
+        # all K slots so TemporalSAB knows which modality each token came from
+        self._mod_order = list(encoders.keys())
+        self._mod_idx   = {mod: i for i, mod in enumerate(self._mod_order)}
+        self.modal_embed = nn.Embedding(len(self._mod_idx), hidden_dim)
+        nn.init.trunc_normal_(self.modal_embed.weight, std=0.02)
 
         self.pma = nn.ModuleDict({
             mod: PMA(hidden_dim, n_seeds, n_heads, n_pma_layers, dropout)
             for mod in encoders
         })
+
+        # Task-specific adaptive modality gate (applied BEFORE TemporalSAB to each modality's K seeds)
+        # Noisy modalities are suppressed pre-SAB so they cannot corrupt useful modalities
+        # via temporal cross-attention. TemporalSAB runs once per task with task-gated seeds.
+        # Only active when use_task_gate=True (_mt variants).
+        self.task_gate = TaskModalGate(len(self._mod_order), _tasks) if use_task_gate else None
+
         self.temporal_sab = TemporalSAB(hidden_dim, n_heads, dropout, n_sab_layers)
 
         self.abmil_V = nn.ModuleDict({
@@ -633,104 +734,182 @@ class LongitudinalMIL(nn.Module):
         bags_list = patient_data["bags_list"]
         records   = patient_data["records"]
         T         = len(days_list)
+        K         = self.n_seeds
 
-        all_seeds: List[torch.Tensor] = []
-        all_days:  List[torch.Tensor] = []
-        biopsy_ends: List[int]        = []  # token count cumsum after each biopsy
-
+        # Stage 1+2: per-biopsy, per-modality encode + PMA (shared across tasks).
+        # Collect all seeds into a flat sequence; track which biopsy and modality
+        # each K-block belongs to so we can apply per-task gates post-SAB.
+        all_seeds:     List[torch.Tensor] = []
+        all_days_flat: List[torch.Tensor] = []
+        # Per-token metadata (one entry per K-block = one per present modality per biopsy)
+        tok_biopsy: List[int] = []   # which biopsy this K-block came from
+        tok_mod:    List[int] = []   # which modality index this K-block represents
+        biopsy_presence: List[torch.Tensor] = []  # (n_mods,) per biopsy
+        biopsy_ends: List[int] = []
         running_total = 0
+
         for t_idx in range(T):
             bags  = bags_list[t_idx]
             d_val = float(days_list[t_idx])
-            mod_seeds = []
+            present_this: List[str] = []
+
             for mod, enc in self.encoders.items():
                 feat = bags.get(mod)
                 if feat is None:
                     continue
-                if self.training and random.random() < self.modal_dropout:
+                p_drop = (self.modal_dropout.get(mod, 0.3)
+                          if isinstance(self.modal_dropout, dict)
+                          else self.modal_dropout)
+                if self.training and random.random() < p_drop:
                     continue
                 feat = feat.to(device, non_blocking=True)
                 if mod == "HE" and feat.shape[0] > self.max_he_patches:
                     idx  = torch.randperm(feat.shape[0], device=device)[:self.max_he_patches]
                     feat = feat[idx]
-                h = enc.encode_patches(feat)    # (N, H)
-                s = self.pma[mod](h)             # (K, H)
-                mod_seeds.append(s)
+                h = enc.encode_patches(feat)                   # (N, H)
+                s = self.pma[mod](h)                           # (K, H)
+                mod_idx_i = torch.tensor(self._mod_idx[mod], device=device)
+                s = s + self.modal_embed(mod_idx_i)
+                all_seeds.append(s)
+                all_days_flat.append(
+                    torch.full((K,), d_val, dtype=torch.float32, device=device))
+                tok_biopsy.extend([t_idx] * K)
+                tok_mod.extend([self._mod_idx[mod]] * K)
+                running_total += K
+                present_this.append(mod)
 
-            if not mod_seeds:
-                biopsy_ends.append(running_total)
-                continue
-
-            biopsy_seeds = torch.cat(mod_seeds, dim=0)   # (n_present * K, H)
-            n_new        = biopsy_seeds.shape[0]
-            all_seeds.append(biopsy_seeds)
-            all_days.append(torch.full((n_new,), d_val, dtype=torch.float32, device=device))
-            running_total += n_new
             biopsy_ends.append(running_total)
+            biopsy_presence.append(torch.tensor(
+                [1.0 if m in present_this else 0.0 for m in self._mod_order],
+                dtype=torch.float32, device=device,
+            ))
 
         if not all_seeds:
             dummy = torch.tensor(0.0, device=device, requires_grad=True)
             return {t: dummy for t in self.task_names}
 
-        tokens   = torch.cat(all_seeds, dim=0)    # (total_tokens, H)
-        days_tok = torch.cat(all_days,  dim=0)    # (total_tokens,)
-
-        tokens = self.temporal_sab(tokens, days_tok)
+        all_tokens_raw = torch.cat(all_seeds,     dim=0)   # (total_tokens, H)
+        days_tok       = torch.cat(all_days_flat, dim=0)   # (total_tokens,)
 
         out: dict = {}
 
-        # ACR survival: patient-level, anchor at last biopsy
-        if "acr_surv" in self.task_names:
-            anchor = days_tok[-1].item()
-            rep    = self._abmil_rep("acr_surv", tokens, days_tok, anchor)
-            hazard = self.heads["acr_surv"](rep).squeeze()
-            acr_t  = next(
-                (float(r.get("acr_days", float("nan"))) for r in records
-                 if not _math.isnan(float(r.get("acr_days", float("nan"))))),
-                float("nan"))
-            acr_e  = next(
-                (float(r.get("acr_status", float("nan"))) for r in records
-                 if not _math.isnan(float(r.get("acr_status", float("nan"))))),
-                float("nan"))
-            out["acr_surv"] = (hazard, rep, acr_t, acr_e)
+        if self.use_task_gate:
+            # Gated path: gate K seeds BEFORE TemporalSAB so noisy modalities
+            # cannot contaminate useful modalities via temporal cross-attention.
+            # TemporalSAB runs once per task with task-specific gated seeds.
+            tok_biopsy_t = torch.tensor(tok_biopsy, dtype=torch.long, device=device)
+            tok_mod_t    = torch.tensor(tok_mod,    dtype=torch.long, device=device)
 
-        # CLAD and Death: per-biopsy gap-time, causal context
-        for task_name, t_key, e_key in [
-            ("clad",  "clad_time",  "clad_event"),
-            ("death", "death_time", "death_event"),
-        ]:
-            if task_name not in self.task_names:
-                continue
-            biopsy_hazards = []
-            for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
-                if end_idx == 0:
-                    continue
-                t_val = float(rec.get(t_key, float("nan")))
-                e_val = float(rec.get(e_key, float("nan")))
-                if _math.isnan(t_val) or t_val < 0:
-                    continue
-                tok_t  = tokens[:end_idx]
-                days_t = days_tok[:end_idx]
-                anchor = float(days_list[t_idx])
-                rep    = self._abmil_rep(task_name, tok_t, days_t, anchor)
-                hazard = self.heads[task_name](rep).squeeze()
-                e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
-                biopsy_hazards.append((hazard, t_val, e_safe))
-            out[task_name] = biopsy_hazards
+            for task in self.task_names:
+                # gate_mat[b, m] = importance of modality m at biopsy b for this task
+                gate_mat = torch.stack([
+                    self.task_gate.nets[task](biopsy_presence[b])
+                    for b in range(T)
+                ])                                                 # (T, n_mods)
+                scale    = gate_mat[tok_biopsy_t, tok_mod_t]      # (total_tokens,)
+                # Scale K seeds pre-TemporalSAB: gate ≈ 0 → modality excluded
+                tokens_gated = all_tokens_raw * scale.unsqueeze(1) # (total_tokens, H)
+                tokens_t = self.temporal_sab(tokens_gated, days_tok)
 
-        # ACR classification: per labeled biopsy, causal context
-        if "acr_cls" in self.task_names:
-            cls_out = []
-            for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
-                label = rec.get("label")
-                if label is None or end_idx == 0:
-                    continue
-                tok_t  = tokens[:end_idx]
-                days_t = days_tok[:end_idx]
-                anchor = float(days_list[t_idx])
-                rep    = self._abmil_rep("acr_cls", tok_t, days_t, anchor)
-                logit  = self.heads["acr_cls"](rep).squeeze()
-                cls_out.append((logit, label))
-            out["acr_cls"] = cls_out
+                if task == "acr_surv":
+                    anchor = days_tok[-1].item()
+                    rep    = self._abmil_rep(task, tokens_t, days_tok, anchor)
+                    hazard = self.heads[task](rep).squeeze()
+                    acr_t  = next(
+                        (float(r.get("acr_days", float("nan"))) for r in records
+                         if not _math.isnan(float(r.get("acr_days", float("nan"))))),
+                        float("nan"))
+                    acr_e  = next(
+                        (float(r.get("acr_status", float("nan"))) for r in records
+                         if not _math.isnan(float(r.get("acr_status", float("nan"))))),
+                        float("nan"))
+                    out[task] = (hazard, rep, acr_t, acr_e)
+
+                elif task in ("clad", "death"):
+                    t_key, e_key = (("clad_time", "clad_event") if task == "clad"
+                                    else ("death_time", "death_event"))
+                    biopsy_hazards = []
+                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                        if end_idx == 0:
+                            continue
+                        t_val = float(rec.get(t_key, float("nan")))
+                        e_val = float(rec.get(e_key, float("nan")))
+                        if _math.isnan(t_val) or t_val < 0:
+                            continue
+                        tok_t  = tokens_t[:end_idx]
+                        days_t = days_tok[:end_idx]
+                        anchor = float(days_list[t_idx])
+                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
+                        hazard = self.heads[task](rep).squeeze()
+                        e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
+                        biopsy_hazards.append((hazard, t_val, e_safe))
+                    out[task] = biopsy_hazards
+
+                elif task == "acr_cls":
+                    cls_out = []
+                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                        label = rec.get("label")
+                        if label is None or end_idx == 0:
+                            continue
+                        tok_t  = tokens_t[:end_idx]
+                        days_t = days_tok[:end_idx]
+                        anchor = float(days_list[t_idx])
+                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
+                        logit  = self.heads[task](rep).squeeze()
+                        cls_out.append((logit, label))
+                    out[task] = cls_out
+
+        else:
+            # Ungated path: single shared TemporalSAB over all modalities
+            tokens = self.temporal_sab(all_tokens_raw, days_tok)
+
+            for task in self.task_names:
+                if task == "acr_surv":
+                    anchor = days_tok[-1].item()
+                    rep    = self._abmil_rep(task, tokens, days_tok, anchor)
+                    hazard = self.heads[task](rep).squeeze()
+                    acr_t  = next(
+                        (float(r.get("acr_days", float("nan"))) for r in records
+                         if not _math.isnan(float(r.get("acr_days", float("nan"))))),
+                        float("nan"))
+                    acr_e  = next(
+                        (float(r.get("acr_status", float("nan"))) for r in records
+                         if not _math.isnan(float(r.get("acr_status", float("nan"))))),
+                        float("nan"))
+                    out[task] = (hazard, rep, acr_t, acr_e)
+
+                elif task in ("clad", "death"):
+                    t_key, e_key = (("clad_time", "clad_event") if task == "clad"
+                                    else ("death_time", "death_event"))
+                    biopsy_hazards = []
+                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                        if end_idx == 0:
+                            continue
+                        t_val = float(rec.get(t_key, float("nan")))
+                        e_val = float(rec.get(e_key, float("nan")))
+                        if _math.isnan(t_val) or t_val < 0:
+                            continue
+                        tok_t  = tokens[:end_idx]
+                        days_t = days_tok[:end_idx]
+                        anchor = float(days_list[t_idx])
+                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
+                        hazard = self.heads[task](rep).squeeze()
+                        e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
+                        biopsy_hazards.append((hazard, t_val, e_safe))
+                    out[task] = biopsy_hazards
+
+                elif task == "acr_cls":
+                    cls_out = []
+                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                        label = rec.get("label")
+                        if label is None or end_idx == 0:
+                            continue
+                        tok_t  = tokens[:end_idx]
+                        days_t = days_tok[:end_idx]
+                        anchor = float(days_list[t_idx])
+                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
+                        logit  = self.heads[task](rep).squeeze()
+                        cls_out.append((logit, label))
+                    out[task] = cls_out
 
         return out

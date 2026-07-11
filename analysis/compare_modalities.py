@@ -6,7 +6,7 @@ Rows
 ----
 P1 unimodal     : per-modality score on subset of test samples that have that modality
 P1 wtd ensemble : prevalence-weighted average of unimodal predictions across present modalities
-P2 variants     : from final metrics JSONs (early/late/middle/mario_kempes/longitudinal_mk)
+P2 variants     : from final metrics JSONs (early/late/middle/set_mil/longitudinal_mk)
 
 Columns: s0 s1 s2 s3 s4  mean±std
 
@@ -141,7 +141,7 @@ TASKS = [
             ("early",          "cls",  "bacc",    None),
             ("late",           "cls",  "bacc",    None),
             ("middle",         "cls",  "bacc",    None),
-            ("mario_kempes",   "mega", "bacc",    "acr_cls"),
+            ("set_mil",   "mega", "bacc",    "acr_cls"),
             ("longitudinal_mk","mega", "bacc",    "acr_cls"),
         ],
     },
@@ -158,7 +158,7 @@ TASKS = [
             ("early",          "acr_surv", "cidx",    None),
             ("late",           "acr_surv", "cidx",    None),
             ("middle",         "acr_surv", "cidx",    None),
-            ("mario_kempes",   "mega",     "c_index", "acr_surv"),
+            ("set_mil",   "mega",     "c_index", "acr_surv"),
             ("longitudinal_mk","mega",     "c_index", "acr_surv"),
         ],
     },
@@ -175,7 +175,7 @@ TASKS = [
             ("early",          "clad_surv", "cidx",    None),
             ("late",           "clad_surv", "cidx",    None),
             ("middle",         "clad_surv", "cidx",    None),
-            ("mario_kempes",   "mega",      "c_index", "clad"),
+            ("set_mil",   "mega",      "c_index", "clad"),
             ("longitudinal_mk","mega",      "c_index", "clad"),
         ],
     },
@@ -192,7 +192,7 @@ TASKS = [
             ("early",          "death_surv", "cidx",    None),
             ("late",           "death_surv", "cidx",    None),
             ("middle",         "death_surv", "cidx",    None),
-            ("mario_kempes",   "mega",       "c_index", "death"),
+            ("set_mil",   "mega",       "c_index", "death"),
             ("longitudinal_mk","mega",       "c_index", "death"),
         ],
     },
@@ -245,7 +245,7 @@ def print_pretty_table(task_name, metric, rows):
         for label, vals, _ in sec_rows:
             short = (label.replace("P1 ","").replace("P2 ","")
                          .replace("longitudinal_mk","LongitudinalMK")
-                         .replace("mario_kempes","MarioKempes")
+                         .replace("set_mil","MarioKempes")
                          .replace("wtd ensemble","Wtd. ensemble"))
             cells = [f"{clean(v):>{COL}}" for v in vals]
             ms = mean_std(vals)

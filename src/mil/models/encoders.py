@@ -9,10 +9,11 @@ PositionEncoding2D      — 2-D sinusoidal PE for H&E tile coordinates
 ProjectionHead          — 2-layer MLP projection head (Phase 1 contrastive)
 FFN                     — pre-norm FFN residual block
 CrossModalTransformer   — self-attention over concatenated modality tokens
-PMA                     — Pooling by Multihead Attention (Set Transformer seed compression)
+PMA                     — Pooling by Multihead Attention (Lee et al., Set Transformer 2019)
 SAB                     — Set Attention Block (cross-modal seed interaction)
 """
 
+import math
 from typing import Optional, Tuple
 
 import torch
@@ -224,38 +225,126 @@ class CrossModalTransformer(nn.Module):
         return x
 
 
-class PMA(nn.Module):
-    """Pooling by Multihead Attention (Lee et al., Set Transformer 2019).
+class WNLinear(nn.Module):
+    """Linear layer with L2-normalized weight rows (no bias).
 
-    K learned seed vectors (queries) cross-attend to N patch tokens (KV)
-    → (K, H) compressed representation per modality.
+    For L2-normalized input x and normalized weight row w_i:
+        output[i] = x · w_i = cos(x, w_i)  ∈ [-1, 1]
 
-    Standard softmax over N patches per seed — no GRU, no iterative routing.
-    Seeds stay diverse: each seed has a distinct learned query vector and
-    receives independent gradients with no shared hidden state.
+    Used in PMA projections so that b-cos attention scores are cosine-based
+    without requiring explicit renormalization of q and k after projection.
+    Initialized orthogonally so rows start maximally spread.
     """
-    def __init__(self, hidden_dim: int, n_seeds: int,
-                 n_heads: int = 4, n_layers: int = 2, dropout: float = 0.1):
+    def __init__(self, in_features: int, out_features: int):
         super().__init__()
-        self.seeds   = nn.Parameter(torch.empty(1, n_seeds, hidden_dim))
-        nn.init.trunc_normal_(self.seeds, std=0.02)
-        self.norm_in = nn.LayerNorm(hidden_dim)
-        self.layers  = nn.ModuleList([nn.ModuleDict({
-            "cross": nn.MultiheadAttention(hidden_dim, n_heads,
-                                            dropout=dropout, batch_first=True),
-            "norm":  nn.LayerNorm(hidden_dim),
-            "ffn":   FFN(hidden_dim, dropout),
-        }) for _ in range(n_layers)])
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        nn.init.orthogonal_(self.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (N, H) → (K, H)"""
-        kv = self.norm_in(x).unsqueeze(0)        # (1, N, H)
-        s  = self.seeds                           # (1, K, H)
+        return F.linear(x, F.normalize(self.weight, dim=1))
+
+
+class PMA(nn.Module):
+    """Pooling by Multihead Attention with b-cos attention (Lee et al. 2019 + Böhle et al.).
+
+    K seed vectors (queries) cross-attend to N L2-normalized patch tokens (KV).
+    Weight-normalized projections preserve hyperspherical geometry:
+      k[n, i] = cos(x_n, w_k_i)  — no explicit renorm of k needed.
+    Seeds are normalized before each cross-attention for the same property.
+
+    b-cos attention: weights = ReLU(q · k)^b / Σ  — seeds must specialise on
+    distinct patch directions → prevents all seeds collapsing to the mean pool.
+
+    b=0: falls back to standard scaled dot-product softmax.
+    b=4: default — strong seed specialisation, lowest inter-seed cosine in ablation.
+    """
+    def __init__(self, hidden_dim: int, n_seeds: int,
+                 n_heads: int = 4, n_layers: int = 2, dropout: float = 0.1,
+                 b: float = 4.0):
+        super().__init__()
+        assert hidden_dim % n_heads == 0
+        self.b        = b
+        self.n_heads  = n_heads
+        self.head_dim = hidden_dim // n_heads
+        self.seeds    = nn.Parameter(torch.empty(n_seeds, hidden_dim))
+        nn.init.trunc_normal_(self.seeds, std=0.02)
+        # Weight-normalized projections for q and k — value/output unconstrained
+        self.proj_q = WNLinear(hidden_dim, hidden_dim)
+        self.proj_k = WNLinear(hidden_dim, hidden_dim)
+        self.proj_v = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_o = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.layers = nn.ModuleList([nn.ModuleDict({
+            "norm": nn.LayerNorm(hidden_dim),
+            "ffn":  FFN(hidden_dim, dropout),
+        }) for _ in range(n_layers)])
+
+    def _attn(self, q: torch.Tensor, k: torch.Tensor,
+              v: torch.Tensor, return_w: bool = False,
+              return_logits: bool = False):
+        """q: (nh, K, hd)  k: (nh, N, hd)  v: (nh, N, hd) → (nh, K, hd) [, (nh,K,N) [, (nh,K,N)]]
+        return_logits: also return raw q@k.T dot products (pre-relu/softmax)."""
+        dots = q @ k.transpose(-2, -1)           # (nh, K, N) — raw dot products
+        if self.b == 0:
+            w = F.softmax(dots / math.sqrt(self.head_dim), dim=-1)
+            relu_dots = F.relu(dots)
+            raw       = relu_dots                # no pow for b=0
+        else:
+            relu_dots = F.relu(dots)             # (nh, K, N) — after relu
+            raw = relu_dots.pow(self.b)          # (nh, K, N) — after relu^b
+            # Guard: collapsed seeds (all dot-products ≤ 0) fall back to uniform
+            row_sum = raw.sum(-1, keepdim=True)  # (nh, K, 1)
+            w = torch.where(
+                row_sum > 1e-6,
+                raw / (row_sum + 1e-9),
+                torch.ones_like(raw) / raw.shape[-1],
+            )
+        out = w @ v
+        # logits tuple: (raw_dots, post_relu, post_relu_pow_b) — all (nh,K,N)
+        if return_w and return_logits:
+            return out, w, (dots, relu_dots, raw)
+        if return_w:
+            return out, w
+        if return_logits:
+            return out, (dots, relu_dots, raw)
+        return out
+
+    def forward(self, x: torch.Tensor,
+                return_attn: bool = False,
+                return_logits: bool = False):
+        """x: (N, H) L2-normalized patches → (K, H) [, (K, N) mean attn] [, (K, N) mean logits]"""
+        N, H   = x.shape
+        K      = self.seeds.shape[0]
+        nh, hd = self.n_heads, self.head_dim
+
+        s = self.seeds   # (K, H)
+        last_w = None
+        last_logits = None
         for L in self.layers:
-            a, _ = L["cross"](s, kv, kv)         # q=seeds attend to patches
-            s = L["norm"](s + a)
+            s_n = F.normalize(s, dim=-1)
+            q = self.proj_q(s_n).view(K, nh, hd).transpose(0, 1)   # (nh, K, hd)
+            k = self.proj_k(x).view(N, nh, hd).transpose(0, 1)     # (nh, N, hd)
+            v = self.proj_v(x).view(N, nh, hd).transpose(0, 1)     # (nh, N, hd)
+
+            if return_attn or return_logits:
+                out, w, (dots, relu_dots, raw_pow) = self._attn(q, k, v, return_w=True, return_logits=True)
+                last_w      = w.mean(0)           # (K, N) avg heads — post-norm weights
+                last_logits = (dots.mean(0),       # (K, N) raw q·k
+                               relu_dots.mean(0),  # (K, N) relu(q·k)
+                               raw_pow.mean(0))    # (K, N) relu(q·k)^b
+            else:
+                out = self._attn(q, k, v)
+            out = self.proj_o(out.transpose(0, 1).contiguous().view(K, H))
+
+            s = L["norm"](s + out)
             s = L["ffn"](s)
-        return s.squeeze(0)                       # (K, H)
+
+        if return_attn and return_logits:
+            return s, last_w, last_logits   # last_logits = (dots, relu, relu^b) each (K,N)
+        if return_attn:
+            return s, last_w                # (K, H), (K, N)
+        if return_logits:
+            return s, last_logits
+        return s   # (K, H)
 
 
 class SAB(nn.Module):
