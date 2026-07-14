@@ -11,8 +11,8 @@ MODALITY_REGISTRY: Dict[str, Tuple[str, int, str]] = {
 }
 
 MODALITIES         = list(MODALITY_REGISTRY.keys())
-TEACHER_MODALITIES = ["HE", "Clinical"]
-STUDENT_MODALITIES = ["CT", "BAL"]
+# TEACHER_MODALITIES = ["HE", "Clinical"] no more student-teacher modelling. its not useful.
+# STUDENT_MODALITIES = ["CT", "BAL"]
 
 
 def _feat_key(mod: str) -> str:
