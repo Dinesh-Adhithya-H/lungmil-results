@@ -50,6 +50,7 @@ wandb/
 # ── Interpretability outputs (large numpy/zarr outputs; keep source) ──────────
 interpretability/slot_*/
 interpretability/slot_shared_*/
+interpretability/set_mil_mt_interp/
 
 # ── Visualization PNGs (regenerated from scripts) ────────────────────────────
 visualizations/
@@ -78,3 +79,4 @@ patient_explorer/data/*.npz
 # ── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+interpretability/v8_interp_s0f0/

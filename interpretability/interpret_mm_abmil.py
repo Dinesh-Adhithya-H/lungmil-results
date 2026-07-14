@@ -63,32 +63,52 @@ import torch.nn as nn
 import torch.nn.functional as F
 warnings.filterwarnings("ignore")
 
-sys.path.insert(0, str(Path(__file__).parent))
-from train_mm_abmil_v6 import (
-    MODALITIES, MODALITY_REGISTRY, HIDDEN_DIM,
-    SAMPLES_DIR, SPLITS_CSV,
-    set_seeds, _gc as _gc6, BagCache, preload_bags, build_splits,
-    build_splits_survival,
-    update_presence_from_cache, acr_label,
-    _load_p1_encoder, CrossModalTransformer,
-    EarlyFusionMIL, LateFusionMIL, MiddleFusionMIL,
-    CrossAttnFusionMIL, SlotCrossModalMIL, IterativeXModalMIL,
-    BidirPatchCrossAttn, IterativeSlotAttn,
-    build_p2_model, _pool,
-    DEVICE, SEED, FOLDS as _FOLDS,
-    P2_N_HEADS, P2_N_CROSS_LAYERS, P2_ATTN_DROPOUT,
-)
-try:
-    from train_mm_abmil_v7 import (
-        ANNOT_REGISTRY, ANNOT_MODS, AnnotCache,
-        build_v7_model, preload_annotations,
-    )
-    HAS_V7 = True
-except ModuleNotFoundError:
-    HAS_V7 = False
-    ANNOT_MODS = []
-    ANNOT_REGISTRY = {}
-    AnnotCache = build_v7_model = preload_annotations = None
+# ── v8 imports (replaces train_mm_abmil_v6) ──────────────────────────────────
+_REPO = Path(__file__).parent.parent
+sys.path.insert(0, str(_REPO / "src"))
+sys.path.insert(0, str(_REPO))
+
+from mil.data.registry import MODALITIES
+from mil.data.loader import preload_bags
+from mil.data.splits import (build_splits, build_splits_survival,
+                               update_presence_from_cache)
+from mil.data.labels import acr_label
+from mil.models.phase2 import (EarlyFusionMIL, LateFusionMIL, MiddleFusionMIL,
+                                 _load_p1_encoder)
+from mil.models.encoders import CrossModalTransformer
+from mil.models.builders import build_model_v8 as _build_model_v8
+
+SAMPLES_DIR = "/lustre/groups/aih/dinesh.haridoss/datasets/mil_v2/samples"
+SPLITS_CSV  = "/home/aih/dinesh.haridoss/chicago/plots/multimodal_splits_nested_cv.csv"
+HIDDEN_DIM  = 256
+SEED        = 42
+DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+_FOLDS      = range(4)
+P2_N_HEADS, P2_N_CROSS_LAYERS, P2_ATTN_DROPOUT = 8, 1, 0.1
+MODALITY_REGISTRY = {}  # v6 only — not used by early/late/middle extraction
+
+def set_seeds(seed=42):
+    import random; random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
+
+def _gc6(): import gc; gc.collect(); torch.cuda.empty_cache() if torch.cuda.is_available() else None
+
+def _pool(*args, **kwargs): raise NotImplementedError("_pool is v6-only; not used by v8 models")
+
+def build_p2_model(variant, p1_dir, **kwargs):
+    task = kwargs.pop("task", "cls")
+    return _build_model_v8(variant=variant, task=task, **kwargs)
+
+# Stub v6-only model classes so isinstance() checks fail gracefully
+class CrossAttnFusionMIL(nn.Module): pass
+class SlotCrossModalMIL(nn.Module): pass
+class IterativeXModalMIL(nn.Module): pass
+class BidirPatchCrossAttn(nn.Module): pass
+class IterativeSlotAttn(nn.Module): pass
+
+HAS_V7 = False
+ANNOT_MODS = []
+ANNOT_REGISTRY = {}
+AnnotCache = build_v7_model = preload_annotations = None
 
 try:
     from umap import UMAP as UMAPTransform
@@ -2590,10 +2610,12 @@ def _parse_v6_variant(variant: str):
     return variant, slot_k, iter_r   # fallback: pass as-is
 
 
-def load_v6_model(results_dir: Path, fold_tag: str, variant: str) -> nn.Module:
-    ckpt  = results_dir / fold_tag / "phase2" / f"model_{variant}.pt"
+def load_v6_model(results_dir: Path, fold_tag: str, variant: str,
+                   ckpt_override: Optional[Path] = None,
+                   p1_dir_override: Optional[Path] = None) -> nn.Module:
+    ckpt  = Path(ckpt_override) if ckpt_override else results_dir / fold_tag / "phase2" / f"model_{variant}.pt"
     assert ckpt.exists(), f"Missing: {ckpt}"
-    p1    = results_dir / fold_tag / "phase1"
+    p1    = Path(p1_dir_override) if p1_dir_override else results_dir / fold_tag / "phase1"
 
     base, slot_k, iter_r = _parse_v6_variant(variant)
     kwargs = {}
@@ -2649,8 +2671,14 @@ def parse_args():
                    choices=["train", "val", "test", "all"])
     p.add_argument("--task",           default="acr", choices=["acr", "survival"],
                    help="Task type: acr=classification, survival=Cox hazard")
-    p.add_argument("--surv_endpoint",  default="death", choices=["death", "clad"],
+    p.add_argument("--surv_endpoint",  default="death", choices=["death", "clad", "acr"],
                    help="Survival endpoint used during training (only used when --task survival)")
+    p.add_argument("--ckpt",           default=None,
+                   help="Direct path to model checkpoint (overrides results_dir path construction). "
+                        "Use for v8 models: .../phase2/split0_fold0/early_cls/model_early_final.pt")
+    p.add_argument("--p1_dir",         default=None,
+                   help="Direct path to phase1 dir (overrides results_dir path construction). "
+                        "Use for v8 models: .../phase1/split0_fold0")
     return p.parse_args()
 
 
@@ -2671,7 +2699,8 @@ def main():
         assert args.phase1_dir, "--phase1_dir required for v7"
         model = load_v7_model(Path(args.results_dir), fold_tag, args.tag, Path(args.phase1_dir))
     else:
-        model = load_v6_model(Path(args.results_dir), fold_tag, args.v6_variant)
+        model = load_v6_model(Path(args.results_dir), fold_tag, args.v6_variant,
+                               ckpt_override=args.ckpt, p1_dir_override=args.p1_dir)
 
     import pandas as pd
     df_csv = pd.read_csv(args.splits_csv)
@@ -2757,6 +2786,69 @@ def main():
                 "n_neg": sum(r["label"] == 0 for r in results)}
     with open(out_dir / "summary.json", "w") as f: json.dump(summary, f, indent=2)
     print(f"\n  Done → {out_dir}\n")
+
+    # ── W&B logging ───────────────────────────────────────────────────────────
+    try:
+        import wandb
+        task_tag = args.task if args.task == "acr" else f"{args.task}_{args.surv_endpoint}"
+        run = wandb.init(
+            project="chicago-mil-interpretability",
+            name=f"{variant}_{fold_tag}_{task_tag}",
+            group=variant,
+            config={
+                "version": args.version, "variant": variant,
+                "fold_tag": fold_tag, "split": args.split, "fold": args.fold,
+                "task": args.task, "surv_endpoint": getattr(args, "surv_endpoint", None),
+                "split_set": args.split_set, "n_sample_plots": args.n_sample_plots,
+            },
+            reinit=True,
+        )
+        # Scalars
+        log_dict = {
+            "n_samples": summary["n"],
+            "n_pos": summary["n_pos"],
+            "n_neg": summary["n_neg"],
+        }
+        # Modal contribution summary (mean over cohort)
+        modal_contribs = [r.get("modal_contrib", {}) for r in results if r.get("modal_contrib")]
+        if modal_contribs:
+            all_mods = set(k for d in modal_contribs for k in d)
+            for mod in all_mods:
+                vals = [d[mod] for d in modal_contribs if mod in d]
+                log_dict[f"modal_contrib_mean/{mod}"] = float(np.mean(vals))
+        # Hazard scores
+        hazards = [r["hazard_score"] for r in results if r.get("hazard_score") is not None]
+        if hazards:
+            log_dict["hazard_score_mean"] = float(np.mean(hazards))
+            log_dict["hazard_score_std"]  = float(np.std(hazards))
+        wandb.log(log_dict)
+
+        # Cohort plots
+        cohort_plots = sorted(out_dir.glob("*.png")) + sorted(out_dir.glob("*.pdf"))
+        if cohort_plots:
+            wandb.log({"cohort_plots": [wandb.Image(str(p), caption=p.name)
+                                        for p in cohort_plots[:40]]})
+
+        # Per-sample plots (up to 20)
+        sample_plots = sorted((out_dir / "per_sample").glob("*.png"))[:20]
+        if sample_plots:
+            wandb.log({"per_sample_plots": [wandb.Image(str(p), caption=p.name)
+                                            for p in sample_plots]})
+
+        # Subdirectory plots (cluster_abmil, cluster_slot, etc.)
+        for subdir in ("cluster_abmil", "cluster_slot", "cluster_xmodal",
+                       "cluster_connection", "cluster_self_attn_coattn",
+                       "clinical_cluster_attn"):
+            sd = out_dir / subdir
+            if sd.is_dir():
+                imgs = sorted(sd.glob("*.png")) + sorted(sd.glob("*.pdf"))
+                if imgs:
+                    wandb.log({subdir: [wandb.Image(str(p), caption=p.name)
+                                        for p in imgs[:20]]})
+        run.finish()
+        print(f"  W&B run: {run.url}")
+    except Exception as e:
+        print(f"  [wandb] logging failed: {e}")
 
 
 if __name__ == "__main__":
