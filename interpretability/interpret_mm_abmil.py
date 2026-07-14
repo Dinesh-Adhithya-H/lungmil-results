@@ -74,7 +74,7 @@ from mil.data.splits import (build_splits, build_splits_survival,
                                update_presence_from_cache)
 from mil.data.labels import acr_label
 from mil.models.phase2 import (EarlyFusionMIL, LateFusionMIL, MiddleFusionMIL,
-                                 _load_p1_encoder)
+                                 DualGatedPool, MultiTaskHead, _load_p1_encoder)
 from mil.models.encoders import CrossModalTransformer
 from mil.models.builders import build_model_v8 as _build_model_v8
 
@@ -181,6 +181,32 @@ def _abmil_forward(enc, h: torch.Tensor):
     alpha = F.softmax(raw, dim=0)       # (N, 1)
     rep   = (alpha * h).sum(0)          # (H,)
     return rep, alpha.squeeze(1)        # (H,), (N,)
+
+
+def _taskhead_forward(task_head, tokens: torch.Tensor, device):
+    """
+    Run v8 DualGatedPool or MultiTaskHead on tokens (N, H).
+    Returns (logit, rep, alpha (N,) detached, task_name).
+    DualGatedPool → cls pathway; MultiTaskHead → first task.
+    """
+    if isinstance(task_head, DualGatedPool):
+        gate  = task_head.cls_V(tokens) * task_head.cls_U(tokens)
+        raw   = task_head.cls_w(gate)
+        alpha = F.softmax(raw, dim=0)                          # (N, 1)
+        rep   = task_head.cls_norm((alpha * tokens).sum(0))    # (H,)
+        logit = task_head.cls_head(rep).squeeze()
+        return logit, rep, alpha.squeeze(1).detach(), "dual_cls"
+    else:  # MultiTaskHead
+        task  = task_head.task_names[0]
+        kv    = tokens.unsqueeze(0)                            # (1, N, H)
+        q     = task_head.queries[task].to(device)
+        r_out, attn_w = task_head.attns[task](q, kv, kv,
+                                               need_weights=True,
+                                               average_attn_weights=True)
+        alpha = attn_w.squeeze(0).squeeze(0).detach()          # (N,)
+        r     = task_head.norms[task](r_out).squeeze(0).squeeze(0)
+        logit = task_head.heads[task](r).squeeze()
+        return logit, r, alpha, task
 
 
 def _slot_forward_capture(module: IterativeSlotAttn,
@@ -358,26 +384,20 @@ def _extract_early(model: EarlyFusionMIL, bags, device, label) -> Optional[dict]
     result["mods_present"]   = list(h_store.keys())
     result["patch_mod_labels"] = mod_labels  # which modality each patch came from
 
-    if model.use_cls:
-        rep   = _pool(True, H_all, model.cls_token, model.cls_attn,
-                      model.cls_norm, None, None, None, device)
-        alpha = torch.ones(H_all.shape[0], device=device) / H_all.shape[0]
-    else:
-        rep, alpha = _abmil_forward(model, H_all)  # (H,), (N_all,)
-    result["alpha_joint"] = alpha.detach().cpu().numpy()
+    # v8: task_head is DualGatedPool or MultiTaskHead (no att_V/att_U/att_w on model)
+    logit, rep, alpha, _ = _taskhead_forward(model.task_head, H_all, device)
+    result["alpha_joint"] = alpha.cpu().numpy()
 
     # Split alpha back by modality
     offset = 0
     alpha_store_mod = {}
     for mod, h in h_store.items():
         n = h.shape[0]
-        a = alpha[offset:offset + n].detach().cpu()
+        a = alpha[offset:offset + n].cpu()
         result[f"alpha_{mod}"] = a.numpy()
         result[f"h_{mod}"]     = h.detach().cpu().numpy()
         alpha_store_mod[mod]   = a.numpy()
         offset += n
-
-    logit = model.head(rep).squeeze()
     result["logit"] = logit.item()
     result["prob"]  = torch.sigmoid(logit).item()
 
@@ -430,20 +450,25 @@ def _extract_late(model: LateFusionMIL, bags, device, label) -> Optional[dict]:
     if not h_store: return None
     result["mods_present"] = list(h_store.keys())
 
-    # Per-modality logits
-    indices = [model.mod_index[m] for m in h_store]
-    modal_logits  = {m: model.heads[m](rep_store[m]).squeeze() for m in h_store}
-    logit_vals    = torch.stack(list(modal_logits.values()))
-    weights_raw   = F.softmax(model.log_weights[
-        torch.tensor(indices, device=device)], dim=0)
-
-    logit = (weights_raw * logit_vals).sum()
+    if model._use_legacy:
+        # Legacy (tasks==["acr_cls","acr_surv"]): per-modality heads + weighted combination
+        indices      = [model.mod_index[m] for m in h_store]
+        modal_logits = {m: model.heads[m](rep_store[m]).squeeze() for m in h_store}
+        logit_vals   = torch.stack(list(modal_logits.values()))
+        weights_raw  = F.softmax(model.log_weights[
+            torch.tensor(indices, device=device)], dim=0)
+        logit = (weights_raw * logit_vals).sum()
+        result["modal_logits"]  = {m: modal_logits[m].item() for m in modal_logits}
+        result["modal_weights"] = {m: weights_raw[i].item() for i, m in enumerate(h_store)}
+    else:
+        # v8 non-legacy: MultiTaskHead cross-attends over stacked per-modality reps (M, H)
+        mod_order = list(rep_store.keys())
+        tokens    = torch.stack([rep_store[m] for m in mod_order], dim=0)  # (M, H)
+        logit, _, modal_alpha, _ = _taskhead_forward(model.task_head, tokens, device)
+        result["modal_weights"] = {m: modal_alpha[i].item() for i, m in enumerate(mod_order)}
     result["logit"]        = logit.item()
     result["prob"]         = torch.sigmoid(logit).item()
-    result["modal_logits"] = {m: modal_logits[m].item() for m in modal_logits}
-    result["modal_weights"]= {m: weights_raw[i].item()
-                               for i, m in enumerate(h_store)}
-    result["modal_contrib"]= result["modal_weights"]  # for consistency
+    result["modal_contrib"]= result["modal_weights"]
     result["xmodal_attn"]  = None
     result["mod_order"]    = list(h_store.keys())
 
@@ -507,9 +532,16 @@ def _extract_middle(model: MiddleFusionMIL, bags, device, label) -> Optional[dic
     result["xmodal_attn"] = xmodal_attn
     result["mod_order"]   = mod_order
 
-    is_cls = hasattr(model, "cls_token") and model.cls_token is not None
-    r_final = x.squeeze(0)[0] if is_cls else x.squeeze(0).mean(0)
-    logit   = model.head(r_final).squeeze()
+    tokens_xf = x.squeeze(0)  # (M, H) after transformer
+    if hasattr(model, "task_head"):
+        # v8: task_head (DualGatedPool or MultiTaskHead) pools the M modality tokens
+        logit, r_final, _, _ = _taskhead_forward(model.task_head, tokens_xf, device)
+    elif hasattr(model, "cls_token") and model.cls_token is not None:
+        r_final = tokens_xf[0]
+        logit   = model.head(r_final).squeeze()
+    else:
+        r_final = tokens_xf.mean(0)
+        logit   = model.head(r_final).squeeze()
     result["logit"] = logit.item()
     result["prob"]  = torch.sigmoid(logit).item()
 

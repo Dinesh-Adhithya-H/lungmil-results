@@ -96,14 +96,15 @@ def load_model(split, fold, variant, device):
     ckpt = RESULTS_ROOT / f"split{split}_fold{fold}" / vdir / f"model_{vtag}_final.pt"
     if not ckpt.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
+    # Keys must match TASK_GROUPS in builders.py: clad_surv→"clad", death_surv→"death"
     task_map = {
-        "mega":      ["acr_cls", "acr_surv", "clad_surv", "death_surv"],
+        "mega":      ["acr_cls", "acr_surv", "clad", "death"],
         "cls":       ["acr_cls"],
         "acr_surv":  ["acr_surv"],
-        "clad_surv": ["clad_surv"],
-        "death_surv":["death_surv"],
+        "clad_surv": ["clad"],
+        "death_surv":["death"],
     }
-    tasks = task_map.get(variant, ["acr_cls", "acr_surv", "clad_surv", "death_surv"])
+    tasks = task_map.get(variant, ["acr_cls", "acr_surv", "clad", "death"])
     task_key = variant if variant != "cls" else "cls"
     model = build_model_v8(variant=vtag, task=task_key, slot_k=16, n_cross_layers=1)
     state = torch.load(ckpt, map_location="cpu")
@@ -683,11 +684,29 @@ def main():
                     log_dict[f"modal_contrib_{task}/{mod}"] = float(np.mean(vals))
         wandb.log(log_dict)
 
-        # All panel PDFs/PNGs
-        all_plots = sorted(out_dir.glob("*.pdf")) + sorted(out_dir.glob("*.png"))
-        if all_plots:
-            wandb.log({"panels": [wandb.Image(str(p), caption=p.name)
-                                   for p in all_plots]})
+        # All panel PDFs/PNGs — convert PDFs to PNG via ImageMagick first
+        import subprocess as _sp
+        def _pdf_to_png(pdf):
+            png = pdf.with_suffix(".png")
+            if not png.exists():
+                try:
+                    _sp.run(["/usr/bin/convert", "-density", "150",
+                             f"{pdf}[0]", str(png)],
+                            check=True, capture_output=True)
+                except Exception:
+                    return None
+            return png if png.exists() else None
+
+        wandb_imgs = []
+        for p in sorted(out_dir.glob("*.pdf")) + sorted(out_dir.glob("*.png")):
+            if p.suffix == ".pdf":
+                png = _pdf_to_png(p)
+                if png:
+                    wandb_imgs.append(wandb.Image(str(png), caption=p.stem))
+            else:
+                wandb_imgs.append(wandb.Image(str(p), caption=p.name))
+        if wandb_imgs:
+            wandb.log({"panels": wandb_imgs})
         run.finish()
         print(f"  W&B run: {run.url}")
     except Exception as e:
