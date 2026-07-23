@@ -13,6 +13,7 @@ from utils.styles import card_css, metric_card, BG, BG2, TEXT, MUTED, ACCENT, BO
 from utils.data_loader import (
     load_setmilmt, patient_list, patient_setmilmt,
     setmilmt_summary_png, longitudinal_summary_png,
+    load_longi_preds, patient_longi_preds,
 )
 
 st.markdown(card_css(), unsafe_allow_html=True)
@@ -131,52 +132,118 @@ c3.markdown(metric_card("CLAD", "event" if clad_day else "censored"), unsafe_all
 c4.markdown(metric_card("Death", "event" if death_day else "censored"), unsafe_allow_html=True)
 
 # ── Risk trajectory ───────────────────────────────────────────────────────────
+df_longi = patient_longi_preds(pid)
+longi_available = not df_longi.empty
+
+LONGI_TASK_COLS = {
+    "score_acr_cls":    ("score_acr_cls",    "pct_acr_surv",   "pct_clad_surv",   "pct_death_surv"),
+}
+LONGI_COLS = {
+    "score_acr_cls":   "score_acr_cls",
+    "pct_acr_surv":    "pct_acr_surv",
+    "pct_clad_surv":   "pct_clad_surv",
+    "pct_death_surv":  "pct_death_surv",
+}
+
 if show_traj:
     st.divider()
-    st.markdown(f"<p class='section-title'>SetMIL-MT Risk Trajectory — {pid}</p>", unsafe_allow_html=True)
-
-    fig = go.Figure()
-    for task in show_tasks:
-        vals = df_pt[task].values.astype(float)
-        if np.all(np.isnan(vals)):
-            continue
-        fig.add_trace(go.Scatter(
-            x=df_pt["days"], y=vals,
-            mode="lines+markers",
-            name=TASK_LABELS[task],
-            line=dict(color=TASK_COLORS[task], width=2.2),
-            marker=dict(size=6, color=TASK_COLORS[task]),
-            hovertemplate=(
-                f"<b>{TASK_LABELS[task]}</b><br>"
-                "Day %{x}: %{y:.3f}<br>%{customdata}<extra></extra>"
-            ),
-            customdata=df_pt["anchor_dt"].dt.strftime("%Y-%m-%d"),
-        ))
-
-    if clad_day is not None:
-        fig.add_vline(x=clad_day, line_color="#8E24AA", line_width=2,
-                      annotation_text="CLAD", annotation_font_color="#8E24AA",
-                      annotation_position="top left")
-    if death_day is not None:
-        fig.add_vline(x=death_day, line_color="#00897B", line_width=2,
-                      annotation_text="Death", annotation_font_color="#00897B",
-                      annotation_position="top right")
-    for _, row in df_pt.iterrows():
-        ev = row.get("event_acr")
-        if pd.notna(ev):
-            fig.add_vline(x=row["days"], line_color="#E53935" if ev == 1 else "#43A047",
-                          line_width=1, line_dash="dot", opacity=0.4)
-
-    fig.add_hline(y=0.5, line_dash="dot", line_color=MUTED, line_width=1)
-    fig.update_layout(
-        **PLOTLY_THEME, height=380,
-        xaxis_title="Days from transplant",
-        yaxis_title="Score (0=low risk, 1=high risk)",
-        yaxis=dict(range=[-0.05, 1.05]),
-        legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
-        hovermode="x unified",
+    st.markdown(
+        f"<p class='section-title'>Risk Trajectory — {pid}</p>",
+        unsafe_allow_html=True,
     )
-    st.plotly_chart(fig)
+    if longi_available:
+        df_longi = df_longi.copy()
+        df_longi["days"] = (df_longi["anchor_dt"] - df_longi["anchor_dt"].min()).dt.days
+
+    def _add_event_lines(fig):
+        if clad_day is not None:
+            fig.add_vline(x=clad_day, line_color="#8E24AA", line_width=2,
+                          annotation_text="CLAD", annotation_font_color="#8E24AA",
+                          annotation_position="top left")
+        if death_day is not None:
+            fig.add_vline(x=death_day, line_color="#00897B", line_width=2,
+                          annotation_text="Death", annotation_font_color="#00897B",
+                          annotation_position="top right")
+        for _, row in df_pt.iterrows():
+            ev = row.get("event_acr")
+            if pd.notna(ev):
+                fig.add_vline(x=row["days"], line_color="#E53935" if ev == 1 else "#43A047",
+                              line_width=1, line_dash="dot", opacity=0.4)
+        fig.add_hline(y=0.5, line_dash="dot", line_color=MUTED, line_width=1)
+
+    col_sm, col_lg = st.columns(2) if longi_available else (st.container(), None)
+
+    with col_sm:
+        st.markdown(f"**SetMIL-MT**", unsafe_allow_html=False)
+        fig = go.Figure()
+        for task in show_tasks:
+            vals = df_pt[task].values.astype(float)
+            if np.all(np.isnan(vals)):
+                continue
+            fig.add_trace(go.Scatter(
+                x=df_pt["days"], y=vals,
+                mode="lines+markers",
+                name=TASK_LABELS[task],
+                line=dict(color=TASK_COLORS[task], width=2.2),
+                marker=dict(size=6, color=TASK_COLORS[task]),
+                hovertemplate=(
+                    f"<b>{TASK_LABELS[task]}</b><br>"
+                    "Day %{x}: %{y:.3f}<br>%{customdata}<extra></extra>"
+                ),
+                customdata=df_pt["anchor_dt"].dt.strftime("%Y-%m-%d"),
+            ))
+        _add_event_lines(fig)
+        fig.update_layout(
+            **PLOTLY_THEME, height=380,
+            xaxis_title="Days from transplant",
+            yaxis_title="Score (0=low risk, 1=high risk)",
+            yaxis=dict(range=[-0.05, 1.05]),
+            legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig)
+
+    if longi_available and col_lg is not None:
+        with col_lg:
+            st.markdown(f"**LongitudinalSetMIL**", unsafe_allow_html=False)
+            fig2 = go.Figure()
+            longi_col_map = {
+                "score_acr_cls":  ("score_acr_cls",  TASK_COLORS["score_acr_cls"]),
+                "pct_acr_surv":   ("pct_acr_surv",   TASK_COLORS["pct_acr_surv"]),
+                "pct_clad_surv":  ("pct_clad_surv",  TASK_COLORS["pct_clad_surv"]),
+                "pct_death_surv": ("pct_death_surv", TASK_COLORS["pct_death_surv"]),
+            }
+            for task in show_tasks:
+                col_name, color = longi_col_map.get(task, (None, None))
+                if col_name not in df_longi.columns:
+                    continue
+                vals = df_longi[col_name].values.astype(float)
+                if np.all(np.isnan(vals)):
+                    continue
+                fig2.add_trace(go.Scatter(
+                    x=df_longi["days"], y=vals,
+                    mode="lines+markers",
+                    name=TASK_LABELS[task],
+                    line=dict(color=color, width=2.2, dash="dash"),
+                    marker=dict(size=6, symbol="diamond", color=color),
+                    hovertemplate=(
+                        f"<b>{TASK_LABELS[task]} (Longi)</b><br>"
+                        "Day %{x}: %{y:.3f}<br>%{customdata}<extra></extra>"
+                    ),
+                    customdata=df_longi["anchor_dt"].dt.strftime("%Y-%m-%d"),
+                ))
+            _add_event_lines(fig2)
+            fig2.update_layout(
+                **PLOTLY_THEME, height=380,
+                xaxis_title="Days from transplant",
+                yaxis_title="Score (0=low risk, 1=high risk)",
+                yaxis=dict(range=[-0.05, 1.05]),
+                legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig2)
+    elif not longi_available:
+        st.caption("LongitudinalSetMIL predictions not available yet — run export_longi_preds.sh")
 
 # ── Modality availability ─────────────────────────────────────────────────────
 if show_mods:

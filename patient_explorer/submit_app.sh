@@ -37,7 +37,7 @@ if [ ! -f "$CFDIR/cloudflared" ]; then
          -O "$CFDIR/cloudflared" && chmod +x "$CFDIR/cloudflared"
 fi
 
-CF_LOG=/tmp/cloudflared_$$.log
+CF_LOG=/home/aih/dinesh.haridoss/logs/cloudflared_$$.log
 "$CFDIR/cloudflared" tunnel --url http://localhost:8501 \
     --no-autoupdate 2>"$CF_LOG" &
 CF_PID=$!

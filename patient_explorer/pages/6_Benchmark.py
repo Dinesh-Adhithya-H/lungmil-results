@@ -68,21 +68,34 @@ MODEL_BASE_COLORS = {
     "early": "#58a6ff",
     "late": "#7c83ff",
     "middle": "#bc8cff",
-    "mario_kempes": "#f78166",
+    "longitudinal_mk_mt": "#3fb950",
     "longitudinal_set_mil_mt": "#3fb950",
+}
+
+MODEL_DISPLAY = {
+    "longitudinal_mk_mt": "LongitudinalSetMIL",
+    "longitudinal_set_mil_mt": "LongitudinalSetMIL",
+    "early": "Early fusion",
+    "late": "Late fusion",
+    "middle": "Middle fusion",
+    "unimodal_HE": "HE (unimodal)",
+    "unimodal_BAL": "BAL (unimodal)",
+    "unimodal_CT": "CT (unimodal)",
+    "unimodal_Clinical": "Clinical (unimodal)",
 }
 
 if not df.empty:
     fig = go.Figure()
 
     for phase in ["P1", "P2"]:
-        sub = df[df["phase"] == phase].sort_values("mean", ascending=False)
+        sub = df[df["phase"] == phase].sort_values("mean", ascending=False).copy()
         if sub.empty:
             continue
+        sub["display_model"] = sub["model"].map(lambda m: MODEL_DISPLAY.get(m, m))
         bar_colors = [MODEL_BASE_COLORS.get(m, MUTED) for m in sub["model"]]
         fig.add_trace(go.Bar(
             name=f"Phase {phase}",
-            x=sub["model"],
+            x=sub["display_model"],
             y=sub["mean"],
             marker_color=bar_colors,
             error_y=dict(type="data", array=sub["std"].fillna(0).tolist(), visible=True,
@@ -100,13 +113,13 @@ if not df.empty:
                 vals = [row[c] for c in split_cols if pd.notna(row.get(c))]
                 if vals:
                     fig.add_trace(go.Scatter(
-                        x=[row["model"]] * len(vals),
+                        x=[row["display_model"]] * len(vals),
                         y=vals,
                         mode="markers",
                         marker=dict(color="white", size=5, opacity=0.7,
                                     line=dict(color=BORDER, width=1)),
                         showlegend=False,
-                        hovertemplate=f"{row['model']}<br>split: %{{y:.3f}}<extra></extra>",
+                        hovertemplate=f"{row['display_model']}<br>split: %{{y:.3f}}<extra></extra>",
                     ))
 
     # Reference line at 0.5
@@ -137,6 +150,7 @@ df_metric = df_all[df_all["metric"] == metric_sel].dropna(subset=["mean"])
 if not df_metric.empty:
     tasks_all   = sorted(df_metric["task"].unique())
     models_all  = df_metric.groupby("model")["mean"].mean().sort_values(ascending=False).index.tolist()
+    display_models = [MODEL_DISPLAY.get(m, m) for m in models_all]
     z = np.full((len(models_all), len(tasks_all)), np.nan)
     text_z = [[""] * len(tasks_all) for _ in range(len(models_all))]
     for i, m in enumerate(models_all):
@@ -148,7 +162,7 @@ if not df_metric.empty:
                 text_z[i][j] = f"{v:.3f}"
 
     fig_hm = go.Figure(go.Heatmap(
-        z=z, x=tasks_all, y=models_all,
+        z=z, x=tasks_all, y=display_models,
         colorscale="RdYlGn", zmid=0.5, zmin=0.3, zmax=0.85,
         text=text_z, texttemplate="%{text}",
         colorbar=dict(title=metric_sel, tickfont=dict(color=TEXT)),

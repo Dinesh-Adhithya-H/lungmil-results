@@ -38,6 +38,7 @@ COHORT_JSON     = DATA_DIR / "cohort_summary.json"
 XMODAL_CSV      = DATA_DIR / "cross_modal_corr.csv"
 SAMPLE_TABLE    = DATA_DIR / "sample_table.csv"
 SETMILMT_CSV        = DATA_DIR / "setmilmt_preds.csv"
+LONGI_PREDS_CSV     = DATA_DIR / "longi_preds.csv"
 BENCHMARK_RESULTS_CSV = DATA_DIR / "benchmark_results.csv"
 SUMMARY_PNG_DIR     = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged/patient_summaries")
 PAPER_INTERP_JSON   = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged/paper_interp_data.json")
@@ -143,6 +144,21 @@ def load_setmilmt() -> pd.DataFrame:
 
 def patient_setmilmt(pid: str) -> pd.DataFrame:
     df = load_setmilmt()
+    if df.empty:
+        return df
+    return df.query("patient_id == @pid").sort_values("anchor_dt")
+
+
+@st.cache_data(show_spinner=False)
+def load_longi_preds() -> pd.DataFrame:
+    if not LONGI_PREDS_CSV.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(LONGI_PREDS_CSV, parse_dates=["anchor_dt"])
+    return df
+
+
+def patient_longi_preds(pid: str) -> pd.DataFrame:
+    df = load_longi_preds()
     if df.empty:
         return df
     return df.query("patient_id == @pid").sort_values("anchor_dt")
