@@ -37,6 +37,8 @@ PCA_CSV         = DATA_DIR / "pca_scores.csv"
 COHORT_JSON     = DATA_DIR / "cohort_summary.json"
 XMODAL_CSV      = DATA_DIR / "cross_modal_corr.csv"
 SAMPLE_TABLE    = DATA_DIR / "sample_table.csv"
+SETMILMT_CSV    = DATA_DIR / "setmilmt_preds.csv"
+SUMMARY_PNG_DIR = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged/patient_summaries")
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +127,26 @@ def patient_predictions(pid: str) -> pd.DataFrame:
     if df.empty:
         return df
     return df.query("patient_id == @pid").sort_values("anchor_dt")
+
+
+@st.cache_data(show_spinner=False)
+def load_setmilmt() -> pd.DataFrame:
+    if not SETMILMT_CSV.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(SETMILMT_CSV, parse_dates=["anchor_dt"])
+    return df
+
+
+def patient_setmilmt(pid: str) -> pd.DataFrame:
+    df = load_setmilmt()
+    if df.empty:
+        return df
+    return df.query("patient_id == @pid").sort_values("anchor_dt")
+
+
+def setmilmt_summary_png(stem: str) -> Optional[Path]:
+    p = SUMMARY_PNG_DIR / f"L0_summary_{stem}.png"
+    return p if p.exists() else None
 
 
 def patient_episode(pid: str) -> Optional[pd.Series]:

@@ -202,6 +202,7 @@ def build_splits_multitask(samples_dir, splits_csv, fold, split=None):
         rec = {
             "stem":           stem,
             "patient_id":     str(row.get("patient_id", stem)),
+            "anchor_dt":      row["anchor_dt"],   # pd.Timestamp — needed for trajectory plots
             "label":          acr_label(row.get("acr_grade")),
             "tte_next_acr":   tte,
             "event_next_acr": ev,
