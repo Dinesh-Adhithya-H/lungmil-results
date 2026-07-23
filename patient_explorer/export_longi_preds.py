@@ -38,7 +38,7 @@ TASK_DIR = {"acr_cls": "cls", "acr_surv": "acr_surv", "clad_surv": "clad_surv", 
 def load_model(split: int, task_dir: str, device: torch.device):
     vtag = "longitudinal_mk_mt"
     ckpt_dir_name = f"{vtag}_{task_dir}"
-    ckpt_dir = RESULTS_ROOT / f"split{split}_fold0" / ckpt_dir_name
+    ckpt_dir = RESULTS_ROOT / "phase2" / f"split{split}_fold0" / ckpt_dir_name
     # Look for model checkpoint
     model_pt = ckpt_dir / f"model_{vtag}_final.pt"
     if not model_pt.exists():

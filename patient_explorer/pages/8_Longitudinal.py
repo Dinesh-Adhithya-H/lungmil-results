@@ -12,7 +12,7 @@ st.set_page_config(page_title="Longitudinal", page_icon="📉", layout="wide")
 from utils.styles import card_css, metric_card, BG, BG2, TEXT, MUTED, ACCENT, BORDER, CARD, PLOTLY_THEME, MOD_COLORS
 from utils.data_loader import (
     load_setmilmt, patient_list, patient_setmilmt,
-    setmilmt_summary_png, longitudinal_summary_png,
+    setmilmt_summary_png, longitudinal_summary_png, longitudinal_seed_timeline_png,
     load_longi_preds, patient_longi_preds,
 )
 
@@ -304,9 +304,11 @@ if show_longi:
     with col_b:
         st.divider()
         st.markdown(f"<p class='section-title'>Longitudinal Model Summary Panel</p>", unsafe_allow_html=True)
-        p = longitudinal_summary_png(pid)
-        if p and p.exists():
-            st.image(Image.open(p),
-                     caption=f"Longitudinal SetMIL — {pid}")
+        p0 = longitudinal_summary_png(pid)
+        p1 = longitudinal_seed_timeline_png(pid)
+        if p0 and p0.exists():
+            st.image(Image.open(p0), caption=f"L0 Summary — {pid}")
         else:
-            st.info("Longitudinal model summary not found for this patient.")
+            st.info("Longitudinal model summary (L0) not found for this patient.")
+        if p1 and p1.exists():
+            st.image(Image.open(p1), caption=f"L1 Seed Timeline — {pid}")

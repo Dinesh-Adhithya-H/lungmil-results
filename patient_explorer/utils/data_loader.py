@@ -264,10 +264,31 @@ def load_paper_interp() -> dict:
     return json.loads(PAPER_INTERP_JSON.read_text())
 
 
+def _longi_split_dirs() -> list:
+    """All valid longitudinal interp dirs: split*_fold0 (no suffix) and split*_fold0_{task}.
+    Excludes archive dirs and mega dirs."""
+    dirs = []
+    for d in sorted(LONGI_INTERP_DIR.glob("split*_fold0*")):
+        name = d.name
+        if "archive" in name or "mega" in name:
+            continue
+        dirs.append(d)
+    return dirs
+
+
 def longitudinal_summary_png(pid: str) -> Optional[Path]:
-    """Find longitudinal model patient summary PNG across all splits."""
-    for split_dir in sorted(LONGI_INTERP_DIR.glob("split*_fold0")):
+    """Find longitudinal model patient summary PNG (L0) across all splits/tasks."""
+    for split_dir in _longi_split_dirs():
         p = split_dir / f"L0_summary_pid{pid}.png"
+        if p.exists():
+            return p
+    return None
+
+
+def longitudinal_seed_timeline_png(pid: str) -> Optional[Path]:
+    """Find longitudinal model seed timeline PNG (L1) across all splits/tasks."""
+    for split_dir in _longi_split_dirs():
+        p = split_dir / f"L1_seed_timeline_pid{pid}.png"
         if p.exists():
             return p
     return None
