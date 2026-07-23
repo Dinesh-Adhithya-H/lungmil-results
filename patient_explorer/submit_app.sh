@@ -50,41 +50,10 @@ GH_TOKEN=$(cat /home/aih/dinesh.haridoss/.secrets/github_token 2>/dev/null || ec
 GH_REPO="Dinesh-Adhithya-H/lungmil-results"
 GH_FILE="index.html"
 
-HTML_CONTENT="<!DOCTYPE html>
-<html>
-<head>
-  <meta charset=\"utf-8\">
-  <title>LungMIL Explorer</title>
-  <meta http-equiv=\"refresh\" content=\"0; url=${CF_URL}\">
-  <style>
-    body { font-family: sans-serif; background: #0d1117; color: #c9d1d9; display: flex;
-           align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    a { color: #58a6ff; font-size: 1.2em; }
-  </style>
-</head>
-<body>
-  <div>
-    <p>Redirecting to LungMIL Explorer...</p>
-    <p><a href=\"${CF_URL}\">${CF_URL}</a></p>
-    <p style=\"font-size:0.8em;color:#8b949e\">Password: lungmil2024</p>
-  </div>
-</body>
-</html>"
-
-# Get current file SHA (required for updates)
-SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
-  "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" \
-  | grep -o '"sha": "[^"]*"' | head -1 | cut -d'"' -f4)
-
-ENCODED=$(echo "$HTML_CONTENT" | base64 -w 0)
-curl -s -X PUT \
-  -H "Authorization: token $GH_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" \
-  -d "{\"message\":\"update redirect to $CF_URL\",\"content\":\"$ENCODED\",\"sha\":\"$SHA\"}" \
-  | grep -o '"html_url":"[^"]*"' | head -1 | cut -d'"' -f4 \
-  | grep -q "github" && echo "GitHub Pages updated → https://dinesh-adhithya-h.github.io/lungmil-results/" \
-  || echo "GitHub Pages update failed (tunnel still works)"
+HTML="<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LungMIL Explorer</title><meta http-equiv=\"refresh\" content=\"0; url=${CF_URL}\"><style>body{font-family:sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}a{color:#58a6ff;font-size:1.2em}</style></head><body><div><p>Redirecting to LungMIL Explorer...</p><p><a href=\"${CF_URL}\">${CF_URL}</a></p><p style=\"font-size:.8em;color:#8b949e\">Password: lungmil2024</p></div></body></html>"
+SHA=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sha',''))" 2>/dev/null)
+ENCODED=$(printf '%s' "$HTML" | base64 -w 0)
+curl -s -X PUT -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" -d "{\"message\":\"update redirect\",\"content\":\"${ENCODED}\",\"sha\":\"${SHA}\"}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('GitHub Pages updated ✓' if 'content' in d else 'Pages update failed: '+d.get('message','?'))" 2>/dev/null || echo "GitHub Pages update failed"
 
 echo ""
 echo "════════════════════════════════════════"
