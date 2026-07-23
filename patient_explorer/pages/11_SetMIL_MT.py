@@ -148,29 +148,44 @@ for task in show_tasks:
         customdata=df["anchor_dt"].dt.strftime("%Y-%m-%d"),
     ))
 
-# Event vlines
-if clad_day is not None:
-    fig.add_vline(x=clad_day, line_color="#8E24AA", line_width=2,
-                  annotation_text="CLAD event", annotation_font_color="#8E24AA",
-                  annotation_position="top left")
-if death_day is not None:
-    fig.add_vline(x=death_day, line_color="#00897B", line_width=2,
-                  annotation_text="Death event", annotation_font_color="#00897B",
-                  annotation_position="top right")
-
-# ACR label vlines (dashed green/red)
+# ACR biopsy vlines — 3 colors: ACR+ red, ACR− green, unknown/None grey
 for _, row in df.iterrows():
     lbl = row.get("event_acr")
+    day = row["days"]
+    date_str = row["anchor_dt"].strftime("%Y-%m-%d") if pd.notna(row.get("anchor_dt")) else ""
     if pd.isna(lbl):
-        continue
-    color = "#E53935" if lbl == 1 else "#43A047"
-    fig.add_vline(x=row["days"], line_color=color, line_width=1,
-                  line_dash="dot", opacity=0.45)
+        color, dash, label = "#6c7199", "dot", "ACR unknown"
+    elif lbl == 1:
+        color, dash, label = "#E53935", "dash", "ACR+"
+    else:
+        color, dash, label = "#43A047", "dash", "ACR−"
+    fig.add_vline(x=day, line_color=color, line_width=1.2,
+                  line_dash=dash, opacity=0.6)
+
+# CLAD and death event vlines with date annotation
+if clad_day is not None:
+    clad_date = (df["anchor_dt"].min() + pd.Timedelta(days=int(clad_day))).strftime("%Y-%m-%d") if pd.notna(df["anchor_dt"].min()) else ""
+    fig.add_vline(x=clad_day, line_color="#8E24AA", line_width=2.5,
+                  annotation_text=f"CLAD<br>{clad_date}",
+                  annotation_font_color="#8E24AA", annotation_font_size=10,
+                  annotation_position="top left")
+if death_day is not None:
+    death_date = (df["anchor_dt"].min() + pd.Timedelta(days=int(death_day))).strftime("%Y-%m-%d") if pd.notna(df["anchor_dt"].min()) else ""
+    fig.add_vline(x=death_day, line_color="#00897B", line_width=2.5,
+                  annotation_text=f"Death<br>{death_date}",
+                  annotation_font_color="#00897B", annotation_font_size=10,
+                  annotation_position="top right")
 
 fig.add_hline(y=0.5, line_dash="dot", line_color=MUTED, line_width=1)
+# Invisible legend entries for ACR biopsy colors
+for acr_label, acr_color in [("ACR+ biopsy", "#E53935"), ("ACR− biopsy", "#43A047"), ("ACR unknown", "#6c7199"),
+                               ("CLAD event", "#8E24AA"), ("Death event", "#00897B")]:
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
+                             name=acr_label, line=dict(color=acr_color, width=2, dash="dash"),
+                             showlegend=True))
 fig.update_layout(
     **PLOTLY_THEME,
-    height=380,
+    height=400,
     xaxis_title="Days from transplant",
     yaxis_title="Score (0 = low risk, 1 = high risk)",
     yaxis=dict(range=[-0.05, 1.05]),
@@ -208,11 +223,29 @@ for mi, mod in enumerate(MOD_ORDER):
             hovertemplate=f"{mod} absent<br>Day %{{x}}<extra></extra>",
         ))
 
-# Event vlines on modality plot too
+# ACR biopsy markers on modality timeline
+for _, row in df.iterrows():
+    lbl = row.get("event_acr")
+    day = row["days"]
+    if pd.isna(lbl):
+        color = "#6c7199"
+    elif lbl == 1:
+        color = "#E53935"
+    else:
+        color = "#43A047"
+    fig_mod.add_vline(x=day, line_color=color, line_width=1.0, line_dash="dash", opacity=0.5)
+
+# CLAD / death event vlines with date labels
 if clad_day is not None:
-    fig_mod.add_vline(x=clad_day, line_color="#8E24AA", line_width=2)
+    clad_date = (df["anchor_dt"].min() + pd.Timedelta(days=int(clad_day))).strftime("%Y-%m-%d") if pd.notna(df["anchor_dt"].min()) else ""
+    fig_mod.add_vline(x=clad_day, line_color="#8E24AA", line_width=2.5,
+                      annotation_text=f"CLAD {clad_date}", annotation_font_color="#8E24AA",
+                      annotation_font_size=9, annotation_position="top left")
 if death_day is not None:
-    fig_mod.add_vline(x=death_day, line_color="#00897B", line_width=2)
+    death_date = (df["anchor_dt"].min() + pd.Timedelta(days=int(death_day))).strftime("%Y-%m-%d") if pd.notna(df["anchor_dt"].min()) else ""
+    fig_mod.add_vline(x=death_day, line_color="#00897B", line_width=2.5,
+                      annotation_text=f"Death {death_date}", annotation_font_color="#00897B",
+                      annotation_font_size=9, annotation_position="top right")
 
 fig_mod.update_layout(
     **PLOTLY_THEME,

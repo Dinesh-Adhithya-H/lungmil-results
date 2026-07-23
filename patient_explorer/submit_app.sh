@@ -5,12 +5,17 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=08:00:00
+#SBATCH --signal=USR1@120
 #SBATCH --output=/home/aih/dinesh.haridoss/logs/explorer_app_%j.out
+
+# ── Auto-resubmit on wall-time (24/7 operation) ───────────────────────────────
+SCRIPT_PATH="$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | grep -oP 'Command=\K\S+' || echo "/ictstr01/home/aih/dinesh.haridoss/chicago_mil/patient_explorer/submit_app.sh")"
+trap 'echo "[wall-time] Resubmitting for 24/7 operation..."; sbatch '"$SCRIPT_PATH"'; kill $CF_PID 2>/dev/null; exit 0' USR1
 
 source /home/aih/dinesh.haridoss/miniconda3/etc/profile.d/conda.sh
 conda activate chicago
 
-cd /home/aih/dinesh.haridoss/chicago_mil/patient_explorer
+cd /ictstr01/home/aih/dinesh.haridoss/chicago_mil/patient_explorer
 
 echo "Running on: $(hostname)"
 
@@ -32,13 +37,11 @@ if [ ! -f "$CFDIR/cloudflared" ]; then
          -O "$CFDIR/cloudflared" && chmod +x "$CFDIR/cloudflared"
 fi
 
-# start cloudflare tunnel in background, capture URL from its log
 CF_LOG=/tmp/cloudflared_$$.log
 "$CFDIR/cloudflared" tunnel --url http://localhost:8501 \
     --no-autoupdate 2>"$CF_LOG" &
 CF_PID=$!
 
-# wait up to 20s for the public URL to appear
 for i in $(seq 1 20); do
     CF_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | head -1)
     [ -n "$CF_URL" ] && break
@@ -69,5 +72,4 @@ streamlit run app.py \
     --server.address 127.0.0.1 \
     2>&1
 
-# cleanup
 kill $CF_PID 2>/dev/null
