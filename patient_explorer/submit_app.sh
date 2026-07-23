@@ -28,18 +28,28 @@ ssh -o StrictHostKeyChecking=no \
     echo "SSH tunnel OK → hpc-submit01:8501" || \
     echo "SSH tunnel failed (Cloudflare will still work)"
 
-# ── Cloudflare named tunnel (fixed URL: https://lungmil-results-chicago.de) ──
+# ── Cloudflare quick tunnel (public HTTPS, URL changes per job) ───────────────
 CFDIR=/home/aih/dinesh.haridoss/.local/bin
 CF_LOG=/home/aih/dinesh.haridoss/logs/cloudflared_$$.log
-"$CFDIR/cloudflared" tunnel --no-autoupdate run lungmil-explorer 2>"$CF_LOG" &
+"$CFDIR/cloudflared" tunnel --url http://localhost:8501 \
+    --no-autoupdate 2>"$CF_LOG" &
 CF_PID=$!
-sleep 5
+
+for i in $(seq 1 20); do
+    CF_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | head -1)
+    [ -n "$CF_URL" ] && break
+    sleep 1
+done
+
+# Write current URL to a stable file collaborators can check
+URL_FILE=/home/aih/dinesh.haridoss/logs/current_app_url.txt
+echo "$CF_URL" > "$URL_FILE"
 
 echo ""
 echo "════════════════════════════════════════"
-echo "  PUBLIC URL : https://9bd44ca8-0eff-43ad-8808-2026cf09afa4.cfargotunnel.com"
+echo "  PUBLIC URL : $CF_URL"
 echo "  Password   : ${EXPLORER_PASSWORD:-lungmil2024}"
-echo "  Share both with collaborators."
+echo "  (URL changes on restart — always find current URL at: $URL_FILE)"
 echo ""
 echo "  On-campus / VPN:"
 echo "  ssh -L 8501:localhost:8501 dinesh.haridoss@hpc-submit01.scidom.de"
