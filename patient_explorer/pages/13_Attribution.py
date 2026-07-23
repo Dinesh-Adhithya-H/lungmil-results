@@ -155,7 +155,7 @@ st.markdown(
     f"relies on that modality when making predictions. All modalities are heavily used (>0.8).</p>",
     unsafe_allow_html=True,
 )
-st.plotly_chart(gate_gauge(task_data), width="stretch")
+st.plotly_chart(gate_gauge(task_data))
 
 st.divider()
 
@@ -192,7 +192,7 @@ with tab_bal:
             bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
             height=480, hide_index=True,
         )
-    st.plotly_chart(bar_chart(df, "BAL", top_n, task_label), width="stretch")
+    st.plotly_chart(bar_chart(df, "BAL", top_n, task_label))
 
 with tab_clinical:
     df = attribution_df(task_data, "Clinical")
@@ -219,7 +219,7 @@ with tab_clinical:
             bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
             height=480, hide_index=True,
         )
-    st.plotly_chart(bar_chart(df, "Clinical", top_n, task_label), width="stretch")
+    st.plotly_chart(bar_chart(df, "Clinical", top_n, task_label))
 
 with tab_he:
     df = attribution_df(task_data, "HE")
@@ -246,7 +246,7 @@ with tab_he:
             bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
             height=480, hide_index=True,
         )
-    st.plotly_chart(bar_chart(df, "HE", top_n, task_label), width="stretch")
+    st.plotly_chart(bar_chart(df, "HE", top_n, task_label))
 
 with tab_ct:
     df = attribution_df(task_data, "CT")
@@ -274,7 +274,7 @@ with tab_ct:
             bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
             height=480, hide_index=True,
         )
-    st.plotly_chart(bar_chart(df, "CT", top_n, task_label), width="stretch")
+    st.plotly_chart(bar_chart(df, "CT", top_n, task_label))
 
 st.divider()
 
@@ -332,4 +332,4 @@ if all_dfs:
         margin=dict(l=10, r=10, t=40, b=10),
         yaxis=dict(tickfont=dict(size=9)),
     )
-    st.plotly_chart(fig_ht, width="stretch")
+    st.plotly_chart(fig_ht)

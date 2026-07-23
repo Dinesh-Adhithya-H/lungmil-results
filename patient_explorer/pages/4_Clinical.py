@@ -96,7 +96,7 @@ else:
                     legend=dict(orientation="h", x=0, y=-0.22, font_size=9),
                     hovermode="x unified",
                 )
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig)
 
 # ── Prediction trajectories ───────────────────────────────────────────────
 st.divider()
@@ -144,7 +144,7 @@ else:
         legend=dict(orientation="h", x=0, y=-0.22, font_size=10),
         hovermode="x unified",
     )
-    st.plotly_chart(fig2, width="stretch")
+    st.plotly_chart(fig2)
 
 # ── Clinical feature importance (from attention) ──────────────────────────
 st.divider()
@@ -188,7 +188,7 @@ if ATTN_CSV.exists():
                 xaxis=dict(title="Attention weight", gridcolor=BORDER),
                 yaxis=dict(autorange="reversed"),
             )
-            st.plotly_chart(fig3, width="stretch")
+            st.plotly_chart(fig3)
         else:
             st.info("No feature columns in clinical attention file.")
     else:
@@ -208,6 +208,6 @@ with st.expander("Raw clinical feature values"):
         # rename feat_N → actual name
         rename = {c: feat_names.get(int(c.split("_")[1]), c)
                   for c in pt_c.columns if c.startswith("feat_")}
-        st.dataframe(pt_c.rename(columns=rename), width="stretch")
+        st.dataframe(pt_c.rename(columns=rename))
     else:
         st.write("No data.")

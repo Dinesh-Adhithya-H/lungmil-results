@@ -194,7 +194,7 @@ fig.update_layout(
     legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
     hovermode="x unified",
 )
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig)
 
 # ── Modality availability ─────────────────────────────────────────────────────
 st.markdown(f"<p class='section-title'>Modality Availability</p>", unsafe_allow_html=True)
@@ -257,7 +257,7 @@ fig_mod.update_layout(
     showlegend=True,
     legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
 )
-st.plotly_chart(fig_mod, width="stretch")
+st.plotly_chart(fig_mod)
 
 # ── TTE summary table ─────────────────────────────────────────────────────────
 st.divider()
@@ -274,7 +274,7 @@ for ev_col, tte_col, label in [
     status = "event" if ev == 1 else ("censored" if ev == 0 else "?")
     tte_str = f"{tte:.0f}d" if pd.notna(tte) else "?"
     tte_rows.append({"Outcome": label, "Status": status, "TTE": tte_str})
-st.dataframe(pd.DataFrame(tte_rows), width="stretch", hide_index=True)
+st.dataframe(pd.DataFrame(tte_rows), hide_index=True)
 
 # ── Full summary PNG ──────────────────────────────────────────────────────────
 if show_png:
@@ -285,7 +285,7 @@ if show_png:
     png_path = setmilmt_summary_png(last_stem)
     if png_path and png_path.exists():
         img = Image.open(png_path)
-        st.image(img, width="stretch",
+        st.image(img,
                  caption=f"SetMIL-MT summary — {pid} (stem {last_stem})")
     else:
         # Try finding any stem for this patient
@@ -295,7 +295,7 @@ if show_png:
             p = setmilmt_summary_png(s)
             if p and p.exists():
                 img = Image.open(p)
-                st.image(img, width="stretch",
+                st.image(img,
                          caption=f"SetMIL-MT summary — {pid} (stem {s})")
                 found = True
                 break

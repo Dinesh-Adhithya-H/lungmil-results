@@ -99,7 +99,7 @@ if show_km and not df_all.empty:
         yaxis=dict(range=[0, 105]),
         legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
     )
-    st.plotly_chart(fig_km, width="stretch")
+    st.plotly_chart(fig_km)
     st.divider()
 
 if df_pt.empty:
@@ -176,7 +176,7 @@ if show_traj:
         legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
         hovermode="x unified",
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig)
 
 # ── Modality availability ─────────────────────────────────────────────────────
 if show_mods:
@@ -212,7 +212,7 @@ if show_mods:
         yaxis=dict(tickvals=list(range(len(MOD_ORDER))), ticktext=MOD_ORDER, showgrid=False),
         legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
     )
-    st.plotly_chart(fig_mod, width="stretch")
+    st.plotly_chart(fig_mod)
 
 # ── Patient summary PNGs ──────────────────────────────────────────────────────
 col_a, col_b = st.columns(2)
@@ -226,7 +226,7 @@ if show_setmil:
             s = str(row["stem"]).zfill(5) if str(row["stem"]).isdigit() else str(row["stem"])
             p = setmilmt_summary_png(s)
             if p and p.exists():
-                st.image(Image.open(p), width="stretch",
+                st.image(Image.open(p),
                          caption=f"SetMIL-MT — {pid} (stem {s})")
                 found = True
                 break
@@ -239,7 +239,7 @@ if show_longi:
         st.markdown(f"<p class='section-title'>Longitudinal Model Summary Panel</p>", unsafe_allow_html=True)
         p = longitudinal_summary_png(pid)
         if p and p.exists():
-            st.image(Image.open(p), width="stretch",
+            st.image(Image.open(p),
                      caption=f"Longitudinal SetMIL — {pid}")
         else:
             st.info("Longitudinal model summary not found for this patient.")

@@ -33,7 +33,7 @@ st.markdown(f"<h2 style='color:{TEXT}'>📅 Timeline — {pid}</h2>", unsafe_all
 # ── Full timeline figure ───────────────────────────────────────────────────
 fig = timeline_figure(splits, preds, ep)
 fig.update_layout(height=520)
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig)
 
 # ── Episode summary table ─────────────────────────────────────────────────
 st.divider()
@@ -75,7 +75,7 @@ if ep is not None:
             yaxis=dict(gridcolor=BORDER),
             legend=dict(orientation="h", x=0, y=-0.2, font_size=10),
         )
-        st.plotly_chart(fig2, width="stretch")
+        st.plotly_chart(fig2)
 
 # ── Biopsy-level table ─────────────────────────────────────────────────────
 st.divider()

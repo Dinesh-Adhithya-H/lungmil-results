@@ -80,7 +80,7 @@ with col1:
     ))
     fig.update_layout(**PLOTLY_THEME, title="ACR Grade Distribution", height=320,
                       showlegend=False)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig)
 
 with col2:
     # CLAD by ACR grade at first visit
@@ -94,7 +94,7 @@ with col2:
         ))
         fig2.update_layout(**PLOTLY_THEME, title="CLAD Rate by ACR Status",
                            yaxis_tickformat=".0%", height=320)
-        st.plotly_chart(fig2, width="stretch")
+        st.plotly_chart(fig2)
     else:
         st.info("CLAD data not available.")
 
@@ -114,7 +114,7 @@ with col3:
             text=outcomes["Count"], textposition="outside",
         ))
         fig3.update_layout(**PLOTLY_THEME, title="Adverse Event Counts", height=320)
-        st.plotly_chart(fig3, width="stretch")
+        st.plotly_chart(fig3)
 
 st.divider()
 
@@ -147,7 +147,7 @@ with col4:
         fig4.update_layout(**PLOTLY_THEME, barmode="group",
                            title="Modality Availability by ACR Status (%)",
                            yaxis_title="% of group samples", height=350)
-        st.plotly_chart(fig4, width="stretch")
+        st.plotly_chart(fig4)
 
 with col5:
     # Co-availability heatmap
@@ -167,7 +167,7 @@ with col5:
         ))
         fig5.update_layout(**PLOTLY_THEME, title="Co-availability (# samples with both)",
                            height=350)
-        st.plotly_chart(fig5, width="stretch")
+        st.plotly_chart(fig5)
 
 st.divider()
 
@@ -189,7 +189,7 @@ with col6:
                        title="Samples per Month", xaxis_title="Month",
                        yaxis_title="# Samples", height=320,
                        xaxis_tickangle=-45)
-    st.plotly_chart(fig6, width="stretch")
+    st.plotly_chart(fig6)
 
 with col7:
     # Samples per patient histogram
@@ -200,7 +200,7 @@ with col7:
     ))
     fig7.update_layout(**PLOTLY_THEME, title="Samples per Patient Distribution",
                        xaxis_title="# Samples", yaxis_title="# Patients", height=320)
-    st.plotly_chart(fig7, width="stretch")
+    st.plotly_chart(fig7)
 
 st.divider()
 
@@ -225,7 +225,7 @@ if "days_since_tx" in splits.columns:
         fig8.update_layout(**PLOTLY_THEME,
                            title="Days Since Transplant at Sampling (by Modality)",
                            yaxis_title="Days since transplant", height=380)
-        st.plotly_chart(fig8, width="stretch")
+        st.plotly_chart(fig8)
 else:
     st.info("days_since_tx column not available.")
 
@@ -276,7 +276,7 @@ if not df_smt.empty:
             yaxis=dict(range=[0, 1.05]),
             height=340,
         )
-        st.plotly_chart(fig_c, width="stretch")
+        st.plotly_chart(fig_c)
 
         # TTE histogram
         fig_ch = go.Figure()
@@ -289,7 +289,7 @@ if not df_smt.empty:
         fig_ch.update_layout(**PLOTLY_THEME, barmode="overlay",
                               title="Time to CLAD (years)", xaxis_title="Years",
                               yaxis_title="# Patients", height=260)
-        st.plotly_chart(fig_ch, width="stretch")
+        st.plotly_chart(fig_ch)
 
     with col_d:
         times_d = pt_surv["tte_death"].dropna().values
@@ -310,7 +310,7 @@ if not df_smt.empty:
             yaxis=dict(range=[0, 1.05]),
             height=340,
         )
-        st.plotly_chart(fig_d, width="stretch")
+        st.plotly_chart(fig_d)
 
         fig_dh = go.Figure()
         death_ev = pt_surv[pt_surv["event_death"] > 0]["tte_death"].dropna() / 365.25
@@ -322,6 +322,6 @@ if not df_smt.empty:
         fig_dh.update_layout(**PLOTLY_THEME, barmode="overlay",
                               title="Time to Death (years)", xaxis_title="Years",
                               yaxis_title="# Patients", height=260)
-        st.plotly_chart(fig_dh, width="stretch")
+        st.plotly_chart(fig_dh)
 else:
     st.info("Survival data not available (setmilmt_preds.csv missing).")

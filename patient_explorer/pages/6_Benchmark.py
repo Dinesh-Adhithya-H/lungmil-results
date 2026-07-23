@@ -124,7 +124,7 @@ if not df.empty:
         legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
         xaxis=dict(tickangle=-30),
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig)
 else:
     st.info(f"No data for task={task_sel}, metric={metric_sel}.")
 
@@ -160,7 +160,7 @@ if not df_metric.empty:
         xaxis_title="Task",
         yaxis_title="Model",
     )
-    st.plotly_chart(fig_hm, width="stretch")
+    st.plotly_chart(fig_hm)
 
 st.divider()
 
