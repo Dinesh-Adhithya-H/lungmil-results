@@ -62,20 +62,26 @@ def attribution_df(task_data, modality: str) -> pd.DataFrame:
     hi     = np.array(ca["hi_score"])
     lo     = np.array(ca["lo_score"])
     delta  = np.array(ca["delta"])
+    # Normalize to relative enrichment: % of max |delta| in this modality
+    max_abs = np.abs(delta).max()
+    rel = (delta / max_abs * 100) if max_abs > 0 else delta * 0
     return pd.DataFrame({
         "cluster": names,
         "hi_score": hi,
         "lo_score": lo,
-        "delta": delta,
+        "delta_raw": delta,
+        "delta": rel,          # relative enrichment in %
     }).sort_values("delta", ascending=False).reset_index(drop=True)
 
 def bar_chart(df: pd.DataFrame, mod: str, top_n: int, task_label: str) -> go.Figure:
     col_pos, col_neg = MOD_COLORS[mod]
-    # take top_n positive + top_n negative
-    pos = df.head(top_n)
-    neg = df.tail(top_n).sort_values("delta")
-    combined = pd.concat([pos, neg]).drop_duplicates("cluster")
-    combined = combined.sort_values("delta")
+    # Separate genuinely positive from genuinely negative deltas
+    pos_df = df[df["delta"] > 0].head(top_n)
+    neg_df = df[df["delta"] < 0].tail(top_n).sort_values("delta")
+    combined = pd.concat([neg_df, pos_df]).drop_duplicates("cluster").sort_values("delta")
+
+    if combined.empty:
+        combined = df.head(top_n).sort_values("delta")
 
     colors = [col_pos if v >= 0 else col_neg for v in combined["delta"]]
 
@@ -84,12 +90,14 @@ def bar_chart(df: pd.DataFrame, mod: str, top_n: int, task_label: str) -> go.Fig
         y=combined["cluster"],
         orientation="h",
         marker_color=colors,
+        customdata=combined["delta_raw"],
         hovertemplate=(
             "<b>%{y}</b><br>"
-            "Δ-attention: %{x:.5f}<br>"
+            "Relative enrichment: %{x:.1f}%<br>"
+            "Δ-attention (raw): %{customdata:.2e}<br>"
             "<extra></extra>"
         ),
-        text=[f"{v:+.4f}" for v in combined["delta"]],
+        text=[f"{v:+.0f}%" for v in combined["delta"]],
         textposition="outside",
         textfont=dict(size=9, color=TEXT),
     ))
@@ -97,7 +105,7 @@ def bar_chart(df: pd.DataFrame, mod: str, top_n: int, task_label: str) -> go.Fig
         **PLOTLY_THEME,
         title=dict(text=f"{MOD_LABELS[mod]} — {task_label}", font_color=TEXT, font_size=13),
         xaxis=dict(
-            title="Δ attention (high-risk − low-risk)",
+            title="Relative Δ-attention (% of max, high-risk − low-risk)",
             zeroline=True, zerolinecolor=BORDER, zerolinewidth=1.5,
         ),
         yaxis=dict(tickfont=dict(size=10)),
@@ -167,105 +175,99 @@ st.markdown(
 
 tab_bal, tab_clinical, tab_he, tab_ct = st.tabs(["🦠 BAL cell types", "📋 Clinical features", "🔬 HE clusters", "🖥 CT clusters"])
 
-with tab_bal:
-    df = attribution_df(task_data, "BAL")
+def _render_mod_tab(df, col_label, description, mod, top_n, task_label):
+    """Render the two-column table + bar chart for one modality."""
+    delta_max = df["delta"].max()
+    delta_min = df["delta"].min()
+    all_negative = delta_max <= 0
+    all_positive = delta_min >= 0
+
+    direction_note = ""
+    if all_negative:
+        direction_note = (
+            f" ⚠ All Δ values are negative for this modality/task: the model attends "
+            f"<b>more to low-risk patients</b> across all clusters. Table is sorted from "
+            f"least-negative (relatively more in high-risk) to most-negative."
+        )
+    elif all_positive:
+        direction_note = " The model attends more to high-risk patients across all clusters."
+
     st.markdown(
-        f"<p style='color:{MUTED};font-size:0.82rem'>"
-        f"43 BAL scRNA cell-type clusters. Top positive = cell types whose attention is higher in "
-        f"high-risk patients. TRAM = Tissue-Resident Alveolar Macrophages.</p>",
+        f"<p style='color:{MUTED};font-size:0.82rem'>{description}{direction_note}</p>",
         unsafe_allow_html=True,
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**High-risk enriched (top 20)**")
-        top20 = df.head(20)[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        top20.columns = ["Cell type", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            top20.style.background_gradient(subset=["Δ-attn"], cmap="Reds"),
-            height=480, hide_index=True,
-        )
-    with c2:
-        st.markdown("**Low-risk enriched (bottom 20)**")
-        bot20 = df.tail(20).sort_values("delta")[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        bot20.columns = ["Cell type", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
-            height=480, hide_index=True,
-        )
-    st.plotly_chart(bar_chart(df, "BAL", top_n, task_label))
+
+    def fmt_tbl(sub, cmap):
+        out = sub[["cluster", "delta_raw", "delta"]].copy()
+        out.columns = [col_label, "Δ-attention (raw)", "Rel. enrichment (%)"]
+        out["Δ-attention (raw)"] = out["Δ-attention (raw)"].map(lambda x: f"{x:.2e}")
+        return out.style.background_gradient(subset=["Rel. enrichment (%)"], cmap=cmap)
+
+    if all_negative:
+        # Show top (least-negative = most relatively enriched in high-risk) and bottom
+        st.markdown("**Relatively more attended in high-risk (least-negative)**")
+        st.dataframe(fmt_tbl(df.head(20), "YlOrRd"), height=480, hide_index=True)
+        st.markdown("**Relatively more attended in low-risk (most-negative)**")
+        st.dataframe(fmt_tbl(df.tail(20).sort_values("delta"), "Blues"), height=480, hide_index=True)
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**High-risk enriched**")
+            st.dataframe(fmt_tbl(df[df["delta"] > 0].head(20), "Reds"), height=480, hide_index=True)
+        with c2:
+            st.markdown("**Low-risk enriched**")
+            st.dataframe(fmt_tbl(df[df["delta"] < 0].sort_values("delta").head(20), "Blues_r"), height=480, hide_index=True)
+
+    st.plotly_chart(bar_chart(df, mod, top_n, task_label))
+
+with tab_bal:
+    df = attribution_df(task_data, "BAL")
+    _render_mod_tab(df, "Cell type",
+        "43 BAL scRNA cell-type clusters. TRAM = Tissue-Resident Alveolar Macrophages; "
+        "MoAM = Monocyte-derived Alveolar Macrophages.",
+        "BAL", top_n, task_label)
 
 with tab_clinical:
     df = attribution_df(task_data, "Clinical")
-    st.markdown(
-        f"<p style='color:{MUTED};font-size:0.82rem'>"
-        f"106 clinical variables (lung function tests, blood labs, donor/recipient metadata). "
-        f"Top positive = variables where model attends more in high-risk patients.</p>",
-        unsafe_allow_html=True,
-    )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**High-risk enriched (top 20)**")
-        top20 = df.head(20)[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        top20.columns = ["Feature", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            top20.style.background_gradient(subset=["Δ-attn"], cmap="Reds"),
-            height=480, hide_index=True,
-        )
-    with c2:
-        st.markdown("**Low-risk enriched (bottom 20)**")
-        bot20 = df.tail(20).sort_values("delta")[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        bot20.columns = ["Feature", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
-            height=480, hide_index=True,
-        )
-    st.plotly_chart(bar_chart(df, "Clinical", top_n, task_label))
+    _render_mod_tab(df, "Feature",
+        "106 clinical variables: lung function (FVC, FEV1), blood labs, PGD score, "
+        "donor/recipient metadata (CMV, EBV, DSA).",
+        "Clinical", top_n, task_label)
 
 with tab_he:
     df = attribution_df(task_data, "HE")
-    st.markdown(
-        f"<p style='color:{MUTED};font-size:0.82rem'>"
-        f"54 HE histology patch clusters (hierarchical, e.g. 0_1 = sub-cluster 1 of cluster 0). "
-        f"See HE morphology figure in paper for cluster annotation.</p>",
-        unsafe_allow_html=True,
-    )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**High-risk enriched (top 20)**")
-        top20 = df.head(20)[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        top20.columns = ["Cluster", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            top20.style.background_gradient(subset=["Δ-attn"], cmap="Reds"),
-            height=480, hide_index=True,
-        )
-    with c2:
-        st.markdown("**Low-risk enriched (bottom 20)**")
-        bot20 = df.tail(20).sort_values("delta")[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        bot20.columns = ["Cluster", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            bot20.style.background_gradient(subset=["Δ-attn"], cmap="Blues_r"),
-            height=480, hide_index=True,
-        )
-    st.plotly_chart(bar_chart(df, "HE", top_n, task_label))
+    _render_mod_tab(df, "Cluster",
+        "54 HE histology patch clusters (hierarchical: 5_1 = sub-cluster 1 of cluster 5). "
+        "See paper HE morphology figure for representative patches.",
+        "HE", top_n, task_label)
 
 with tab_ct:
     df = attribution_df(task_data, "CT")
-    n_ct = len(df)
+    _render_mod_tab(df, "Cluster",
+        f"{len(df)} CT morphology patch clusters (numeric IDs). "
+        "See paper CT morphology figure for representative patches.",
+        "CT", top_n, task_label)
+
+with st.expander("ℹ️ How to read these charts"):
     st.markdown(
-        f"<p style='color:{MUTED};font-size:0.82rem'>"
-        f"{n_ct} CT morphology patch clusters (numeric IDs). "
-        f"See CT morphology figure in paper for representative patches per cluster.</p>",
-        unsafe_allow_html=True,
+        """
+**Relative enrichment (%)** = (Δ-attention / max |Δ-attention| in this modality) × 100.
+
+Δ-attention = mean attention weight for that cluster in **high-risk** patients minus **low-risk** patients,
+averaged across all splits. Attention weights are softmax-normalised across all clusters within a modality,
+so absolute values are small (~1/N where N is number of clusters). The relative enrichment score makes
+cross-modality comparisons readable without changing the ranking.
+
+**Raw Δ-attention** is shown in scientific notation in the tables and on hover in the charts.
+
+Note: if all bars point in one direction (e.g. HE for death survival), it means that modality is
+used more for one risk group overall — not that individual clusters are uninformative. The ranking
+still tells you which clusters contribute most.
+        """,
+        unsafe_allow_html=False,
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**High-risk enriched (top 20)**")
-        top20 = df.head(20)[["cluster", "hi_score", "lo_score", "delta"]].copy()
-        top20.columns = ["Cluster", "Hi-risk attn", "Lo-risk attn", "Δ-attn"]
-        st.dataframe(
-            top20.style.background_gradient(subset=["Δ-attn"], cmap="Reds"),
-            height=480, hide_index=True,
-        )
+
+# ── Keep a divider before the cross-task section ─────────────────────────────
     with c2:
         st.markdown("**Low-risk enriched (bottom 20)**")
         bot20 = df.tail(20).sort_values("delta")[["cluster", "hi_score", "lo_score", "delta"]].copy()
@@ -322,8 +324,8 @@ if all_dfs:
         y=feat_list,
         colorscale="RdBu_r",
         zmid=0,
-        hovertemplate="<b>%{y}</b><br>%{x}: %{z:.5f}<extra></extra>",
-        colorbar=dict(title="Δ-attn", thickness=12),
+        hovertemplate="<b>%{y}</b><br>%{x}: %{z:.1f}%<extra></extra>",
+        colorbar=dict(title="Rel. Δ (%)", thickness=12),
     ))
     fig_ht.update_layout(
         **PLOTLY_THEME,
