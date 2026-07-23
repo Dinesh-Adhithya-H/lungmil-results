@@ -37,7 +37,7 @@ sleep 5
 
 echo ""
 echo "════════════════════════════════════════"
-echo "  PUBLIC URL : https://lungmil-results-chicago.de"
+echo "  PUBLIC URL : https://9bd44ca8-0eff-43ad-8808-2026cf09afa4.cfargotunnel.com"
 echo "  Password   : ${EXPLORER_PASSWORD:-lungmil2024}"
 echo "  Share both with collaborators."
 echo ""
