@@ -68,11 +68,13 @@ MODEL_BASE_COLORS = {
     "early": "#58a6ff",
     "late": "#7c83ff",
     "middle": "#bc8cff",
+    "set_mil_mt": "#f78166",
     "longitudinal_mk_mt": "#3fb950",
     "longitudinal_set_mil_mt": "#3fb950",
 }
 
 MODEL_DISPLAY = {
+    "set_mil_mt": "SetMIL-MT",
     "longitudinal_mk_mt": "LongitudinalSetMIL",
     "longitudinal_set_mil_mt": "LongitudinalSetMIL",
     "early": "Early fusion",
