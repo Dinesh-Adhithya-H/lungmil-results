@@ -37,8 +37,12 @@ PCA_CSV         = DATA_DIR / "pca_scores.csv"
 COHORT_JSON     = DATA_DIR / "cohort_summary.json"
 XMODAL_CSV      = DATA_DIR / "cross_modal_corr.csv"
 SAMPLE_TABLE    = DATA_DIR / "sample_table.csv"
-SETMILMT_CSV    = DATA_DIR / "setmilmt_preds.csv"
-SUMMARY_PNG_DIR = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged/patient_summaries")
+SETMILMT_CSV        = DATA_DIR / "setmilmt_preds.csv"
+BENCHMARK_RESULTS_CSV = DATA_DIR / "benchmark_results.csv"
+SUMMARY_PNG_DIR     = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged/patient_summaries")
+PAPER_INTERP_JSON   = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged/paper_interp_data.json")
+LONGI_INTERP_DIR    = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/longitudinal_mk_interp")
+PANEL_FIG_DIR       = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/set_mil_mt_interp/all_splits_merged")
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +227,34 @@ def load_sample_table() -> pd.DataFrame:
     if not SAMPLE_TABLE.exists():
         return pd.DataFrame()
     return pd.read_csv(SAMPLE_TABLE)
+
+
+@st.cache_data(show_spinner=False)
+def load_benchmark_results() -> pd.DataFrame:
+    """Load benchmark_results.csv (new format: phase,model,task,metric,mean,std,s0-s4).
+    Falls back to benchmark_summary.csv if new file not present."""
+    if BENCHMARK_RESULTS_CSV.exists():
+        return pd.read_csv(BENCHMARK_RESULTS_CSV)
+    if BENCHMARK_CSV.exists():
+        return pd.read_csv(BENCHMARK_CSV)
+    return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False)
+def load_paper_interp() -> dict:
+    if not PAPER_INTERP_JSON.exists():
+        return {}
+    import json
+    return json.loads(PAPER_INTERP_JSON.read_text())
+
+
+def longitudinal_summary_png(pid: str) -> Optional[Path]:
+    """Find longitudinal model patient summary PNG across all splits."""
+    for split_dir in sorted(LONGI_INTERP_DIR.glob("split*_fold0")):
+        p = split_dir / f"L0_summary_pid{pid}.png"
+        if p.exists():
+            return p
+    return None
 
 
 def available_data(pid: str) -> dict[str, bool]:

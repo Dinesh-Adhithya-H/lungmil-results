@@ -1,21 +1,37 @@
-"""Page 8 — Longitudinal Trajectories: survival curves, time-series risk, serial biopsies."""
+"""Page 8 — Longitudinal Trajectories: SetMIL-MT risk scores, KM curves, patient summaries."""
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
+import streamlit as st
+from pathlib import Path
+from PIL import Image
 
 st.set_page_config(page_title="Longitudinal", page_icon="📉", layout="wide")
 
-from utils.styles import card_css, BG, BG2, TEXT, MUTED, ACCENT, BORDER, CARD, PLOTLY_THEME, MOD_COLORS
+from utils.styles import card_css, metric_card, BG, BG2, TEXT, MUTED, ACCENT, BORDER, CARD, PLOTLY_THEME, MOD_COLORS
 from utils.data_loader import (
-    load_splits, load_predictions, patient_splits, patient_predictions,
-    patient_list, load_cluster_freq,
+    load_setmilmt, patient_list, patient_setmilmt,
+    setmilmt_summary_png, longitudinal_summary_png,
 )
 
 st.markdown(card_css(), unsafe_allow_html=True)
 
+TASK_COLORS = {
+    "score_acr_cls":  "#7c83ff",
+    "pct_acr_surv":   "#58a6ff",
+    "pct_clad_surv":  "#8E24AA",
+    "pct_death_surv": "#00897B",
+}
+TASK_LABELS = {
+    "score_acr_cls":  "ACR classif.",
+    "pct_acr_surv":   "ACR survival",
+    "pct_clad_surv":  "CLAD survival",
+    "pct_death_surv": "Death survival",
+}
+MOD_ORDER = ["HE", "BAL", "CT", "Clinical"]
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(f"<h3 style='color:{TEXT}'>📉 Longitudinal</h3>", unsafe_allow_html=True)
     patients = patient_list()
@@ -24,163 +40,206 @@ with st.sidebar:
     pid = st.selectbox("Patient", patients, index=default_idx)
     st.session_state["selected_patient"] = pid
     st.divider()
-    show_km    = st.checkbox("Kaplan-Meier", value=True)
-    show_risk  = st.checkbox("Risk trajectory", value=True)
-    show_clust = st.checkbox("Cluster trajectory", value=True)
+    show_km      = st.checkbox("Cohort KM curves", value=True)
+    show_traj    = st.checkbox("Risk trajectory", value=True)
+    show_mods    = st.checkbox("Modality availability", value=True)
+    show_setmil  = st.checkbox("SetMIL-MT summary panel", value=True)
+    show_longi   = st.checkbox("Longitudinal model panel", value=True)
+    st.divider()
+    show_tasks = st.multiselect(
+        "Tasks to plot",
+        list(TASK_LABELS.keys()),
+        default=list(TASK_LABELS.keys()),
+        format_func=lambda x: TASK_LABELS[x],
+    )
 
-st.markdown(f"<h2 style='color:{TEXT}'>📉 Longitudinal Trajectories</h2>", unsafe_allow_html=True)
+st.markdown(f"<h2 style='color:{TEXT}'>📉 Longitudinal — {pid}</h2>", unsafe_allow_html=True)
 
-all_splits = load_splits()
-all_splits["days_since_tx"] = (
-    all_splits["anchor_dt"] - all_splits.groupby("patient_id")["anchor_dt"].transform("min")
-).dt.days
+df_all = load_setmilmt()
+df_pt  = patient_setmilmt(pid)
 
-# ── Kaplan-Meier ──────────────────────────────────────────────────────────
-if show_km and "clad_status" in all_splits.columns:
-    st.markdown(f"<p class='section-title'>Kaplan-Meier Survival Curves (Cohort)</p>", unsafe_allow_html=True)
+# ── Cohort Kaplan-Meier from SetMIL-MT data ────────────────────────────────────
+if show_km and not df_all.empty:
+    st.markdown(f"<p class='section-title'>Cohort Kaplan-Meier (SetMIL-MT data)</p>", unsafe_allow_html=True)
 
-    pt_summary = (all_splits.sort_values("anchor_dt")
-                  .groupby("patient_id")[["clad_status","clad_days","death_status","death_days"]]
-                  .first().reset_index())
+    # Use first visit per patient for event/TTE
+    pt_first = df_all.sort_values("anchor_dt").groupby("patient_id").first().reset_index()
 
     fig_km = go.Figure()
-    for stat_col, days_col, color, name in [
-        ("clad_status", "clad_days", "#F78166", "CLAD-free"),
-        ("death_status","death_days","#D2A8FF", "Overall survival"),
+    for ev_col, tte_col, color, name in [
+        ("event_clad",  "tte_clad",  "#8E24AA", "CLAD-free survival"),
+        ("event_death", "tte_death", "#00897B", "Overall survival"),
     ]:
-        sub = pt_summary[[stat_col, days_col]].dropna()
-        if len(sub) < 3:
+        sub = pt_first[[ev_col, tte_col]].dropna()
+        if len(sub) < 5:
             continue
-        t = sub[days_col].values.astype(float)
-        e = sub[stat_col].values.astype(float)
-        order = np.argsort(t); t, e = t[order], e[order]
-        n_risk = len(t); surv = 1.0
-        xs, ys = [0], [100.0]
+        t = sub[tte_col].values.astype(float)
+        e = sub[ev_col].values.astype(float)
+        order = np.argsort(t)
+        t, e = t[order], e[order]
+        n_risk = len(t)
+        surv = 1.0
+        xs, ys = [0.0], [100.0]
         for ti, ei in zip(t, e):
             if ei == 1:
-                surv *= (1 - 1/n_risk)
-                xs.append(ti); ys.append(surv*100)
+                surv *= (1 - 1.0 / n_risk)
+                xs.append(float(ti))
+                ys.append(surv * 100)
             n_risk -= 1
-        fig_km.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=name,
-                                    line=dict(color=color, width=2, shape="hv"),
-                                    hovertemplate="Day %{x}: %{y:.1f}%<extra>"+name+"</extra>"))
+        fig_km.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines", name=name,
+            line=dict(color=color, width=2.5, shape="hv"),
+            hovertemplate=f"Day %{{x:.0f}}: %{{y:.1f}}%<extra>{name}</extra>",
+        ))
 
-    fig_km.update_layout(**PLOTLY_THEME, height=340,
-                         xaxis_title="Days post-transplant",
-                         yaxis_title="Event-free (%)", yaxis=dict(range=[0,105]),
-                         legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1))
+    fig_km.update_layout(
+        **PLOTLY_THEME, height=340,
+        xaxis_title="Days post-transplant",
+        yaxis_title="Event-free (%)",
+        yaxis=dict(range=[0, 105]),
+        legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
+    )
     st.plotly_chart(fig_km, use_container_width=True)
-
-# ── Risk score trajectory ─────────────────────────────────────────────────
-if show_risk:
-    preds  = patient_predictions(pid)
-    splits = patient_splits(pid)
     st.divider()
-    st.markdown(f"<p class='section-title'>Risk Score Trajectory — {pid}</p>", unsafe_allow_html=True)
-    if preds.empty:
-        st.info("No model predictions available for this patient.")
-    else:
-        prob_cols = [c for c in preds.columns if any(k in c for k in ["prob","score","pred","risk"])]
-        date_col  = "anchor_dt" if "anchor_dt" in preds.columns else None
-        if prob_cols and date_col:
-            fig_r = go.Figure()
-            colors_t = [ACCENT, "#3FB950", "#F78166", "#D2A8FF"]
-            for col, cc in zip(prob_cols[:4], colors_t):
-                v = preds[[date_col, col]].dropna()
-                if v.empty: continue
-                fig_r.add_trace(go.Scatter(x=v[date_col], y=v[col], mode="lines+markers",
-                                           name=col.replace("_prob","").replace("_score",""),
-                                           line=dict(color=cc, width=2), marker=dict(size=6),
-                                           hovertemplate="%{x|%Y-%m-%d}: %{y:.3f}<extra></extra>"))
-            if "acr_encoded" in splits.columns:
-                acr_pos = splits[splits["acr_encoded"] == 1]
-                if not acr_pos.empty:
-                    fig_r.add_trace(go.Scatter(x=acr_pos["anchor_dt"],
-                                               y=[0.95]*len(acr_pos), mode="markers",
-                                               name="ACR event",
-                                               marker=dict(color="#F85149", size=10, symbol="x"),
-                                               hovertemplate="%{x|%Y-%m-%d}: ACR<extra></extra>"))
-            fig_r.update_layout(**PLOTLY_THEME, height=300,
-                                yaxis_title="Risk score", yaxis=dict(range=[0,1]),
-                                legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1))
-            st.plotly_chart(fig_r, use_container_width=True)
-        else:
-            st.info("Prediction columns not in expected format.")
 
-# ── Cluster trajectory ────────────────────────────────────────────────────
-if show_clust:
+if df_pt.empty:
+    st.warning(f"No SetMIL-MT data for {pid}.")
+    st.stop()
+
+# Compute event absolute days
+t0 = df_pt["anchor_dt"].min()
+df_pt = df_pt.copy()
+df_pt["days"] = (df_pt["anchor_dt"] - t0).dt.days
+
+def _event_day(df, ev_col, tte_col):
+    rows = df[df[ev_col] == 1]
+    if rows.empty:
+        return None
+    row = rows.iloc[0]
+    return row["days"] + float(row[tte_col]) if pd.notna(row.get(tte_col)) else None
+
+clad_day  = _event_day(df_pt, "event_clad",  "tte_clad")
+death_day = _event_day(df_pt, "event_death", "tte_death")
+n_visits  = len(df_pt)
+is_flagged = df_pt["flagged"].any()
+
+# Metric row
+c1, c2, c3, c4 = st.columns(4)
+c1.markdown(metric_card("Visits", str(n_visits)), unsafe_allow_html=True)
+c2.markdown(metric_card("Follow-up", f"{df_pt['days'].max()}d"), unsafe_allow_html=True)
+c3.markdown(metric_card("CLAD", "event" if clad_day else "censored"), unsafe_allow_html=True)
+c4.markdown(metric_card("Death", "event" if death_day else "censored"), unsafe_allow_html=True)
+
+# ── Risk trajectory ───────────────────────────────────────────────────────────
+if show_traj:
     st.divider()
-    st.markdown(f"<p class='section-title'>Cluster Composition Over Time — {pid}</p>", unsafe_allow_html=True)
-    tabs = st.tabs(["H&E", "CT", "BAL"])
-    for tab, mod in zip(tabs, ["HE","CT","BAL"]):
-        with tab:
-            df_f = load_cluster_freq(mod)
-            if df_f.empty:
-                st.info(f"No {mod} data."); continue
-            ccols = sorted([c for c in df_f.columns if c.startswith("cluster_")],
-                           key=lambda x: int(x.split("_")[1]))
-            if not ccols: continue
-            pt_f = df_f[df_f["patient_id"]==pid].copy() if "patient_id" in df_f.columns else pd.DataFrame()
-            if pt_f.empty or len(pt_f) < 2:
-                st.info(f"Need ≥2 timepoints for {pid} in {mod}."); continue
-            if "anchor_dt" in pt_f.columns:
-                pt_f = pt_f.sort_values("anchor_dt")
-                xs = pt_f["anchor_dt"].dt.strftime("%Y-%m-%d").tolist()
-            else:
-                xs = [f"T{i+1}" for i in range(len(pt_f))]
-            fig_t = go.Figure()
-            pal = px.colors.qualitative.Plotly
-            for ci, col in enumerate(ccols):
-                fig_t.add_trace(go.Bar(name=f"C{ci}", x=xs, y=pt_f[col].values,
-                                       marker_color=pal[ci%len(pal)],
-                                       hovertemplate=f"C{ci}: %{{y:.2f}}<extra></extra>"))
-            fig_t.update_layout(**PLOTLY_THEME, barmode="stack", height=280,
-                                yaxis_title="Proportion",
-                                legend=dict(bgcolor=CARD, bordercolor=BORDER,
-                                            orientation="h", y=-0.4))
-            st.plotly_chart(fig_t, use_container_width=True)
+    st.markdown(f"<p class='section-title'>SetMIL-MT Risk Trajectory — {pid}</p>", unsafe_allow_html=True)
 
-# ── Cohort risk heatmap ────────────────────────────────────────────────────
-st.divider()
-st.markdown(f"<p class='section-title'>Cohort ACR Risk Heatmap (Time Post-Transplant)</p>",
-            unsafe_allow_html=True)
-all_preds = load_predictions()
-if not all_preds.empty:
-    m = all_splits[["patient_id","anchor_dt","days_since_tx","acr_encoded"]].copy()
-    ap2 = all_preds.merge(m, on=["patient_id","anchor_dt"], how="left")
-    prob_col = next((c for c in ap2.columns if "prob" in c or "score" in c), None)
-    if prob_col and "days_since_tx" in ap2.columns:
-        bins   = [0,90,180,365,730,1095,9999]
-        labels = ["0-90d","90-180d","6m-1y","1-2y","2-3y",">3y"]
-        ap2["tbin"] = pd.cut(ap2["days_since_tx"], bins=bins, labels=labels)
-        agg = ap2.groupby(["patient_id","tbin"])[prob_col].mean().unstack("tbin").reindex(columns=labels)
-        agg = agg.dropna(how="all")
-        if len(agg) > 0:
-            highlighted = pid if pid in agg.index else None
-            agg_sorted = agg.copy()
-            # sort by mean risk, put selected patient first
-            if highlighted:
-                pt_row = agg_sorted.loc[[highlighted]]
-                rest   = agg_sorted.drop(highlighted).sort_values(labels[0], na_position="last")
-                agg_sorted = pd.concat([pt_row, rest])
-            else:
-                agg_sorted = agg_sorted.sort_values(labels[0], na_position="last")
+    fig = go.Figure()
+    for task in show_tasks:
+        vals = df_pt[task].values.astype(float)
+        if np.all(np.isnan(vals)):
+            continue
+        fig.add_trace(go.Scatter(
+            x=df_pt["days"], y=vals,
+            mode="lines+markers",
+            name=TASK_LABELS[task],
+            line=dict(color=TASK_COLORS[task], width=2.2),
+            marker=dict(size=6, color=TASK_COLORS[task]),
+            hovertemplate=(
+                f"<b>{TASK_LABELS[task]}</b><br>"
+                "Day %{x}: %{y:.3f}<br>%{customdata}<extra></extra>"
+            ),
+            customdata=df_pt["anchor_dt"].dt.strftime("%Y-%m-%d"),
+        ))
 
-            fig_h = go.Figure(go.Heatmap(
-                z=agg_sorted.values, x=labels, y=agg_sorted.index.tolist(),
-                colorscale="RdYlBu_r", zmin=0, zmax=1,
-                colorbar=dict(title="Risk"),
-                hovertemplate="Patient %{y}<br>%{x}: %{z:.3f}<extra></extra>",
+    if clad_day is not None:
+        fig.add_vline(x=clad_day, line_color="#8E24AA", line_width=2,
+                      annotation_text="CLAD", annotation_font_color="#8E24AA",
+                      annotation_position="top left")
+    if death_day is not None:
+        fig.add_vline(x=death_day, line_color="#00897B", line_width=2,
+                      annotation_text="Death", annotation_font_color="#00897B",
+                      annotation_position="top right")
+    for _, row in df_pt.iterrows():
+        ev = row.get("event_acr")
+        if pd.notna(ev):
+            fig.add_vline(x=row["days"], line_color="#E53935" if ev == 1 else "#43A047",
+                          line_width=1, line_dash="dot", opacity=0.4)
+
+    fig.add_hline(y=0.5, line_dash="dot", line_color=MUTED, line_width=1)
+    fig.update_layout(
+        **PLOTLY_THEME, height=380,
+        xaxis_title="Days from transplant",
+        yaxis_title="Score (0=low risk, 1=high risk)",
+        yaxis=dict(range=[-0.05, 1.05]),
+        legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ── Modality availability ─────────────────────────────────────────────────────
+if show_mods:
+    st.divider()
+    st.markdown(f"<p class='section-title'>Modality Availability — {pid}</p>", unsafe_allow_html=True)
+
+    fig_mod = go.Figure()
+    for mi, mod in enumerate(MOD_ORDER):
+        present_days, absent_days = [], []
+        for _, row in df_pt.iterrows():
+            mods = set(str(row["present_mods"]).split(",")) if pd.notna(row["present_mods"]) else set()
+            (present_days if mod in mods else absent_days).append(row["days"])
+        if present_days:
+            fig_mod.add_trace(go.Scatter(
+                x=present_days, y=[mi]*len(present_days), mode="markers", name=mod,
+                marker=dict(symbol="square", size=10, color=MOD_COLORS[mod]),
+                hovertemplate=f"{mod}<br>Day %{{x}}<extra></extra>",
             ))
-            if highlighted and highlighted in agg_sorted.index:
-                idx = agg_sorted.index.tolist().index(highlighted)
-                fig_h.add_hline(y=idx, line_color="#FFD700", line_width=2, annotation_text=highlighted)
-            fig_h.update_layout(**PLOTLY_THEME,
-                                height=max(400, min(900, len(agg)*9)),
-                                xaxis_title="Post-transplant period",
-                                yaxis=dict(showticklabels=len(agg_sorted)<80))
-            st.plotly_chart(fig_h, use_container_width=True)
-    else:
-        st.info("No probability column in predictions.")
-else:
-    st.info("No predictions available. Run export_data.py.")
+        if absent_days:
+            fig_mod.add_trace(go.Scatter(
+                x=absent_days, y=[mi]*len(absent_days), mode="markers",
+                name=f"{mod} absent", showlegend=False,
+                marker=dict(symbol="x", size=7, color=MUTED),
+                hovertemplate=f"{mod} absent<br>Day %{{x}}<extra></extra>",
+            ))
+    if clad_day:
+        fig_mod.add_vline(x=clad_day, line_color="#8E24AA", line_width=2)
+    if death_day:
+        fig_mod.add_vline(x=death_day, line_color="#00897B", line_width=2)
+    fig_mod.update_layout(
+        **PLOTLY_THEME, height=220,
+        xaxis_title="Days from transplant",
+        yaxis=dict(tickvals=list(range(len(MOD_ORDER))), ticktext=MOD_ORDER, showgrid=False),
+        legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
+    )
+    st.plotly_chart(fig_mod, use_container_width=True)
+
+# ── Patient summary PNGs ──────────────────────────────────────────────────────
+col_a, col_b = st.columns(2)
+
+if show_setmil:
+    with col_a:
+        st.divider()
+        st.markdown(f"<p class='section-title'>SetMIL-MT Summary Panel</p>", unsafe_allow_html=True)
+        found = False
+        for _, row in df_pt.sort_values("days", ascending=False).iterrows():
+            s = str(row["stem"]).zfill(5) if str(row["stem"]).isdigit() else str(row["stem"])
+            p = setmilmt_summary_png(s)
+            if p and p.exists():
+                st.image(Image.open(p), use_container_width=True,
+                         caption=f"SetMIL-MT — {pid} (stem {s})")
+                found = True
+                break
+        if not found:
+            st.info("SetMIL-MT summary PNG not found for this patient.")
+
+if show_longi:
+    with col_b:
+        st.divider()
+        st.markdown(f"<p class='section-title'>Longitudinal Model Summary Panel</p>", unsafe_allow_html=True)
+        p = longitudinal_summary_png(pid)
+        if p and p.exists():
+            st.image(Image.open(p), use_container_width=True,
+                     caption=f"Longitudinal SetMIL — {pid}")
+        else:
+            st.info("Longitudinal model summary not found for this patient.")

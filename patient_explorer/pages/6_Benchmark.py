@@ -1,14 +1,9 @@
 # pages/6_Benchmark.py
-"""Page 6 — Model Performance Benchmark across all tasks, folds, and modalities."""
-
-import json
-from pathlib import Path
+"""Page 6 — Model Performance Benchmark: P1 unimodal + P2 multimodal results."""
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 import streamlit as st
 
 st.set_page_config(page_title="Benchmark", page_icon="📊", layout="wide")
@@ -18,231 +13,175 @@ from utils.styles import (
     BG, BG2, TEXT, MUTED, ACCENT, BORDER, CARD,
     TASK_COLORS, MOD_COLORS, PLOTLY_THEME,
 )
-from utils.data_loader import DATA_DIR
+from utils.data_loader import load_benchmark_results
 
 st.markdown(card_css(), unsafe_allow_html=True)
+
+# ── Load data ─────────────────────────────────────────────────────────────────
+df_all = load_benchmark_results()
+
+# ── Sidebar controls ──────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown(f"<h3 style='color:{TEXT}'>📊 Benchmark</h3>", unsafe_allow_html=True)
+    st.divider()
+
+    tasks_avail = sorted(df_all["task"].unique().tolist()) if not df_all.empty else []
+    task_sel = st.selectbox("Task", tasks_avail, index=0 if tasks_avail else 0)
+
+    metrics_avail = sorted(df_all["metric"].unique().tolist()) if not df_all.empty else []
+    metric_sel = st.selectbox("Metric", metrics_avail, index=0 if metrics_avail else 0)
+
+    show_splits = st.checkbox("Show per-split points", value=True)
+
 st.markdown(f"<h2 style='color:{TEXT}'>📊 Model Performance Benchmark</h2>", unsafe_allow_html=True)
 
-# ── Load benchmark data ──────────────────────────────────────────────────────
+if df_all.empty:
+    st.warning("benchmark_results.csv not found.")
+    st.stop()
 
-@st.cache_data(show_spinner=False)
-def load_benchmark() -> pd.DataFrame:
-    p = DATA_DIR / "benchmark_summary.csv"
-    if not p.exists():
-        return pd.DataFrame()
-    return pd.read_csv(p)
-
-
-@st.cache_data(show_spinner=False)
-def load_baselines() -> dict:
-    p = DATA_DIR.parent / "results" / "mm_abmil_v8" / "baselines_summary.json"
-    alt = DATA_DIR / "baselines_summary.json"
-    for path in [p, alt]:
-        if path.exists():
-            with open(path) as f:
-                return json.load(f)
-    return {}
-
-
-@st.cache_data(show_spinner=False)
-def load_fold_metrics() -> pd.DataFrame:
-    """Parse all per-fold metrics_*.json files into a single DataFrame."""
-    results_dir = DATA_DIR.parent / "results" / "mm_abmil_v8"
-    if not results_dir.exists():
-        return pd.DataFrame()
-    rows = []
-    for jf in results_dir.glob("metrics_split*_fold*_*.json"):
-        parts = jf.stem.split("_")
-        try:
-            fold_idx = next(i for i, p in enumerate(parts) if p.startswith("fold"))
-            fold = int(parts[fold_idx][4:])
-            variant_task = "_".join(parts[fold_idx + 1:])
-            # variant_task like "late_cls" or "middle_acr_surv"
-            variant_parts = variant_task.split("_")
-            variant = variant_parts[0]
-            task = "_".join(variant_parts[1:]) if len(variant_parts) > 1 else "unknown"
-        except Exception:
-            continue
-        with open(jf) as f:
-            d = json.load(f)
-        td = d.get("test", d)
-        row = {"fold": fold, "variant": variant, "task": task,
-               "model": f"{variant}_{task}"}
-        row["auc"]     = td.get("auc",     np.nan)
-        row["auprc"]   = td.get("auprc",   np.nan)
-        row["bacc"]    = td.get("bacc",    np.nan)
-        row["c_index"] = td.get("c_index", np.nan)
-        rows.append(row)
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-
-bench  = load_benchmark()
-folds  = load_fold_metrics()
-blines = load_baselines()
-
-# ── Build unified metrics table ───────────────────────────────────────────────
-if not folds.empty:
-    mean_df = (folds.groupby(["variant","task"])
-               [["auc","auprc","bacc","c_index"]]
-               .mean().reset_index())
-    mean_df["model"] = mean_df["variant"] + " + " + mean_df["task"]
-else:
-    mean_df = bench.copy() if not bench.empty else pd.DataFrame()
-
-# Baselines rows
-baseline_rows = []
-if blines:
-    for name, vals in blines.items():
-        if isinstance(vals, dict):
-            baseline_rows.append({
-                "model": name, "variant": "classical", "task": "multi",
-                "auc":     vals.get("test_auc",  np.nan),
-                "bacc":    vals.get("test_bacc", np.nan),
-                "c_index": vals.get("test_ci_acr", np.nan),
-                "auprc":   np.nan,
-            })
-baseline_df = pd.DataFrame(baseline_rows) if baseline_rows else pd.DataFrame()
+# ── Filter to selected task + metric ─────────────────────────────────────────
+df = df_all[(df_all["task"] == task_sel) & (df_all["metric"] == metric_sel)].copy()
+df = df.dropna(subset=["mean"])
 
 # ── Summary metric cards ──────────────────────────────────────────────────────
-st.markdown(f"<p class='section-title'>Best Performance</p>", unsafe_allow_html=True)
-
-if not mean_df.empty:
-    best_auc   = mean_df["auc"].max()
-    best_model = mean_df.loc[mean_df["auc"].idxmax(), "model"]
-    best_bacc  = mean_df["bacc"].max()
-    best_ci    = mean_df["c_index"].max()
+if not df.empty:
+    best_row = df.loc[df["mean"].idxmax()]
+    p1_df = df[df["phase"] == "P1"]
+    p2_df = df[df["phase"] == "P2"]
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(metric_card("Best AUROC", f"{best_auc:.3f}", best_model), unsafe_allow_html=True)
-    with c2: st.markdown(metric_card("Best BACC",  f"{best_bacc:.3f}"), unsafe_allow_html=True)
-    with c3: st.markdown(metric_card("Best C-index", f"{best_ci:.3f}"), unsafe_allow_html=True)
-    with c4: st.markdown(metric_card("# Models evaluated", str(len(mean_df))), unsafe_allow_html=True)
-else:
-    st.info("No benchmark data found. Results will appear after training completes.")
+    c1.markdown(metric_card("Best model", best_row["model"], f"{best_row['mean']:.3f}"), unsafe_allow_html=True)
+    c2.markdown(metric_card(f"Best {metric_sel}", f"{best_row['mean']:.3f}"), unsafe_allow_html=True)
+    c3.markdown(metric_card("P1 models", str(len(p1_df))), unsafe_allow_html=True)
+    c4.markdown(metric_card("P2 models", str(len(p2_df))), unsafe_allow_html=True)
 
 st.divider()
 
-# ── AUROC heatmap ─────────────────────────────────────────────────────────────
-st.markdown(f"<p class='section-title'>AUROC Heatmap (model × task)</p>", unsafe_allow_html=True)
+# ── Bar chart: all models for selected task+metric ────────────────────────────
+st.markdown(f"<p class='section-title'>{metric_sel} — {task_sel} (all models)</p>", unsafe_allow_html=True)
 
-if not mean_df.empty and "task" in mean_df.columns and "variant" in mean_df.columns:
-    tasks    = mean_df["task"].unique().tolist()
-    variants = mean_df["variant"].unique().tolist()
-    z = np.full((len(variants), len(tasks)), np.nan)
-    for i, v in enumerate(variants):
-        for j, t in enumerate(tasks):
-            row = mean_df[(mean_df["variant"]==v) & (mean_df["task"]==t)]
-            if len(row):
-                z[i, j] = row["auc"].values[0]
-    fig_hm = go.Figure(go.Heatmap(
-        z=z, x=tasks, y=variants,
-        colorscale="RdYlGn",
-        zmid=0.6, zmin=0.45, zmax=0.85,
-        text=np.where(np.isnan(z), "", np.round(z, 3).astype(str)),
-        texttemplate="%{text}",
-        colorbar=dict(title="AUROC"),
-        hovertemplate="Model: %{y}<br>Task: %{x}<br>AUROC: %{z:.3f}<extra></extra>",
-    ))
-    fig_hm.update_layout(**PLOTLY_THEME, height=300 + 30*len(variants),
-                         xaxis_title="Task", yaxis_title="Fusion variant")
-    st.plotly_chart(fig_hm, use_container_width=True)
-else:
-    st.info("Fold metrics not yet available. Run training to generate results.")
+PHASE_COLORS = {"P1": MOD_COLORS["HE"], "P2": ACCENT}
+MODEL_BASE_COLORS = {
+    "unimodal_HE": MOD_COLORS["HE"],
+    "unimodal_BAL": MOD_COLORS["BAL"],
+    "unimodal_CT": MOD_COLORS["CT"],
+    "unimodal_Clinical": MOD_COLORS["Clinical"],
+    "early": "#58a6ff",
+    "late": "#7c83ff",
+    "middle": "#bc8cff",
+    "mario_kempes": "#f78166",
+    "longitudinal_set_mil_mt": "#3fb950",
+}
 
-st.divider()
+if not df.empty:
+    fig = go.Figure()
 
-# ── Unimodal vs Multimodal comparison ────────────────────────────────────────
-st.markdown(f"<p class='section-title'>Unimodal vs Multimodal — ACR Classification</p>", unsafe_allow_html=True)
-
-# Pull unimodal baselines from baselines JSON
-unimodal_data = []
-for key in ["HE_acr","BAL_acr","CT_acr","Clinical_acr"]:
-    if blines.get("unimodal_baselines", {}).get(key):
-        v = blines["unimodal_baselines"][key]
-        unimodal_data.append({"model": key.replace("_acr",""), "auc": v.get("auc",np.nan),
-                               "type": "Unimodal"})
-# Pull unimodal_ablation from fold metrics json if available
-fold0_cls = DATA_DIR.parent / "results" / "mm_abmil_v8" / "metrics_split1_fold0_late_cls.json"
-if fold0_cls.exists():
-    with open(fold0_cls) as f:
-        d0 = json.load(f)
-    for mod, vals in d0.get("unimodal_ablation", {}).items():
-        unimodal_data.append({"model": f"{mod} (ablation)", "auc": vals.get("auc",np.nan),
-                               "type": "Unimodal (ablation)"})
-
-# Add multimodal
-if not mean_df.empty:
-    for _, row in mean_df[mean_df["task"].str.contains("cls", na=False)].iterrows():
-        unimodal_data.append({"model": row["variant"]+" fusion",
-                               "auc": row["auc"], "type": "Multimodal"})
-
-if unimodal_data:
-    um_df = pd.DataFrame(unimodal_data).dropna(subset=["auc"])
-    color_map = {"Unimodal": MUTED, "Unimodal (ablation)": MOD_COLORS["HE"],
-                 "Multimodal": ACCENT}
-    fig_um = go.Figure()
-    for typ in um_df["type"].unique():
-        sub = um_df[um_df["type"]==typ]
-        fig_um.add_trace(go.Bar(
-            name=typ, x=sub["model"], y=sub["auc"],
-            marker_color=color_map.get(typ, ACCENT),
-            text=sub["auc"].round(3), textposition="outside",
+    for phase in ["P1", "P2"]:
+        sub = df[df["phase"] == phase].sort_values("mean", ascending=False)
+        if sub.empty:
+            continue
+        bar_colors = [MODEL_BASE_COLORS.get(m, MUTED) for m in sub["model"]]
+        fig.add_trace(go.Bar(
+            name=f"Phase {phase}",
+            x=sub["model"],
+            y=sub["mean"],
+            marker_color=bar_colors,
+            error_y=dict(type="data", array=sub["std"].fillna(0).tolist(), visible=True,
+                         color=TEXT, thickness=1.5, width=4),
+            text=sub["mean"].round(3),
+            textposition="outside",
+            textfont=dict(color=TEXT, size=11),
+            hovertemplate="<b>%{x}</b><br>" + metric_sel + ": %{y:.3f}<extra>Phase " + phase + "</extra>",
         ))
-    fig_um.add_hline(y=0.5, line_dash="dash", line_color=MUTED, annotation_text="Random")
-    fig_um.update_layout(**PLOTLY_THEME, barmode="group",
-                         yaxis_title="AUROC", yaxis_range=[0.4, 0.9],
-                         title="ACR Classification: Modality Comparison", height=380)
-    st.plotly_chart(fig_um, use_container_width=True)
-else:
-    st.info("Unimodal comparison data not yet available.")
 
-st.divider()
+        # Per-split scatter overlay
+        if show_splits:
+            split_cols = [c for c in ["s0","s1","s2","s3","s4"] if c in sub.columns]
+            for _, row in sub.iterrows():
+                vals = [row[c] for c in split_cols if pd.notna(row.get(c))]
+                if vals:
+                    fig.add_trace(go.Scatter(
+                        x=[row["model"]] * len(vals),
+                        y=vals,
+                        mode="markers",
+                        marker=dict(color="white", size=5, opacity=0.7,
+                                    line=dict(color=BORDER, width=1)),
+                        showlegend=False,
+                        hovertemplate=f"{row['model']}<br>split: %{{y:.3f}}<extra></extra>",
+                    ))
 
-# ── Fold-level variance (violin) ─────────────────────────────────────────────
-st.markdown(f"<p class='section-title'>Cross-fold Variance</p>", unsafe_allow_html=True)
+    # Reference line at 0.5
+    fig.add_hline(y=0.5, line_dash="dot", line_color=MUTED, line_width=1,
+                  annotation_text="0.5", annotation_font_color=MUTED)
 
-if not folds.empty:
-    metric_sel = st.selectbox("Metric", ["auc", "bacc", "c_index", "auprc"], key="violin_metric")
-    task_sel   = st.multiselect("Tasks", folds["task"].unique().tolist(),
-                                 default=folds["task"].unique().tolist()[:4],
-                                 key="violin_tasks")
-    folds_sub = folds[folds["task"].isin(task_sel)] if task_sel else folds
-
-    fig_viol = go.Figure()
-    for var in folds_sub["variant"].unique():
-        sub = folds_sub[(folds_sub["variant"]==var)][metric_sel].dropna()
-        if len(sub):
-            fig_viol.add_trace(go.Violin(
-                y=sub.values, name=var,
-                box_visible=True, meanline_visible=True,
-                points="all", jitter=0.3,
-                opacity=0.8,
-            ))
-    fig_viol.update_layout(**PLOTLY_THEME, yaxis_title=metric_sel.upper(),
-                           title=f"Cross-fold {metric_sel.upper()} Distribution",
-                           height=380)
-    st.plotly_chart(fig_viol, use_container_width=True)
-
-st.divider()
-
-# ── Full metrics table ────────────────────────────────────────────────────────
-st.markdown(f"<p class='section-title'>All Results Table</p>", unsafe_allow_html=True)
-
-all_rows = []
-if not mean_df.empty:
-    all_rows.append(mean_df[["model","task","auc","auprc","bacc","c_index"]])
-if not baseline_df.empty:
-    all_rows.append(baseline_df[["model","task","auc","auprc","bacc","c_index"]])
-
-if all_rows:
-    all_df = pd.concat(all_rows, ignore_index=True)
-    sort_col = st.selectbox("Sort by", ["auc","auprc","bacc","c_index"], key="sort_metric")
-    all_df = all_df.sort_values(sort_col, ascending=False)
-    for col in ["auc","auprc","bacc","c_index"]:
-        if col in all_df.columns:
-            all_df[col] = all_df[col].round(4)
-    st.dataframe(
-        all_df.style.background_gradient(subset=["auc"], cmap="RdYlGn", vmin=0.4, vmax=0.85),
-        use_container_width=True, height=450,
+    ymax = df["mean"].max()
+    fig.update_layout(
+        **PLOTLY_THEME,
+        height=420,
+        barmode="group",
+        xaxis_title="Model",
+        yaxis_title=metric_sel,
+        yaxis=dict(range=[max(0, df["mean"].min() - 0.1), min(1.0, ymax + 0.12)]),
+        legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
+        xaxis=dict(tickangle=-30),
     )
+    st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No metrics data found yet.")
+    st.info(f"No data for task={task_sel}, metric={metric_sel}.")
+
+st.divider()
+
+# ── P1 vs P2 grouped heatmap: all tasks × models ──────────────────────────────
+st.markdown(f"<p class='section-title'>Overview heatmap — {metric_sel} across all tasks</p>", unsafe_allow_html=True)
+
+df_metric = df_all[df_all["metric"] == metric_sel].dropna(subset=["mean"])
+if not df_metric.empty:
+    tasks_all   = sorted(df_metric["task"].unique())
+    models_all  = df_metric.groupby("model")["mean"].mean().sort_values(ascending=False).index.tolist()
+    z = np.full((len(models_all), len(tasks_all)), np.nan)
+    text_z = [[""] * len(tasks_all) for _ in range(len(models_all))]
+    for i, m in enumerate(models_all):
+        for j, t in enumerate(tasks_all):
+            row = df_metric[(df_metric["model"] == m) & (df_metric["task"] == t)]
+            if not row.empty:
+                v = row["mean"].values[0]
+                z[i, j] = v
+                text_z[i][j] = f"{v:.3f}"
+
+    fig_hm = go.Figure(go.Heatmap(
+        z=z, x=tasks_all, y=models_all,
+        colorscale="RdYlGn", zmid=0.5, zmin=0.3, zmax=0.85,
+        text=text_z, texttemplate="%{text}",
+        colorbar=dict(title=metric_sel, tickfont=dict(color=TEXT)),
+        hovertemplate="<b>%{y}</b><br>%{x}: %{z:.3f}<extra></extra>",
+    ))
+    fig_hm.update_layout(
+        **PLOTLY_THEME,
+        height=80 + 35 * len(models_all),
+        xaxis_title="Task",
+        yaxis_title="Model",
+    )
+    st.plotly_chart(fig_hm, use_container_width=True)
+
+st.divider()
+
+# ── Full results table ────────────────────────────────────────────────────────
+st.markdown(f"<p class='section-title'>Full results table</p>", unsafe_allow_html=True)
+
+display_df = df_all.copy()
+split_cols = [c for c in ["s0","s1","s2","s3","s4"] if c in display_df.columns]
+for c in ["mean","std"] + split_cols:
+    if c in display_df.columns:
+        display_df[c] = display_df[c].round(4)
+
+col_filter = st.multiselect("Filter tasks", sorted(df_all["task"].unique()),
+                             default=sorted(df_all["task"].unique()))
+if col_filter:
+    display_df = display_df[display_df["task"].isin(col_filter)]
+
+display_df = display_df.sort_values(["phase","task","mean"], ascending=[True,True,False])
+st.dataframe(
+    display_df.style.background_gradient(subset=["mean"], cmap="RdYlGn", vmin=0.3, vmax=0.85),
+    use_container_width=True,
+    height=500,
+    hide_index=True,
+)
