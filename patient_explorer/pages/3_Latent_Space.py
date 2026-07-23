@@ -47,7 +47,7 @@ with model_tab:
             st.markdown(f"**{task_label}**")
             if img_path.exists():
                 img = Image.open(img_path)
-                st.image(img, use_container_width=True)
+                st.image(img, width="stretch")
             else:
                 st.info(f"Image not found: {img_path.name}")
 

@@ -124,7 +124,7 @@ if not df.empty:
         legend=dict(bgcolor=CARD, bordercolor=BORDER, borderwidth=1),
         xaxis=dict(tickangle=-30),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 else:
     st.info(f"No data for task={task_sel}, metric={metric_sel}.")
 
@@ -160,7 +160,7 @@ if not df_metric.empty:
         xaxis_title="Task",
         yaxis_title="Model",
     )
-    st.plotly_chart(fig_hm, use_container_width=True)
+    st.plotly_chart(fig_hm, width="stretch")
 
 st.divider()
 
@@ -181,7 +181,7 @@ if col_filter:
 display_df = display_df.sort_values(["phase","task","mean"], ascending=[True,True,False])
 st.dataframe(
     display_df.style.background_gradient(subset=["mean"], cmap="RdYlGn", vmin=0.3, vmax=0.85),
-    use_container_width=True,
+    width="stretch",
     height=500,
     hide_index=True,
 )

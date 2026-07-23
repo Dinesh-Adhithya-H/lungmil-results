@@ -63,7 +63,7 @@ with col1:
         fig.update_layout(**PLOTLY_THEME, barmode="group",
                           title="Modality Availability by ACR Status (%)",
                           yaxis_title="% of samples", height=320)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 with col2:
     # Days since transplant: has HE vs no HE
@@ -81,7 +81,7 @@ with col2:
         fig2.update_layout(**PLOTLY_THEME,
                            title="Days Since Transplant: HE Availability",
                            yaxis_title="Days", height=320)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
 st.divider()
 
@@ -121,7 +121,7 @@ else:
                            xaxis_title="HE Cluster", yaxis_title="Sample",
                            height=max(400, min(900, 12*len(he_sorted))),
                            yaxis=dict(showticklabels=len(he_sorted) < 80))
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width="stretch")
     else:
         st.info("Cluster columns or ACR labels not found in HE frequency data.")
 
@@ -181,7 +181,7 @@ def render_patient_mod(mod: str):
                       xaxis_title="Timepoint", yaxis_title="Proportion",
                       yaxis_range=[0, 1], height=350,
                       legend=dict(orientation="h", y=-0.25))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 tabs = st.tabs(["HE", "CT", "BAL"])
@@ -227,4 +227,4 @@ else:
                             yaxis=dict(tickvals=list(range(len(mod_cols_avail))),
                                        ticktext=[c.replace("has_","") for c in mod_cols_avail]),
                             height=300)
-    st.plotly_chart(fig_avail, use_container_width=True)
+    st.plotly_chart(fig_avail, width="stretch")

@@ -33,7 +33,7 @@ st.markdown(f"<h2 style='color:{TEXT}'>📅 Timeline — {pid}</h2>", unsafe_all
 # ── Full timeline figure ───────────────────────────────────────────────────
 fig = timeline_figure(splits, preds, ep)
 fig.update_layout(height=520)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # ── Episode summary table ─────────────────────────────────────────────────
 st.divider()
@@ -75,7 +75,7 @@ if ep is not None:
             yaxis=dict(gridcolor=BORDER),
             legend=dict(orientation="h", x=0, y=-0.2, font_size=10),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
 # ── Biopsy-level table ─────────────────────────────────────────────────────
 st.divider()
@@ -109,7 +109,7 @@ float_cols = [c for c in tbl.columns if tbl[c].dtype == float]
 fmt = {c: "{:.3f}" for c in float_cols if "prob" in c or "hazard" in c}
 st.dataframe(
     tbl.style.apply(_highlight_acr, axis=1).format(fmt, na_rep="—"),
-    use_container_width=True,
+    width="stretch",
     height=min(42 * len(tbl) + 40, 480),
 )
 

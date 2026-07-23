@@ -69,7 +69,7 @@ def _render_mod(mod: str, col_label: str):
             cohort_means[label] = sub[cluster_cols].mean()
 
     fig = cluster_freq_figure(patient_freq, cohort_means, cluster_names, mod)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # stacked bar: all timepoints for this patient
     if len(pt_rows) > 1 and "anchor_dt" in pt_rows.columns:
@@ -94,7 +94,7 @@ def _render_mod(mod: str, col_label: str):
             yaxis=dict(title="% patches", gridcolor=BORDER),
             showlegend=False,
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
 
 def _rainbow(n: int):
@@ -158,6 +158,6 @@ if radar_cats:
         margin=dict(l=40, r=40, t=20, b=20),
         showlegend=False,
     )
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_radar, width="stretch")
 else:
     st.info("Cluster frequency data not yet available. Run `export_data.py`.")

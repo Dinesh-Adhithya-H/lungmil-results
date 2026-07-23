@@ -55,7 +55,7 @@ K_FNAME = {
 
 def show_panel(path: Path, caption: str):
     if path.exists():
-        st.image(Image.open(path), use_container_width=True, caption=caption)
+        st.image(Image.open(path), width="stretch", caption=caption)
     else:
         st.caption(f"_{caption} not yet generated._")
 
@@ -123,7 +123,7 @@ if "Gate weights" in sections:
                 yaxis=dict(categoryorder="array", categoryarray=list(reversed(mods))),
                 margin=dict(l=10, r=80, t=20, b=40),
             )
-            st.plotly_chart(fig_gw, use_container_width=True)
+            st.plotly_chart(fig_gw, width="stretch")
         else:
             st.info("Gate weight data not available.")
 
@@ -167,7 +167,7 @@ if "Seed stratification" in sections:
                         yaxis=dict(range=[-(yabs * 1.35), yabs * 1.35]),
                         margin=dict(t=10, b=40),
                     )
-                    st.plotly_chart(fig_sa, use_container_width=True)
+                    st.plotly_chart(fig_sa, width="stretch")
         else:
             st.info("Seed Δα data not available.")
 
