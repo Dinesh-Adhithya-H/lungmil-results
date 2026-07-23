@@ -28,35 +28,18 @@ ssh -o StrictHostKeyChecking=no \
     echo "SSH tunnel OK → hpc-submit01:8501" || \
     echo "SSH tunnel failed (Cloudflare will still work)"
 
-# ── Cloudflare tunnel (public HTTPS URL for external collaborators) ─────────
+# ── Cloudflare named tunnel (fixed URL: https://lungmil-results-chicago.de) ──
 CFDIR=/home/aih/dinesh.haridoss/.local/bin
-mkdir -p "$CFDIR"
-if [ ! -f "$CFDIR/cloudflared" ]; then
-    echo "Downloading cloudflared..."
-    wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
-         -O "$CFDIR/cloudflared" && chmod +x "$CFDIR/cloudflared"
-fi
-
 CF_LOG=/home/aih/dinesh.haridoss/logs/cloudflared_$$.log
-"$CFDIR/cloudflared" tunnel --url http://localhost:8501 \
-    --no-autoupdate 2>"$CF_LOG" &
+"$CFDIR/cloudflared" tunnel --no-autoupdate run lungmil-explorer 2>"$CF_LOG" &
 CF_PID=$!
-
-for i in $(seq 1 20); do
-    CF_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | head -1)
-    [ -n "$CF_URL" ] && break
-    sleep 1
-done
+sleep 5
 
 echo ""
 echo "════════════════════════════════════════"
-if [ -n "$CF_URL" ]; then
-    echo "  PUBLIC URL : $CF_URL"
-    echo "  Password   : ${EXPLORER_PASSWORD:-lungmil2024}"
-    echo "  Share both with collaborators."
-else
-    echo "  Cloudflare URL not found — check $CF_LOG"
-fi
+echo "  PUBLIC URL : https://lungmil-results-chicago.de"
+echo "  Password   : ${EXPLORER_PASSWORD:-lungmil2024}"
+echo "  Share both with collaborators."
 echo ""
 echo "  On-campus / VPN:"
 echo "  ssh -L 8501:localhost:8501 dinesh.haridoss@hpc-submit01.scidom.de"
