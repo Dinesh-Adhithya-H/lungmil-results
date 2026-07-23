@@ -245,7 +245,7 @@ def load_sample_table() -> pd.DataFrame:
     return pd.read_csv(SAMPLE_TABLE)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_benchmark_results() -> pd.DataFrame:
     """Load benchmark_results.csv (new format: phase,model,task,metric,mean,std,s0-s4).
     Falls back to benchmark_summary.csv if new file not present."""
