@@ -51,26 +51,28 @@ with st.sidebar:
     filter_clad  = st.checkbox("Has CLAD event", value=False)
     filter_death = st.checkbox("Has death event", value=False)
 
-    # Build filtered patient list
-    df_pts = df_all.groupby("patient_id").first().reset_index()
+    # Build filtered patient list — use max() per patient so ANY visit with event=1 counts
+    pt_events = df_all.groupby("patient_id").agg(
+        ev_clad=("event_clad", "max"),
+        ev_death=("event_death", "max"),
+        ev_flag=("flagged", "max"),
+    ).reset_index()
+    mask = pd.Series([True] * len(pt_events), index=pt_events.index)
     if show_flagged_only:
-        flagged_ids = df_all[df_all["flagged"] == True]["patient_id"].unique()
-        df_pts = df_pts[df_pts["patient_id"].isin(flagged_ids)]
+        mask &= pt_events["ev_flag"].astype(bool)
     if filter_clad:
-        clad_ids = df_all[df_all["event_clad"] == 1]["patient_id"].unique()
-        df_pts = df_pts[df_pts["patient_id"].isin(clad_ids)]
+        mask &= pt_events["ev_clad"] > 0
     if filter_death:
-        death_ids = df_all[df_all["event_death"] == 1]["patient_id"].unique()
-        df_pts = df_pts[df_pts["patient_id"].isin(death_ids)]
-
-    patients = sorted(df_pts["patient_id"].tolist())
+        mask &= pt_events["ev_death"] > 0
+    patients = sorted(pt_events.loc[mask, "patient_id"].tolist())
     if not patients:
         st.warning("No patients match filters.")
         st.stop()
+    st.caption(f"{len(patients)} patient(s) shown")
 
     default_pid = st.session_state.get("selected_patient", patients[0])
     default_idx = patients.index(default_pid) if default_pid in patients else 0
-    pid = st.selectbox("Patient", patients, index=default_idx)
+    pid = st.selectbox("Patient", patients, index=default_idx, key="setmil_pid")
     st.session_state["selected_patient"] = pid
 
     st.divider()

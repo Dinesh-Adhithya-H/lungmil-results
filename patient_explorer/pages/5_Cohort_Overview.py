@@ -18,7 +18,7 @@ from utils.styles import (
     BG, BG2, TEXT, MUTED, ACCENT, BORDER, CARD,
     ACR_COLORS, MOD_COLORS, PLOTLY_THEME,
 )
-from utils.data_loader import load_splits, DATA_DIR
+from utils.data_loader import load_splits, load_setmilmt, DATA_DIR
 
 st.markdown(card_css(), unsafe_allow_html=True)
 st.markdown(f"<h2 style='color:{TEXT}'>🌍 Cohort Overview</h2>", unsafe_allow_html=True)
@@ -228,3 +228,100 @@ if "days_since_tx" in splits.columns:
         st.plotly_chart(fig8, use_container_width=True)
 else:
     st.info("days_since_tx column not available.")
+
+st.divider()
+
+# ── Row 5: CLAD & Death survival distributions ────────────────────────────────
+st.markdown(f"<p class='section-title'>Outcome Survival Distributions</p>", unsafe_allow_html=True)
+
+df_smt = load_setmilmt()
+if not df_smt.empty:
+    # Per-patient: first visit (days_from_tx=0) has tte = time-to-event from transplant
+    pt_surv = (
+        df_smt.sort_values("days_from_tx")
+        .groupby("patient_id")
+        .first()
+        .reset_index()[["patient_id", "event_clad", "tte_clad", "event_death", "tte_death"]]
+    )
+
+    def km_curve(times, events):
+        """Kaplan-Meier estimator."""
+        df_km = pd.DataFrame({"time": times, "event": events}).sort_values("time").reset_index(drop=True)
+        at_risk = len(df_km)
+        T, S = [0], [1.0]
+        for _, row in df_km.iterrows():
+            if row["event"] > 0:
+                S.append(S[-1] * (1 - 1 / max(at_risk, 1)))
+                T.append(row["time"] / 365.25)  # convert days → years
+            at_risk -= 1
+        return T, S
+
+    col_c, col_d = st.columns(2)
+    with col_c:
+        times_c = pt_surv["tte_clad"].dropna().values
+        events_c = pt_surv["event_clad"].fillna(0).values[:len(times_c)]
+        T_c, S_c = km_curve(times_c, events_c)
+        n_clad_ev = int((pt_surv["event_clad"] > 0).sum())
+        fig_c = go.Figure()
+        fig_c.add_trace(go.Scatter(
+            x=T_c, y=S_c, mode="lines", name="CLAD-free survival",
+            line=dict(color="#8E24AA", width=2.5, shape="hv"),
+            fill="tozeroy", fillcolor="rgba(142,36,170,0.1)",
+        ))
+        fig_c.update_layout(
+            **PLOTLY_THEME,
+            title=f"CLAD-free Survival (n={n_clad_ev} events)",
+            xaxis_title="Years from transplant",
+            yaxis_title="Survival probability",
+            yaxis=dict(range=[0, 1.05]),
+            height=340,
+        )
+        st.plotly_chart(fig_c, use_container_width=True)
+
+        # TTE histogram
+        fig_ch = go.Figure()
+        clad_ev = pt_surv[pt_surv["event_clad"] > 0]["tte_clad"].dropna() / 365.25
+        clad_cx = pt_surv[pt_surv["event_clad"] <= 0]["tte_clad"].dropna() / 365.25
+        fig_ch.add_trace(go.Histogram(x=clad_ev, name="CLAD event", nbinsx=20,
+                                       marker_color="#8E24AA", opacity=0.85))
+        fig_ch.add_trace(go.Histogram(x=clad_cx, name="Censored", nbinsx=20,
+                                       marker_color=MUTED, opacity=0.5))
+        fig_ch.update_layout(**PLOTLY_THEME, barmode="overlay",
+                              title="Time to CLAD (years)", xaxis_title="Years",
+                              yaxis_title="# Patients", height=260)
+        st.plotly_chart(fig_ch, use_container_width=True)
+
+    with col_d:
+        times_d = pt_surv["tte_death"].dropna().values
+        events_d = pt_surv["event_death"].fillna(0).values[:len(times_d)]
+        T_d, S_d = km_curve(times_d, events_d)
+        n_death_ev = int((pt_surv["event_death"] > 0).sum())
+        fig_d = go.Figure()
+        fig_d.add_trace(go.Scatter(
+            x=T_d, y=S_d, mode="lines", name="Overall survival",
+            line=dict(color="#00897B", width=2.5, shape="hv"),
+            fill="tozeroy", fillcolor="rgba(0,137,123,0.1)",
+        ))
+        fig_d.update_layout(
+            **PLOTLY_THEME,
+            title=f"Overall Survival (n={n_death_ev} events)",
+            xaxis_title="Years from transplant",
+            yaxis_title="Survival probability",
+            yaxis=dict(range=[0, 1.05]),
+            height=340,
+        )
+        st.plotly_chart(fig_d, use_container_width=True)
+
+        fig_dh = go.Figure()
+        death_ev = pt_surv[pt_surv["event_death"] > 0]["tte_death"].dropna() / 365.25
+        death_cx = pt_surv[pt_surv["event_death"] <= 0]["tte_death"].dropna() / 365.25
+        fig_dh.add_trace(go.Histogram(x=death_ev, name="Death event", nbinsx=20,
+                                       marker_color="#00897B", opacity=0.85))
+        fig_dh.add_trace(go.Histogram(x=death_cx, name="Censored", nbinsx=20,
+                                       marker_color=MUTED, opacity=0.5))
+        fig_dh.update_layout(**PLOTLY_THEME, barmode="overlay",
+                              title="Time to Death (years)", xaxis_title="Years",
+                              yaxis_title="# Patients", height=260)
+        st.plotly_chart(fig_dh, use_container_width=True)
+else:
+    st.info("Survival data not available (setmilmt_preds.csv missing).")
