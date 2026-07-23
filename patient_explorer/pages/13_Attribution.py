@@ -11,6 +11,17 @@ st.set_page_config(page_title="Feature Attribution", page_icon="🔍", layout="w
 
 from utils.styles import card_css, TEXT, MUTED, BG, BG2, BORDER, PLOTLY_THEME, CARD
 
+# ── HE cluster biological name map ────────────────────────────────────────────
+_HE_MAP_PATH = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/results/cluster_name_maps/HE_cluster_map.json")
+
+@st.cache_data(show_spinner=False)
+def _load_he_map():
+    if _HE_MAP_PATH.exists():
+        return json.loads(_HE_MAP_PATH.read_text())
+    return {}
+
+HE_BIO_MAP = _load_he_map()
+
 st.markdown(card_css(), unsafe_allow_html=True)
 st.markdown(f"<h2 style='color:{TEXT}'>🔍 Feature Attribution</h2>", unsafe_allow_html=True)
 st.markdown(
@@ -65,13 +76,16 @@ def attribution_df(task_data, modality: str) -> pd.DataFrame:
     # Normalize to relative enrichment: % of max |delta| in this modality
     max_abs = np.abs(delta).max()
     rel = (delta / max_abs * 100) if max_abs > 0 else delta * 0
-    return pd.DataFrame({
+    df = pd.DataFrame({
         "cluster": names,
         "hi_score": hi,
         "lo_score": lo,
         "delta_raw": delta,
         "delta": rel,          # relative enrichment in %
-    }).sort_values("delta", ascending=False).reset_index(drop=True)
+    })
+    if modality == "HE" and HE_BIO_MAP:
+        df["bio_category"] = df["cluster"].map(lambda c: HE_BIO_MAP.get(c, "Unknown"))
+    return df.sort_values("delta", ascending=False).reset_index(drop=True)
 
 def bar_chart(df: pd.DataFrame, mod: str, top_n: int, task_label: str) -> go.Figure:
     col_pos, col_neg = MOD_COLORS[mod]
@@ -85,18 +99,38 @@ def bar_chart(df: pd.DataFrame, mod: str, top_n: int, task_label: str) -> go.Fig
 
     colors = [col_pos if v >= 0 else col_neg for v in combined["delta"]]
 
-    fig = go.Figure(go.Bar(
-        x=combined["delta"],
-        y=combined["cluster"],
-        orientation="h",
-        marker_color=colors,
-        customdata=combined["delta_raw"],
-        hovertemplate=(
+    # For HE: append bio category to y-axis labels
+    has_bio = "bio_category" in combined.columns
+    y_labels = (
+        [f"{c} ({b})" for c, b in zip(combined["cluster"], combined["bio_category"])]
+        if has_bio else combined["cluster"].tolist()
+    )
+
+    # customdata: [delta_raw, bio_category (or "")]
+    if has_bio:
+        customdata = np.column_stack([combined["delta_raw"], combined["bio_category"]])
+        hover = (
+            "<b>%{customdata[1]}</b> (%{y})<br>"
+            "Relative enrichment: %{x:.1f}%<br>"
+            "Δ-attention (raw): %{customdata[0]:.2e}<br>"
+            "<extra></extra>"
+        )
+    else:
+        customdata = combined["delta_raw"].values
+        hover = (
             "<b>%{y}</b><br>"
             "Relative enrichment: %{x:.1f}%<br>"
             "Δ-attention (raw): %{customdata:.2e}<br>"
             "<extra></extra>"
-        ),
+        )
+
+    fig = go.Figure(go.Bar(
+        x=combined["delta"],
+        y=y_labels,
+        orientation="h",
+        marker_color=colors,
+        customdata=customdata,
+        hovertemplate=hover,
         text=[f"{v:+.0f}%" for v in combined["delta"]],
         textposition="outside",
         textfont=dict(size=9, color=TEXT),
@@ -108,8 +142,8 @@ def bar_chart(df: pd.DataFrame, mod: str, top_n: int, task_label: str) -> go.Fig
             title="Relative Δ-attention (% of max, high-risk − low-risk)",
             zeroline=True, zerolinecolor=BORDER, zerolinewidth=1.5,
         ),
-        yaxis=dict(tickfont=dict(size=10)),
-        height=max(300, len(combined) * 22 + 80),
+        yaxis=dict(tickfont=dict(size=9 if has_bio else 10)),
+        height=max(300, len(combined) * 24 + 80),
         margin=dict(l=10, r=60, t=40, b=30),
         bargap=0.25,
     )
@@ -197,9 +231,15 @@ def _render_mod_tab(df, col_label, description, mod, top_n, task_label):
         unsafe_allow_html=True,
     )
 
+    has_bio = "bio_category" in df.columns
+
     def fmt_tbl(sub, cmap):
-        out = sub[["cluster", "delta_raw", "delta"]].copy()
-        out.columns = [col_label, "Δ-attention (raw)", "Rel. enrichment (%)"]
+        if has_bio:
+            out = sub[["cluster", "bio_category", "delta_raw", "delta"]].copy()
+            out.columns = [col_label, "Biological category", "Δ-attention (raw)", "Rel. enrichment (%)"]
+        else:
+            out = sub[["cluster", "delta_raw", "delta"]].copy()
+            out.columns = [col_label, "Δ-attention (raw)", "Rel. enrichment (%)"]
         out["Δ-attention (raw)"] = out["Δ-attention (raw)"].map(lambda x: f"{x:.2e}")
         return out.style.background_gradient(subset=["Rel. enrichment (%)"], cmap=cmap)
 
@@ -237,8 +277,9 @@ with tab_clinical:
 with tab_he:
     df = attribution_df(task_data, "HE")
     _render_mod_tab(df, "Cluster",
-        "54 HE histology patch clusters (hierarchical: 5_1 = sub-cluster 1 of cluster 5). "
-        "See paper HE morphology figure for representative patches.",
+        "54 HE histology patch clusters. Cluster ID format: macro_sub (e.g. 5_1 = sub-cluster 1 of macro "
+        "cluster 5). Biological category shows the tissue morphology type (Alveolar, Bronchial, etc.). "
+        "Bar chart y-axis shows cluster ID with category in parentheses.",
         "HE", top_n, task_label)
 
 with tab_ct:
