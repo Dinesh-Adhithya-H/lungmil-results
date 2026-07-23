@@ -45,11 +45,52 @@ done
 URL_FILE=/home/aih/dinesh.haridoss/logs/current_app_url.txt
 echo "$CF_URL" > "$URL_FILE"
 
+# ── Update GitHub Pages redirect (permanent link auto-forwards here) ──────────
+GH_TOKEN=$(cat /home/aih/dinesh.haridoss/.secrets/github_token 2>/dev/null || echo "")
+GH_REPO="Dinesh-Adhithya-H/lungmil-results"
+GH_FILE="index.html"
+
+HTML_CONTENT="<!DOCTYPE html>
+<html>
+<head>
+  <meta charset=\"utf-8\">
+  <title>LungMIL Explorer</title>
+  <meta http-equiv=\"refresh\" content=\"0; url=${CF_URL}\">
+  <style>
+    body { font-family: sans-serif; background: #0d1117; color: #c9d1d9; display: flex;
+           align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    a { color: #58a6ff; font-size: 1.2em; }
+  </style>
+</head>
+<body>
+  <div>
+    <p>Redirecting to LungMIL Explorer...</p>
+    <p><a href=\"${CF_URL}\">${CF_URL}</a></p>
+    <p style=\"font-size:0.8em;color:#8b949e\">Password: lungmil2024</p>
+  </div>
+</body>
+</html>"
+
+# Get current file SHA (required for updates)
+SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
+  "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" \
+  | grep -o '"sha": "[^"]*"' | head -1 | cut -d'"' -f4)
+
+ENCODED=$(echo "$HTML_CONTENT" | base64 -w 0)
+curl -s -X PUT \
+  -H "Authorization: token $GH_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" \
+  -d "{\"message\":\"update redirect to $CF_URL\",\"content\":\"$ENCODED\",\"sha\":\"$SHA\"}" \
+  | grep -o '"html_url":"[^"]*"' | head -1 | cut -d'"' -f4 \
+  | grep -q "github" && echo "GitHub Pages updated → https://dinesh-adhithya-h.github.io/lungmil-results/" \
+  || echo "GitHub Pages update failed (tunnel still works)"
+
 echo ""
 echo "════════════════════════════════════════"
-echo "  PUBLIC URL : $CF_URL"
+echo "  PERMANENT  : https://dinesh-adhithya-h.github.io/lungmil-results/"
+echo "  DIRECT URL : $CF_URL"
 echo "  Password   : ${EXPLORER_PASSWORD:-lungmil2024}"
-echo "  (URL changes on restart — always find current URL at: $URL_FILE)"
 echo ""
 echo "  On-campus / VPN:"
 echo "  ssh -L 8501:localhost:8501 dinesh.haridoss@hpc-submit01.scidom.de"
