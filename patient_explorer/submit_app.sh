@@ -9,8 +9,9 @@
 #SBATCH --output=/home/aih/dinesh.haridoss/logs/explorer_app_%j.out
 
 # ── Auto-resubmit on wall-time (24/7 operation) ───────────────────────────────
-SCRIPT_PATH="$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | grep -oP 'Command=\K\S+' || echo "/ictstr01/home/aih/dinesh.haridoss/chicago_mil/patient_explorer/submit_app.sh")"
-trap 'echo "[wall-time] Resubmitting for 24/7 operation..."; sbatch '"$SCRIPT_PATH"'; kill $CF_PID 2>/dev/null; exit 0' USR1
+SCRIPT_PATH="/ictstr01/home/aih/dinesh.haridoss/chicago_mil/patient_explorer/submit_app.sh"
+_resubmit() { echo "[wall-time] Resubmitting..."; sbatch "$SCRIPT_PATH"; kill "$CF_PID" 2>/dev/null; exit 0; }
+trap '_resubmit' USR1 TERM
 
 source /home/aih/dinesh.haridoss/miniconda3/etc/profile.d/conda.sh
 conda activate chicago
