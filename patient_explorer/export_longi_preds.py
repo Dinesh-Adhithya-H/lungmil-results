@@ -31,6 +31,10 @@ SPLITS_CSV = Path("/home/aih/dinesh.haridoss/chicago/plots/multimodal_splits_nes
 RESULTS_ROOT = ROOT / "results" / "mm_abmil_v8"
 OUT_CSV = ROOT / "patient_explorer" / "data" / "longi_preds.csv"
 
+# Build stem → anchor_dt lookup from splits CSV
+_splits_df = pd.read_csv(SPLITS_CSV, parse_dates=["anchor_dt"])
+STEM_TO_DATE = dict(zip(_splits_df["file"].astype(str).str.zfill(5), _splits_df["anchor_dt"]))
+
 TASKS = ["acr_cls", "acr_surv", "clad_surv", "death_surv"]
 TASK_DIR = {"acr_cls": "cls", "acr_surv": "acr_surv", "clad_surv": "clad_surv", "death_surv": "death_surv"}
 
@@ -155,7 +159,7 @@ def main():
             records = pdata["records"]
             for i, rec in enumerate(records):
                 stem = rec.get("stem", "")
-                adt = rec.get("anchor_dt")
+                adt = STEM_TO_DATE.get(str(stem).zfill(5))
                 label = rec.get("label")
                 tte_acr = rec.get("tte_acr")
                 event_acr = rec.get("event_acr")
