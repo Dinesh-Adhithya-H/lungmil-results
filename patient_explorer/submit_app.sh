@@ -36,25 +36,26 @@ CF_LOG=/home/aih/dinesh.haridoss/logs/cloudflared_$$.log
     --no-autoupdate 2>"$CF_LOG" &
 CF_PID=$!
 
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
     CF_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | head -1)
     [ -n "$CF_URL" ] && break
-    sleep 1
+    sleep 2
 done
+# Extra wait to ensure tunnel is fully registered before updating GitHub Pages
+sleep 10
 
 # Write current URL to a stable file collaborators can check
 URL_FILE=/home/aih/dinesh.haridoss/logs/current_app_url.txt
 echo "$CF_URL" > "$URL_FILE"
 
-# ── Update GitHub Pages redirect (permanent link auto-forwards here) ──────────
+# ── Update redirect_url.txt on GitHub (index.html fetches this at runtime) ────
 GH_TOKEN=$(cat /home/aih/dinesh.haridoss/.secrets/github_token 2>/dev/null || echo "")
 GH_REPO="Dinesh-Adhithya-H/lungmil-results"
-GH_FILE="index.html"
+GH_FILE="redirect_url.txt"
 
-HTML="<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LungMIL Explorer</title><script>window.location.replace(\"${CF_URL}\");</script><style>body{font-family:sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}a{color:#58a6ff;font-size:1.2em}</style></head><body><div><p>Redirecting to LungMIL Explorer...</p><p><a href=\"${CF_URL}\">${CF_URL}</a></p><p style=\"font-size:.8em;color:#8b949e\">Password: lungmil2024</p></div></body></html>"
 SHA=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sha',''))" 2>/dev/null)
-ENCODED=$(printf '%s' "$HTML" | base64 -w 0)
-curl -s -X PUT -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" -d "{\"message\":\"update redirect\",\"content\":\"${ENCODED}\",\"sha\":\"${SHA}\"}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('GitHub Pages updated ✓' if 'content' in d else 'Pages update failed: '+d.get('message','?'))" 2>/dev/null || echo "GitHub Pages update failed"
+ENCODED=$(printf '%s' "${CF_URL}" | base64 -w 0)
+curl -s -X PUT -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}" -d "{\"message\":\"update tunnel url\",\"content\":\"${ENCODED}\",\"sha\":\"${SHA}\"}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('GitHub Pages updated ✓' if 'content' in d else 'Pages update failed: '+d.get('message','?'))" 2>/dev/null || echo "GitHub Pages update failed"
 
 echo ""
 echo "════════════════════════════════════════"
