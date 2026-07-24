@@ -54,7 +54,7 @@ def load_model(split: int, task_dir: str, device: torch.device):
     }
     build_task = task_key_map[task_dir]
 
-    model = build_model_v8("longitudinal_set_mil_mt", task=build_task)
+    model = build_model_v8("longitudinal_mk_mt", task=build_task)
     state = torch.load(model_pt, map_location=device)
     if isinstance(state, dict) and "model_state_dict" in state:
         state = state["model_state_dict"]
