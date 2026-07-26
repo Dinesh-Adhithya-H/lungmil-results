@@ -69,7 +69,7 @@ echo "  → http://localhost:8501"
 echo "════════════════════════════════════════"
 
 export EXPLORER_DATA="$(pwd)/data"
-export EXPLORER_PASSWORD="${EXPLORER_PASSWORD:-lungmil2024}"
+export EXPLORER_PASSWORD="${EXPLORER_PASSWORD:-$(cat /home/aih/dinesh.haridoss/.secrets/app_password 2>/dev/null || echo "")}"
 
 streamlit run app.py \
     --server.port 8501 \
@@ -78,3 +78,7 @@ streamlit run app.py \
     2>&1
 
 kill $CF_PID 2>/dev/null
+
+# ── Always resubmit when streamlit exits (crash or normal exit) ───────────────
+echo "[exit] Streamlit exited — resubmitting job"
+sbatch "$SCRIPT_PATH"

@@ -33,10 +33,15 @@ OUT_CSV = ROOT / "patient_explorer" / "data" / "longi_preds.csv"
 
 # Build stem → anchor_dt lookup from splits CSV
 _splits_df = pd.read_csv(SPLITS_CSV, parse_dates=["anchor_dt"])
-STEM_TO_DATE = dict(zip(_splits_df["file"].astype(str).str.zfill(5), _splits_df["anchor_dt"]))
+STEM_TO_DATE = dict(zip(
+    _splits_df["file"].astype(str).str.replace(".pt", "", regex=False).str.zfill(5),
+    _splits_df["anchor_dt"]
+))
 
 TASKS = ["acr_cls", "acr_surv", "clad_surv", "death_surv"]
 TASK_DIR = {"acr_cls": "cls", "acr_surv": "acr_surv", "clad_surv": "clad_surv", "death_surv": "death_surv"}
+# Internal task keys used by the model (TASK_GROUPS in builders.py)
+TASK_INTERNAL = {"acr_cls": "acr_cls", "acr_surv": "acr_surv", "clad_surv": "clad", "death_surv": "death"}
 
 
 def load_model(split: int, task_dir: str, device: torch.device):
@@ -68,14 +73,9 @@ def load_model(split: int, task_dir: str, device: torch.device):
     return model
 
 
-def get_task_list(task_dir: str):
-    """Map task_dir → task list used by extract function."""
-    return {
-        "cls":        ["acr_cls"],
-        "acr_surv":   ["acr_surv"],
-        "clad_surv":  ["clad_surv"],
-        "death_surv": ["death_surv"],
-    }[task_dir]
+def get_task_list(task: str):
+    """Map outer task name → internal model task key list (per TASK_GROUPS in builders.py)."""
+    return [TASK_INTERNAL[task]]
 
 
 def sigmoid(x):
@@ -115,7 +115,8 @@ def main():
             if model is None:
                 continue
 
-            task_list = get_task_list(task_dir)
+            task_list = get_task_list(task)
+            internal_key = TASK_INTERNAL[task]
 
             for patient in test_patients:
                 pid = patient["patient_id"]
@@ -129,7 +130,7 @@ def main():
                     if extr is None:
                         continue
 
-                    hazard_traj = extr["hazard_traj"].get(task, [])
+                    hazard_traj = extr["hazard_traj"].get(internal_key, [])
                     records = extr.get("records", [])
 
                     if pid not in patient_hazards:

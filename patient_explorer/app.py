@@ -10,7 +10,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-PASSWORD = os.environ.get("EXPLORER_PASSWORD", "lungmil2024")
+PASSWORD = os.environ.get("EXPLORER_PASSWORD", "")
 
 def _check_password() -> bool:
     if st.session_state.get("_auth_ok"):
