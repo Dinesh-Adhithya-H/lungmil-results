@@ -36,7 +36,7 @@ Four endpoints were modelled jointly wherever the architecture permitted: binary
 
 ### A benchmark of nine multimodal architectures
 
-We evaluated nine architectures spanning three families (Fig. 1c). The non-temporal fusion baselines — early fusion (all patches pooled by a shared attention MIL), late fusion (per-modality decisions combined by learned weights) and middle fusion (per-modality summaries passed through a cross-modal transformer) — treat each visit independently. The set-based family compresses each modality's patch bag into K = 16 learned seed vectors by pooling-by-multihead-attention (PMA), optionally exchanges information across modalities with a set-attention block (SAB), and reads out per-task predictions with attention pooling; we tested a multi-task variant with SAB (SetMIL-MT), the same without SAB (SetMIL-MT, no SAB) and a single-task variant (SetMIL, no SAB). The longitudinal family extends the set-based backbone across the ordered visit sequence, adding either an ALiBi temporal-attention block (Longitudinal-MK-MT) or a learned biopsy-weighting network in place of ALiBi (Longitudinal-MK, single-task, and its multi-task counterpart).
+We evaluated eight architectures spanning three families (Fig. 1c). The non-temporal fusion baselines — early fusion (all patches pooled by a shared attention MIL), late fusion (per-modality decisions combined by learned weights) and middle fusion (per-modality summaries passed through a cross-modal transformer) — treat each visit independently. The set-based family compresses each modality's patch bag into K = 16 learned seed vectors by pooling-by-multihead-attention (PMA), optionally exchanges information across modalities with a set-attention block (SAB), and reads out per-task predictions with attention pooling; we tested a multi-task variant with SAB (SetMIL-MT), the same without SAB (SetMIL-MT, no SAB) and a single-task variant (SetMIL, no SAB). The longitudinal family extends the set-based backbone across the ordered visit sequence with a learned biopsy-weighting network — a per-task MLP that assigns each visit a scalar weight in (0,1) based on its timing — tested in single-task (Longitudinal-MK) and multi-task (Longitudinal-MK-MT) variants.
 
 Headline test performance is summarised in Table 1 (per-split values in Supplementary Table 1). No single architecture won every task, but the pattern was clear and biologically interpretable. Survival endpoints that depend on cumulative allograft trajectory — death and time-to-next-ACR — were won decisively by longitudinal models. Endpoints that are either intrinsically noisier or more local — CLAD onset and current-grade classification — were best served by set-based models. This division of labour, rather than a uniform winner, is itself the central result: performance tracks whether an endpoint is governed by a temporal trajectory or by the state of the allograft at a single visit.
 
@@ -50,7 +50,6 @@ Headline test performance is summarised in Table 1 (per-split values in Suppleme
 | SetMIL-MT (with SAB) | 0.595 ± 0.027 | 0.489 ± 0.064 | **0.563 ± 0.080** | 0.664 ± 0.041 |
 | SetMIL-MT (no SAB) | **0.623 ± 0.034** | 0.593 ± 0.059 | 0.536 ± 0.060 | 0.656 ± 0.035 |
 | SetMIL (no SAB, single-task) | 0.611 ± 0.027 | 0.580 ± 0.031 | 0.488 ± 0.068 | 0.673 ± 0.026 |
-| Longitudinal-MK-MT (ALiBi) | 0.545 ± 0.042 | 0.613 ± 0.073 | 0.496 ± 0.094 | 0.721 ± 0.056 |
 | **Longitudinal-MK (learned weights)** | 0.550 ± 0.039 | **0.679 ± 0.064** | 0.489 ± 0.028 | **0.771 ± 0.056** |
 | Longitudinal-MK-MT (learned weights) | 0.526 ± 0.052 | 0.630 ± 0.112 | 0.534 ± 0.100 | 0.770 ± 0.089 |
 
@@ -62,7 +61,7 @@ For time-to-death — the endpoint of ultimate clinical importance — the Longi
 
 The same longitudinal architecture won time-to-next-ACR at 0.679 ± 0.064, versus 0.593 ± 0.059 for the best non-temporal model (SetMIL-MT, no SAB) and 0.585 for late fusion — an improvement of roughly 8.6 to 9.4 concordance points. Here too the advantage was distributed across splits (0.573, 0.673, 0.748, 0.660, 0.741), the two weakest of which still matched or exceeded the non-temporal ceiling.
 
-Two ablations localise the source of the gain. First, the advantage is specific to trajectory-governed endpoints: on CLAD and on current-grade classification the longitudinal models did not improve over, and often trailed, the set-based baselines (Table 1), ruling out a generic capacity effect. Second, and more pointedly, the temporal mechanism matters. Replacing the fixed monotonic recency prior of ALiBi with a learned biopsy-weighting network raised the ACR-survival C-index from 0.613 to 0.679 and left death essentially unchanged at the top of the range (0.771 versus 0.721), while ALiBi's rigid recency bias actively hurt tasks whose informative window is not the most recent visit. Learning the temporal weighting, rather than assuming it, is what converts longitudinal structure into predictive power.
+The advantage is specific to trajectory-governed endpoints: on CLAD and on current-grade classification the longitudinal models did not improve over, and often trailed, the set-based baselines (Table 1), ruling out a generic capacity effect. This division of labour — longitudinal for trajectory endpoints, set-based for single-visit endpoints — is the central empirical result, and it recapitulates a fundamental distinction in transplant biology.
 
 ### Learned biopsy-weighting networks discover opposite temporal windows for related endpoints
 
@@ -222,13 +221,7 @@ In the SAB variants a **set-attention block** (multi-head self-attention with pr
 
 Longitudinal models (`LongitudinalMIL`) operate on the ordered sequence of a patient's T visits, sorted by days since first biopsy. For each visit and modality, patches are projected and PMA-compressed to K seeds exactly as above, a modality-identity embedding is added, and all seeds across all visits are concatenated into one temporally ordered token sequence tagged with per-token visit day.
 
-**Temporal attention.** In the ALiBi variant, a **temporal SAB** applies multi-head self-attention with (i) a causal mask that forbids a token from attending to visits in its future and (ii) an ALiBi bias that penalises temporally distant pairs,
-
-```
-logit_{q,k} += − |m_h| · |t_q − t_k| / (Δt + 1),
-```
-
-where t are visit days, Δt the day range and m_h a per-head slope learned from an initial 0.1. In the learned-weight variant the temporal SAB is replaced by a plain SAB stack, and temporal structure is instead carried by the biopsy-weighting network below.
+**Temporal attention.** A plain SAB stack processes the full token sequence; temporal structure is carried entirely by the per-task biopsy-weighting network described below, rather than by positional encodings or attention biases.
 
 **Read-out anchoring.** Read-out is anchored to the clinically appropriate visit: for patient-level time-to-next-ACR the anchor is the last visit day; for the per-visit endpoints (death, CLAD, ACR classification) the anchor is each visit's own day, and one prediction is emitted per eligible visit (contributing multiple gap-time Cox terms per patient for death and CLAD).
 
@@ -307,7 +300,6 @@ Code for all architectures, training, interpretability and evaluation, including
 | SetMIL-MT (SAB) | 0.597 | 0.546 | 0.597 | 0.605 | 0.630 | 0.595 | 0.027 |
 | SetMIL-MT (no SAB) | 0.578 | 0.610 | 0.680 | 0.635 | 0.615 | **0.623** | 0.034 |
 | SetMIL (no SAB, ST) | 0.644 | 0.564 | 0.626 | 0.601 | 0.619 | 0.611 | 0.027 |
-| Long-MK-MT (ALiBi) | 0.596 | 0.494 | 0.499 | 0.559 | 0.577 | 0.545 | 0.042 |
 | Long-MK (learned) | 0.546 | 0.565 | 0.510 | 0.512 | 0.615 | 0.550 | 0.039 |
 | Long-MK-MT (learned) | 0.460 | 0.570 | 0.504 | 0.493 | 0.602 | 0.526 | 0.052 |
 
@@ -321,7 +313,6 @@ Code for all architectures, training, interpretability and evaluation, including
 | SetMIL-MT (SAB) | 0.585 | 0.539 | 0.454 | 0.467 | 0.403 | 0.489 | 0.064 |
 | SetMIL-MT (no SAB) | 0.541 | 0.668 | 0.610 | 0.509 | 0.634 | 0.593 | 0.059 |
 | SetMIL (no SAB, ST) | 0.584 | 0.596 | 0.585 | 0.523 | 0.614 | 0.580 | 0.031 |
-| Long-MK-MT (ALiBi) | 0.634 | 0.561 | 0.530 | 0.600 | 0.741 | 0.613 | 0.073 |
 | Long-MK (learned) | 0.573 | 0.673 | 0.748 | 0.660 | 0.741 | **0.679** | 0.064 |
 | Long-MK-MT (learned) | 0.557 | 0.539 | 0.539 | 0.690 | 0.823 | 0.630 | 0.112 |
 
@@ -335,7 +326,6 @@ Code for all architectures, training, interpretability and evaluation, including
 | SetMIL-MT (SAB) | 0.429 | 0.616 | 0.663 | 0.577 | 0.531 | **0.563** | 0.080 |
 | SetMIL-MT (no SAB) | 0.476 | 0.619 | 0.528 | 0.469 | 0.589 | 0.536 | 0.060 |
 | SetMIL (no SAB, ST) | 0.478 | 0.605 | 0.451 | 0.401 | 0.503 | 0.488 | 0.068 |
-| Long-MK-MT (ALiBi) | 0.485 | 0.628 | 0.441 | 0.360 | 0.566 | 0.496 | 0.094 |
 | Long-MK (learned) | 0.461 | 0.495 | 0.516 | 0.453 | 0.520 | 0.489 | 0.028 |
 | Long-MK-MT (learned) | 0.721 | 0.456 | 0.523 | 0.439 | 0.533 | 0.534 | 0.100 |
 
@@ -349,7 +339,6 @@ Code for all architectures, training, interpretability and evaluation, including
 | SetMIL-MT (SAB) | 0.599 | 0.646 | 0.670 | 0.725 | 0.681 | 0.664 | 0.041 |
 | SetMIL-MT (no SAB) | 0.593 | 0.650 | 0.689 | 0.662 | 0.688 | 0.656 | 0.035 |
 | SetMIL (no SAB, ST) | 0.625 | 0.671 | 0.684 | 0.695 | 0.691 | 0.673 | 0.026 |
-| Long-MK-MT (ALiBi) | 0.649 | 0.678 | 0.799 | 0.707 | 0.772 | 0.721 | 0.056 |
 | Long-MK (learned) | 0.779 | 0.670 | 0.843 | 0.772 | 0.793 | **0.771** | 0.056 |
 | Long-MK-MT (learned) | 0.706 | 0.628 | 0.855 | 0.815 | 0.848 | 0.770 | 0.089 |
 
