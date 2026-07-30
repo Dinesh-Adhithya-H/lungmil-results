@@ -110,17 +110,37 @@ The ACR-survival model echoed this picture. CT seeds were again enriched in the 
 
 The set-based family isolates a clean architectural contrast: SetMIL-MT with and without the SAB cross-modal block are identical except that SAB lets seeds from different modalities exchange information before read-out. Its effect was task-dependent and, informatively, bidirectional. Removing SAB *improved* ACR classification (BACC 0.623 versus 0.595) but *degraded* CLAD survival (0.563 versus 0.536). Cross-modal mixing thus helps when an endpoint genuinely integrates signals across modalities (CLAD, a whole-organ process) and hurts when a single modality carries most of the signal and cross-talk merely injects noise (ACR grade, read primarily from histology). This is consistent with the set-based models' per-task modality gate, which learns to admit or suppress each modality independently per endpoint, and argues against one-size-fits-all fusion.
 
-### Patient-representation geometry reflects risk and monitoring intensity
+### Patient-representation geometry, modality structure and clinical risk stratification
 
-Two-dimensional UMAP projections of the 256-dimensional attention-pooled patient representations, computed per task from the final pooling layer, showed smooth, continuous organisation by predicted risk rather than clustering by individual patient, indicating that the models learned a coherent risk manifold rather than memorising recipients (Fig. 4). Colouring the same embeddings by number of biopsy visits and by days-since-transplant revealed that longitudinal coverage is a principal axis of variation, consistent with the temporal architectures preferentially structuring their representation space around how densely each patient was monitored.
+To understand how the model organises its feature space, we applied a multi-level interpretability pipeline to the best model for each task (Fig. 4–6). At the instance level, UMAP projections of all patch embeddings post-ModalFFNEncoder (Fig. 4) show that H&E patches from ACR+ biopsies form partial spatial clusters within the broader patch manifold, while CT patches show a more diffuse label mixing — consistent with CT capturing systemic rather than biopsy-site-specific rejection features. Biological cluster assignments from the pre-computed morphological dictionary align well with the learned feature geometry, confirming that the encoder preserves biologically meaningful structure.
 
-**Fig. 4a — Death survival: patient representation UMAP**
+At the seed level (Fig. 5), the 16 PMA seed vectors per modality anchor at distinct locations in the patch UMAP, each specialising in a subset of biological clusters as revealed by the seed→cluster attention heatmaps. HE seeds diversify across the full morphological range (alveolar, bronchial, inflammatory), while CT seeds collapse onto a smaller number of structural patterns, consistent with CT's lower biological resolution relative to histology. The per-seed risk stratification (Fig. 5, right) identifies, with statistical significance, which seeds are enriched in ACR+ versus ACR- patients: Clinical seeds (medication and laboratory features) and specific HE seeds dominate the ACR+ enrichment, while CT and BAL seeds show more modest discrimination.
 
-![Death UMAP](figures/interpretability/death/Lpop_rep_umap_death.png)
+The patient-level representations yield the most directly clinically interpretable result (Fig. 6). In 2D UMAP of the 256-dim pooled representation coloured by predicted risk score and time-to-event, patients cluster by predicted risk in a structure that aligns with actual event occurrence. Splitting patients into top and bottom risk tertiles and plotting Kaplan-Meier survival curves reveals substantial and statistically meaningful separation — the model's risk stratification translates directly into divergent survival trajectories, validating that the learned representation encodes clinically actionable prognostic information.
 
-**Fig. 4b — ACR survival: patient representation UMAP**
+**Fig. 4 — Instance-level patch representation UMAP (ACR classification, SetMIL-MT no SAB, split 2)**
 
-![ACR surv UMAP](figures/interpretability/acr_surv/Lpop_rep_umap_acr_surv.png)
+*Each point is one patch embedding post-encoder. Top row: colored by ACR label (red = ACR+, blue = ACR−). Bottom row: colored by pre-computed biological cluster. Panels left-to-right: H&E, BAL, CT, Clinical.*
+
+![Instance reps cosine UMAP — ACR cls](figures/interpretability/acr_cls/A_instance_reps_cosine.png)
+
+**Fig. 5 — Seed structure and per-seed discrimination (ACR classification)**
+
+*Top: PMA seed positions (stars) overlaid on patch UMAP per modality — showing where each of 16 seeds anchors in feature space. Bottom: seed→cluster b-cos attention heatmap — which biological clusters each seed specialises in. Right: per-seed Δα boxplot (ACR+ vs ACR−) with significance stars; right panel ranks all seeds by discrimination.*
+
+![Seeds and cluster affinity](figures/interpretability/acr_cls/B_seeds.png)
+
+![Per-seed risk stratification](figures/interpretability/acr_cls/I_seed_risk_stratification.png)
+
+**Fig. 6a — Patient representation space and KM stratification (ACR classification)**
+
+*Left panels: 2D UMAP of 256-dim patient representations colored by ACR label, P(ACR+) risk score, TTE/censoring, and modality combination present. Centre: Risk vs TTE scatter with LOWESS trend. Right: Kaplan-Meier curves for top (high-risk, n=269) vs bottom (low-risk, n=269) predicted risk tertile — showing model-derived risk stratification translates to divergent survival trajectories.*
+
+![Patient rep hexbin ACR cls](figures/interpretability/acr_cls/G_final_rep_hexbin_acr_cls.png)
+
+**Fig. 6b — Patient representation space and KM stratification (CLAD survival, SetMIL-MT, split 2)**
+
+![Patient rep hexbin CLAD](figures/interpretability/clad/G_final_rep_hexbin_clad.png)
 
 ---
 
