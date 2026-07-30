@@ -205,33 +205,47 @@ where V, U ∈ ℝ^{256×256}, w ∈ ℝ^{256} (no bias), ⊙ is elementwise pro
 
 Modal dropout randomly withholds modalities during training (always retaining at least one) to enforce robustness to missing data.
 
-### Phase 2: set-based cross-modal pooling
+### Phase 2: prototype-based cross-modal pooling
 
-Set-based models replace the gated backbone with a per-modality feed-forward projector (Linear(D→512) → Tanh → Dropout → Linear(512→256), followed by L2 normalisation, which places patch tokens on the unit sphere so that dot products are cosine similarities). Each modality's bag is then compressed by **pooling-by-multihead-attention (PMA)**: K = 16 learned seed vectors cross-attend to the patch tokens. We use a b-cos attention that sharpens seed specialisation,
+The core idea of the set-based and longitudinal Phase 2 models is prototype-driven summarisation: rather than pooling all patches with a single attention over the full bag, each modality is summarised by K = 16 learned seed vectors that act as prototypes, each seeking out the patches most similar to itself.
+
+**Patch projection.** Each patch is first projected by a per-modality feed-forward encoder (Linear(D→512) → Tanh → Dropout → Linear(512→256)) and L2-normalised, placing all tokens on the unit hypersphere so that inner products are cosine similarities.
+
+**Prototype matching via b-cos attention.** Each of the K seed vectors cross-attends to the projected patch tokens using b-cos attention:
 
 ```
-attn(q, k) = ReLU(q · k)^b / Σ_n ReLU(q · k_n)^b,    b = 4,
+a_{sk} = ReLU(s · k_n)^b / Σ_n ReLU(s · k_n)^b,    b = 4
 ```
 
-with weight-normalised query and key projections (unit-norm weight rows) so that scores remain cosine-based, collapsing to standard softmax attention at b = 0. Each seed set receives an additive learned modality-identity embedding so downstream attention knows each token's source modality. Seeds from all present modalities are concatenated into M·K tokens.
+where s is the (weight-normalised) seed query and k_n are the (weight-normalised) patch keys. The exponent b = 4 sharpens the attention distribution: seeds that find genuinely similar patches concentrate their mass there; seeds that find no matching patches fall back toward uniform attention over the bag — equivalent to a bag-mean — and consequently carry no discriminative signal. This graceful degradation means an uninformative modality or biopsy visit contributes only a neutral mean representation, rather than noise. Each seed's output is the b-cos-weighted sum of patch value projections, yielding a K × 256 prototype summary per modality.
 
-In the SAB variants a **set-attention block** (multi-head self-attention with pre-norm FFN) mixes information across the concatenated seeds before read-out; the "no SAB" variants omit it. In the multi-task variants a **per-task modality gate** — a small MLP producing an independent sigmoid weight per modality per task, initialised near 1 — scales each modality's K seeds before the block, allowing a task to suppress an uninformative modality without softmax competition. Each task reads out with its own gated-attention pool over the seed tokens followed by a linear head (classification or hazard).
+A learned modality-identity embedding is added to each seed output so that downstream modules can distinguish which modality each prototype came from. Seeds from all present modalities are concatenated into M·K tokens.
+
+**Optional cross-modal interaction (SAB).** In the SAB variants, a Set Attention Block — multi-head self-attention with pre-norm feed-forward residual — mixes information across the concatenated seed tokens from all modalities, allowing each prototype to be updated by evidence from other modalities. In the no-SAB ablation this step is omitted, and each modality's prototypes are read out independently.
+
+**Per-task modality gating.** In multi-task variants, a small per-task MLP produces an independent sigmoid weight per modality per task (initialised near 1), scaling each modality's K seed tokens before read-out. This allows a task to suppress a modality that carries no signal for that endpoint without competing in a softmax over modalities.
+
+**Weighted ABMIL readout.** Each task reads out with gated attention pooling (ABMIL) over the M·K seed tokens, followed by a linear head (sigmoid for classification, scalar hazard for Cox survival). Attention weights reveal which prototypes the task relied on — the basis for seed-level interpretability.
 
 ### Phase 2: longitudinal models
 
-Longitudinal models (`LongitudinalMIL`) operate on the ordered sequence of a patient's T visits, sorted by days since first biopsy. For each visit and modality, patches are projected and PMA-compressed to K seeds exactly as above, a modality-identity embedding is added, and all seeds across all visits are concatenated into one temporally ordered token sequence tagged with per-token visit day.
+Longitudinal models extend the prototype-based framework to the full ordered sequence of a patient's biopsy visits. The architecture proceeds in three stages:
 
-**Temporal attention.** A plain SAB stack processes the full token sequence; temporal structure is carried entirely by the per-task biopsy-weighting network described below, rather than by positional encodings or attention biases.
+**Stage 1 — Per-visit prototype summarisation.** For each biopsy visit in the patient's surveillance history, patches from every present modality are projected and compressed to K = 16 prototype seeds using the same b-cos attention described above. This produces a T × M × K × 256 tensor of prototype representations across visits, modalities and seeds.
 
-**Read-out anchoring.** Read-out is anchored to the clinically appropriate visit: for patient-level time-to-next-ACR the anchor is the last visit day; for the per-visit endpoints (death, CLAD, ACR classification) the anchor is each visit's own day, and one prediction is emitted per eligible visit (contributing multiple gap-time Cox terms per patient for death and CLAD).
-
-**Learned biopsy weighting.** In place of a fixed recency prior, each task owns an MLP
+**Stage 2 — Biopsy importance weighting.** Before final aggregation, all K prototype seeds from each previous biopsy visit are scaled by a learned scalar importance weight w ∈ (0,1). For a prediction anchored at day d_anchor (e.g. the current visit day), the weight assigned to biopsy visit i at day d_i is:
 
 ```
-w = σ( Linear(16→1) ∘ ReLU ∘ Linear(2→16) ( [ d_anchor , d_i ] ) )  ∈ (0,1),
+w(d_anchor, d_i) = σ( Linear(16→1) ∘ ReLU ∘ Linear(2→16) ([d_anchor, d_i]) )
 ```
 
-that maps the anchor day and a visit's day to a scalar weight; this weight multiplies all K seeds from that visit before attention pooling, so the model freely learns which visits to trust for each task (a weight near 0 suppresses a visit entirely). When learned weighting is disabled, a per-task recency parameter γ instead adds an exponential distance penalty to the pooling logits. Multi-task variants share the backbone but keep separate weighting networks and heads per task; single-task variants train one network per endpoint.
+The MLP takes two inputs — the current prediction day and the day of the biopsy being weighted — and outputs a single importance score. Every one of the K prototype seeds from biopsy i is multiplied by this scalar before pooling. The network learns, independently per task, which combinations of (current day, previous biopsy day) carry prognostic signal. A weight near 1 passes the full prototype representation of that biopsy into the readout; a weight near 0 suppresses all seeds from that visit, equivalent to the graceful degradation of b-cos attention when no matching patches were found. This mechanism applies to *all* previous biopsies in the patient's history simultaneously — one weight per biopsy, scaling its entire prototype set.
+
+An optional cross-visit SAB can mix prototype information across the temporal sequence before weighting; in the primary variant it is omitted and temporal structure is carried solely by the biopsy weights.
+
+**Stage 3 — Weighted ABMIL and prediction.** The importance-weighted seed tokens from all visits and modalities are pooled by gated ABMIL to produce a single 256-dimensional patient representation per task. A linear head maps this representation to the task prediction (sigmoid for classification; scalar Cox hazard for survival). The learned patient representation is the final summary on which all predictions are based; it encodes both which biological prototypes were present and, through the biopsy weights, at which point in the surveillance timeline they mattered most.
+
+Read-out is anchored to the clinically appropriate visit: for time-to-next-ACR the anchor is the last visit; for per-visit endpoints (death, CLAD, ACR classification) one prediction is emitted per eligible visit, contributing multiple gap-time Cox terms per patient. Multi-task variants share the backbone and biopsy-weight SAB but keep separate weighting networks and ABMIL heads per task; single-task variants train one complete network per endpoint.
 
 ### Losses and training
 
