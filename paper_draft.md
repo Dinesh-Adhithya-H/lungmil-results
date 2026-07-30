@@ -72,6 +72,14 @@ The surfaces revealed a striking, unsupervised reversal between two related ACR 
 
 The two survival endpoints that lack a privileged window behaved accordingly. **Death** produced a near-uniform surface with a modest suppression of the first ~50 days, precisely the peri-operative period whose events are dominated by surgical rather than immunological causes; the model effectively learned to discount the immediate post-operative window as prognostically confounded. **CLAD** likewise yielded a near-uniform surface, consistent with its diffuse, slowly accumulating pathology. That a single architecture, trained only on outcomes, recovers an early-window prior for rejection risk, a recent-window prior for rejection classification, a peri-operative exclusion for death, and a flat prior for CLAD — each matching independent clinical reasoning — is strong evidence that the learned temporal weighting reflects genuine biology rather than fitting artefact.
 
+**Fig. 2a — Death survival: biopsy weight heatmap (split 2, C-index = 0.843)**
+
+![Death weight heatmap](figures/interpretability/death/L_global_weight_heatmap.png)
+
+**Fig. 2b — ACR survival: biopsy weight heatmap (split 2, C-index = 0.748)**
+
+![ACR surv weight heatmap](figures/interpretability/acr_surv/L_global_weight_heatmap.png)
+
 ### Histology and CT encode complementary and reproducible mortality signatures
 
 To ask what the models attend to, we performed population-level attribution on the best model for each task, tracing PMA seed vectors back through their patch attention to pre-computed morphological clusters, then contrasting the seed content of the highest- and lowest-risk patient tertiles and testing reproducibility across all five outer splits (Fig. 3). The death model, our strongest and most stable, yielded a signature reproducible in all five splits and consistent across two independent modalities.
@@ -82,6 +90,22 @@ In **CT**, a small set of clusters (C0–C2) was reproducibly enriched in the *h
 
 The ACR-survival model echoed this picture. CT seeds were again enriched in the high-risk group (reproducible in four of five splits), and the learned biopsy weighting concentrated on early visits (above) — together indicating that early-established structural allograft quality predicts the long-term rejection trajectory. In contrast, attribution for CLAD and for ACR classification was inconsistent across splits, reflecting smaller effect sizes and greater outcome heterogeneity; we therefore do not advance modality-level biological claims for those two endpoints.
 
+**Fig. 3a — Death survival: seed attribution (split 2, best model)**
+
+![Death seed attribution](figures/interpretability/death/Lpop_K_seed_attribution_death.png)
+
+**Fig. 3b — ACR survival: seed attribution (split 2)**
+
+![ACR surv seed attribution](figures/interpretability/acr_surv/Lpop_K_seed_attribution_acr_surv.png)
+
+**Fig. 3c — ACR classification: seed attribution (split 2, SetMIL-MT no SAB)**
+
+![ACR cls seed attribution](figures/interpretability/acr_cls/K_seed_attribution_acr_cls.png)
+
+**Fig. 3d — Cross-split mean±std seed attribution — ACR survival (5 splits)**
+
+![ACR surv agg](figures/interpretability/agg/Lpop_K_agg_acr_surv.png)
+
 ### Cross-modal interaction helps some tasks and hurts others
 
 The set-based family isolates a clean architectural contrast: SetMIL-MT with and without the SAB cross-modal block are identical except that SAB lets seeds from different modalities exchange information before read-out. Its effect was task-dependent and, informatively, bidirectional. Removing SAB *improved* ACR classification (BACC 0.623 versus 0.595) but *degraded* CLAD survival (0.563 versus 0.536). Cross-modal mixing thus helps when an endpoint genuinely integrates signals across modalities (CLAD, a whole-organ process) and hurts when a single modality carries most of the signal and cross-talk merely injects noise (ACR grade, read primarily from histology). This is consistent with the set-based models' per-task modality gate, which learns to admit or suppress each modality independently per endpoint, and argues against one-size-fits-all fusion.
@@ -89,6 +113,14 @@ The set-based family isolates a clean architectural contrast: SetMIL-MT with and
 ### Patient-representation geometry reflects risk and monitoring intensity
 
 Two-dimensional UMAP projections of the 256-dimensional attention-pooled patient representations, computed per task from the final pooling layer, showed smooth, continuous organisation by predicted risk rather than clustering by individual patient, indicating that the models learned a coherent risk manifold rather than memorising recipients (Fig. 4). Colouring the same embeddings by number of biopsy visits and by days-since-transplant revealed that longitudinal coverage is a principal axis of variation, consistent with the temporal architectures preferentially structuring their representation space around how densely each patient was monitored.
+
+**Fig. 4a — Death survival: patient representation UMAP**
+
+![Death UMAP](figures/interpretability/death/Lpop_rep_umap_death.png)
+
+**Fig. 4b — ACR survival: patient representation UMAP**
+
+![ACR surv UMAP](figures/interpretability/acr_surv/Lpop_rep_umap_acr_surv.png)
 
 ---
 
