@@ -116,8 +116,8 @@ def _bar_with_collapse_mask(ax, x, vals, seed_colors, nc_mask, width=0.85):
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
-def load_model(split, fold, variant, device):
-    vtag = "set_mil_mt"
+def load_model(split, fold, variant, device, model_variant=None):
+    vtag = model_variant if model_variant else "set_mil_mt"
     vdir = f"{vtag}_mega" if variant == "mega" else f"{vtag}_{variant}"
     ckpt = RESULTS_ROOT / f"split{split}_fold{fold}" / vdir / f"model_{vtag}_final.pt"
     if not ckpt.exists():
@@ -271,9 +271,9 @@ def extract_patient(model, bags, device, tasks):
 
 # ── Extraction loop ───────────────────────────────────────────────────────────
 
-def extract_all(split, fold, variant, device, max_samples=None):
-    print(f"[extract] split={split} fold={fold} variant={variant}")
-    model, tasks = load_model(split, fold, variant, device)
+def extract_all(split, fold, variant, device, max_samples=None, model_variant=None):
+    print(f"[extract] split={split} fold={fold} variant={variant} model={model_variant or 'set_mil_mt'}")
+    model, tasks = load_model(split, fold, variant, device, model_variant=model_variant)
     splits       = build_splits_multitask(SAMPLES_DIR, SPLITS_CSV, fold=fold, split=split)
     recs         = splits["test"]
     if max_samples:
@@ -352,7 +352,7 @@ def extract_all(split, fold, variant, device, max_samples=None):
     return results, seeds_init, seeds_init_q, tasks
 
 
-def extract_all_splits(variant, device, max_samples=None):
+def extract_all_splits(variant, device, max_samples=None, model_variant=None):
     """
     Pool test patients from all 5 splits (fold 0 model per split).
     Each sample appears as a test patient exactly once.
@@ -364,7 +364,8 @@ def extract_all_splits(variant, device, max_samples=None):
     for split in range(5):
         try:
             res, si, siq, t = extract_all(split, fold=0, variant=variant,
-                                          device=device, max_samples=max_samples)
+                                          device=device, max_samples=max_samples,
+                                          model_variant=model_variant)
         except FileNotFoundError as e:
             print(f"  [skip split{split}] {e}")
             continue
@@ -2599,7 +2600,8 @@ def panel_K(results, tasks, out_dir, split, fold):
                     ax.text(0.5, 0.5, "no data", ha="center", va="center",
                             transform=ax.transAxes, fontsize=8)
                     continue
-                mean_aff = np.stack(aff_list).mean(0)    # (K, C)
+                min_c    = min(a.shape[1] for a in aff_list)
+                mean_aff = np.stack([a[:, :min_c] for a in aff_list]).mean(0)    # (K, C)
                 top_aff  = mean_aff[top_k_idx]            # (5, C) top differential seeds
                 n_clus   = top_aff.shape[1]
                 clus_nms = (cnames[:n_clus] if cnames else
@@ -3631,6 +3633,9 @@ def main():
     pa.add_argument("--fold",        type=int, default=1)
     pa.add_argument("--variant",     default="mega",
                     choices=["mega","cls","acr_surv","clad_surv","death_surv"])
+    pa.add_argument("--model-variant", default=None,
+                    help="Override model variant tag (e.g. 'set_mil_mt_no_sab'). "
+                         "If omitted, defaults to 'set_mil_mt'.")
     pa.add_argument("--max-samples", type=int, default=None)
     pa.add_argument("--device",        default="cuda" if torch.cuda.is_available() else "cpu")
     pa.add_argument("--out-dir",       default=None)
@@ -3745,19 +3750,21 @@ def main():
         out_dir = Path(args.out_dir) if args.out_dir \
                   else OUT_ROOT / f"all_splits_{args.variant}"
         results, seeds_init, seeds_init_q, tasks = extract_all_splits(
-            args.variant, device, args.max_samples)
+            args.variant, device, args.max_samples, model_variant=args.model_variant)
         # B and F are model-specific — exclude from all-splits run
         default_panels = set("ACDEGIJK") - {"B", "F"}
         panels_set = (set(p.strip().upper() for p in args.panels.split(","))
                       if args.panels else default_panels)
         split_tag, fold_tag = -1, 0
     else:
+        mvtag = args.model_variant or "set_mil_mt"
         out_dir = Path(args.out_dir) if args.out_dir \
-                  else OUT_ROOT / f"split{args.split}_fold{args.fold}_{args.variant}"
+                  else OUT_ROOT / f"{mvtag}_split{args.split}_fold{args.fold}_{args.variant}"
         panels_set = (set(p.strip().upper() for p in args.panels.split(","))
                       if args.panels else None)
         results, seeds_init, seeds_init_q, tasks = extract_all(
-            args.split, args.fold, args.variant, device, args.max_samples)
+            args.split, args.fold, args.variant, device, args.max_samples,
+            model_variant=args.model_variant)
         split_tag, fold_tag = args.split, args.fold
 
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -57,7 +57,9 @@ P2_PMA_LAYERS     = 2      # cross-attention layers inside PMA
 
 # Available variants
 P2_VARIANTS = ["set_mil", "set_mil_mt", "early", "late", "middle",
-               "longitudinal_mk", "longitudinal_mk_mt"]
+               "longitudinal_mk", "longitudinal_mk_mt",
+               "set_mil_no_sab", "set_mil_mt_no_sab",
+               "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"]
 
 # Maps task name → list of prediction heads to build
 TASK_GROUPS = {
@@ -99,24 +101,25 @@ def build_model_v8(
     _task_list = TASK_GROUPS.get(task, ["acr_cls", "acr_surv"])
     kw = dict(hidden_dim=HIDDEN_DIM, dropout=DROPOUT, modal_dropout=modal_dropout)
 
-    if variant in ("set_mil", "set_mil_mt"):
+    if variant in ("set_mil", "set_mil_mt", "set_mil_no_sab", "set_mil_mt_no_sab"):
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
         # HE is rare (~20% of samples) — never drop it during training.
         # Other modalities keep the standard modal_dropout rate.
         he_aware_dropout = {m: (0.0 if m == "HE" else modal_dropout) for m in MODALITIES}
+        no_sab = variant in ("set_mil_no_sab", "set_mil_mt_no_sab")
         return SetTransformerMIL(
             encoders,
             hidden_dim=HIDDEN_DIM,
             n_seeds=slot_k,
             n_pma_layers=2,
-            n_sab_layers=max(1, n_cross_layers),
+            n_sab_layers=0 if no_sab else max(1, n_cross_layers),
             n_heads=P2_N_HEADS,
             dropout=P2_ATTN_DROPOUT,
             modal_dropout=he_aware_dropout,
             max_he_patches=max_he_patches,
             tasks=_task_list,
-            use_task_gate=(variant == "set_mil_mt"),
+            use_task_gate=(variant in ("set_mil_mt", "set_mil_mt_no_sab")),
         )
     if variant == "early":
         return EarlyFusionMIL(encoders, proj_heads, **kw,
@@ -132,9 +135,11 @@ def build_model_v8(
                                 modal_dropout=modal_dropout,
                                 hidden_dim=HIDDEN_DIM,
                                 tasks=_task_list)
-    if variant in ("longitudinal_mk", "longitudinal_mk_mt"):
+    if variant in ("longitudinal_mk", "longitudinal_mk_mt",
+                   "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
+        no_alibi = variant in ("longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi")
         return LongitudinalMIL(
             encoders,
             hidden_dim=HIDDEN_DIM,
@@ -146,7 +151,9 @@ def build_model_v8(
             modal_dropout=modal_dropout,
             max_he_patches=max_he_patches,
             tasks=_task_list,
-            use_task_gate=(variant == "longitudinal_mk_mt"),
+            use_task_gate=(variant in ("longitudinal_mk_mt", "longitudinal_mk_mt_no_alibi")),
+            use_alibi=not no_alibi,
+            use_learned_weight=no_alibi,
         )
     raise ValueError(f"Unknown variant {variant!r}. Choose from: {P2_VARIANTS}")
 

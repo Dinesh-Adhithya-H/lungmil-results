@@ -50,6 +50,8 @@ from shared import (
     HE_BIO_MAP, HE_BIO_COLORS, bio_label as _bio_label,
     savefig as _savefig,
     PDF_DPI, PNG_DPI,
+    seed_cluster_mass as _seed_cluster_mass,
+    umap_embed as _umap_embed,
 )
 
 OUT_ROOT = ROOT / "interpretability" / "longitudinal_mk_interp"
@@ -79,12 +81,13 @@ plt.rcParams.update({
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
-def load_model(split: int, fold: int, device: torch.device, task: str = "mega"):
-    vtag = "longitudinal_mk_mt"
+def load_model(split: int, fold: int, device: torch.device, task: str = "mega",
+               variant: str = "longitudinal_mk_mt"):
+    vtag = variant
     # Map interpretability task names → training checkpoint dir suffixes
     _task_to_dir = {
         "mega":     "mega",
-        "acr_cls":  "cls",       # training uses --task cls
+        "acr_cls":  "cls",
         "cls":      "cls",
         "acr_surv": "acr_surv",
         "clad":     "clad_surv",
@@ -99,9 +102,12 @@ def load_model(split: int, fold: int, device: torch.device, task: str = "mega"):
     else:
         dir_suffix = _task_to_dir.get(task, task)
         ckpt_dir   = f"{vtag}_{dir_suffix}"
-        # build_task must match what the model was trained with
         build_task = "cls" if task in ("acr_cls", "cls") else dir_suffix
-        tasks      = [task]
+        _internal = {"clad_surv": "clad", "clad": "clad",
+                     "death_surv": "death", "death": "death",
+                     "acr_cls": "acr_cls", "cls": "acr_cls",
+                     "acr_surv": "acr_surv"}
+        tasks      = [_internal.get(task, task)]
     ckpt = RESULTS_ROOT / f"split{split}_fold{fold}" / ckpt_dir / f"model_{vtag}_final.pt"
     if not ckpt.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
@@ -109,32 +115,35 @@ def load_model(split: int, fold: int, device: torch.device, task: str = "mega"):
     state = torch.load(ckpt, map_location="cpu")
 
     # ── Infer n_heads and n_seeds from checkpoint ─────────────────────────────
-    slopes_shape = state.get("temporal_sab.alibi_slopes", torch.ones(1)).shape
-    n_heads_ckpt = slopes_shape[0]   # e.g. 4
+    # no_alibi variants use plain_sab — infer n_heads from plain_sab weight
+    no_alibi = "no_alibi" in vtag
+    if no_alibi:
+        # plain_sab.0.attn.in_proj_weight shape: (3*H, H) where H=n_heads*head_dim
+        # We just use n_heads=1 (model default P2_N_HEADS); checkpoint tells us nothing extra
+        n_heads_ckpt = 1
+        for k, v in state.items():
+            if "plain_sab" in k and "in_proj_weight" in k:
+                # shape (3*H, H) — can't infer n_heads directly; keep default
+                break
+    else:
+        slopes_shape = state.get("temporal_sab.alibi_slopes", torch.ones(1)).shape
+        n_heads_ckpt = slopes_shape[0]
 
-    seeds_shape = None
-    for k, v in state.items():
-        if k.endswith(".seeds"):
-            seeds_shape = v.shape
-            break
     # PMA seeds may have been saved with an extra batch dim: (1, K, H) → squeeze to (K, H)
     for k in list(state.keys()):
         if k.endswith(".seeds") and state[k].ndim == 3:
             state[k] = state[k].squeeze(0)
 
-    # Infer slot_k from the (now fixed) seed tensor
     n_seeds_ckpt = 16
     for k, v in state.items():
         if k.endswith(".seeds") and v.ndim == 2:
             n_seeds_ckpt = v.shape[0]
             break
 
-    # Build model with checkpoint's n_heads (overrides P2_N_HEADS=1 default)
-    # We inject n_heads by temporarily patching after build
     model = build_model_v8(variant=vtag, task=build_task, slot_k=n_seeds_ckpt, n_cross_layers=1)
 
-    # If n_heads in model ≠ checkpoint, rebuild TemporalSAB in place
-    if model.temporal_sab.n_heads != n_heads_ckpt:
+    # If n_heads in model ≠ checkpoint, rebuild TemporalSAB in place (alibi models only)
+    if not no_alibi and model.temporal_sab.n_heads != n_heads_ckpt:
         from mil.models.encoders import TemporalSAB
         n_sab_layers = len(model.temporal_sab.layers)
         model.temporal_sab = TemporalSAB(
@@ -149,7 +158,8 @@ def load_model(split: int, fold: int, device: torch.device, task: str = "mega"):
         print(f"  [load_model] unexpected keys: {unexpected[:5]}")
 
     model.eval()
-    print(f"[load_model] Loaded {ckpt.name}  n_heads={n_heads_ckpt}  n_seeds={n_seeds_ckpt}")
+    model._variant_tag = vtag  # store for wandb logging
+    print(f"[load_model] Loaded {ckpt.name}  variant={vtag}  n_heads={n_heads_ckpt}  n_seeds={n_seeds_ckpt}")
     return model.to(device), tasks
 
 
@@ -208,24 +218,76 @@ def load_patient_bags(patient: dict, device: torch.device):
     return bags_list, transplant_days
 
 
+_MOD_PT_KEY = {"HE": "HE_cells", "BAL": "BAL_cells", "CT": "CT_cells"}
+
+
 def load_patient_cluster_names(patient: dict) -> Dict[str, List[str]]:
-    """Load cluster_names per modality from the first available biopsy's .pt file."""
+    """Load cluster_names per modality from biopsy .pt files."""
     cluster_names: Dict[str, List[str]] = {}
     for stem in patient["stems"]:
         pt_path = Path(SAMPLES_DIR) / f"{stem}.pt"
         if not pt_path.exists():
             continue
-        data = torch.load(pt_path, map_location="cpu")
-        names_dict = data.get("cluster_names", {})
-        for mod, names in names_dict.items():
-            if mod not in cluster_names and names:
-                cluster_names[mod] = list(names)
-        if len(cluster_names) == len(MOD_ORDER):
+        data = torch.load(pt_path, map_location="cpu", weights_only=False)
+        names_dict = data.get("bag_cluster_names", data.get("cluster_names", {}))
+        for mod, pt_key in _MOD_PT_KEY.items():
+            if mod not in cluster_names:
+                nms = names_dict.get(pt_key, names_dict.get(mod, []))
+                if nms:
+                    cluster_names[mod] = list(nms)
+        if all(m in cluster_names for m in _MOD_PT_KEY):
             break
     return cluster_names
 
 
+def load_patient_cluster_ids(patient: dict) -> Dict[Tuple, np.ndarray]:
+    """Load per-patch cluster IDs for each biopsy × modality.
+
+    Returns {(t_idx, mod): np.ndarray of shape (N,)} parallel to bags_list.
+    """
+    cluster_ids: Dict[Tuple, np.ndarray] = {}
+    for t_idx, stem in enumerate(patient["stems"]):
+        pt_path = Path(SAMPLES_DIR) / f"{stem}.pt"
+        if not pt_path.exists():
+            continue
+        try:
+            data = torch.load(pt_path, map_location="cpu", weights_only=False)
+        except Exception:
+            continue
+        id_dict = data.get("bag_instance_cluster_ids", {})
+        for mod, pt_key in _MOD_PT_KEY.items():
+            ids = id_dict.get(pt_key)
+            if isinstance(ids, torch.Tensor) and ids.numel() > 0:
+                cluster_ids[(t_idx, mod)] = ids.numpy()
+    return cluster_ids
+
+
 # ── TemporalSAB patcher ───────────────────────────────────────────────────────
+
+def _patch_plain_sab(plain_sab: nn.ModuleList, attn_store: dict):
+    """Patch a plain SAB ModuleList to capture per-layer attention weights."""
+    per_layer = []
+
+    def make_patched(layer):
+        # layer is a SAB nn.Module with .attn, .norm, .ffn attributes
+        def patched(x_b):
+            a, w = layer.attn(x_b, x_b, x_b,
+                              need_weights=True, average_attn_weights=True)
+            per_layer.append(w.detach().cpu().numpy())  # (1, N, N) — matches temporal_sab (n_heads,N,N) shape
+            return layer.ffn(layer.norm(x_b + a))
+        return patched
+
+    patched_fwds = [make_patched(l) for l in plain_sab]
+
+    def run_patched(tokens: torch.Tensor) -> torch.Tensor:
+        x = tokens.unsqueeze(0)   # (1, N, H)
+        for fn in patched_fwds:
+            x = fn(x)
+        attn_store["per_layer"] = per_layer
+        return x.squeeze(0)       # (N, H)
+
+    return run_patched
+
 
 def _patch_temporal_sab(temporal_sab: nn.Module, attn_store: dict):
     """
@@ -271,6 +333,7 @@ def extract_patient_longitudinal(
         bags_list: List[Dict[str, Optional[torch.Tensor]]],
         device: torch.device,
         tasks: List[str],
+        cluster_ids_per_biopsy: Optional[Dict[Tuple, np.ndarray]] = None,
 ) -> Optional[dict]:
     """
     Run a single patient through the longitudinal model and capture all internals.
@@ -362,11 +425,12 @@ def extract_patient_longitudinal(
     tok_mod_t    = torch.tensor(
         [m._mod_idx[mo] for mo in tok_mod_name], dtype=torch.long, device=device)
 
-    gate_mat:       Dict[str, np.ndarray]  = {}
-    temporal_attn:  Dict[str, dict]        = {}
-    alpha_per_task: Dict[str, np.ndarray]  = {}
-    hazard_traj:    Dict[str, List[float]] = {t: [] for t in tasks}
-    logits_out:     Dict[str, float]       = {}
+    gate_mat:        Dict[str, np.ndarray]  = {}
+    temporal_attn:   Dict[str, dict]        = {}
+    alpha_per_task:  Dict[str, np.ndarray]  = {}
+    hazard_traj:     Dict[str, List[float]] = {t: [] for t in tasks}
+    logits_out:      Dict[str, float]       = {}
+    rep_full_per_task: Dict[str, np.ndarray] = {}
 
     for task in tasks:
         # --- Task gate ---
@@ -381,14 +445,18 @@ def extract_patient_longitudinal(
             gate_mat[task] = np.ones((T, n_mods), dtype=np.float32)
             tokens_in      = all_tokens_raw
 
-        # --- TemporalSAB with attn capture ---
+        # --- TemporalSAB / PlainSAB with attn capture ---
         attn_store: dict = {}
-        orig_fwd = _patch_temporal_sab(m.temporal_sab, attn_store)
-        tokens_t = m.temporal_sab(tokens_in, days_tok)
-        m.temporal_sab.forward = orig_fwd                # restore
-        temporal_attn[task] = attn_store                 # {per_layer, alibi_bias}
+        if m.use_alibi:
+            orig_fwd = _patch_temporal_sab(m.temporal_sab, attn_store)
+            tokens_t = m.temporal_sab(tokens_in, days_tok)
+            m.temporal_sab.forward = orig_fwd
+        else:
+            patched_run = _patch_plain_sab(m.plain_sab, attn_store)
+            tokens_t = patched_run(tokens_in)
+        temporal_attn[task] = attn_store                 # {per_layer, [alibi_bias]}
 
-        # --- Recency ABMIL (capture α) ---
+        # --- ABMIL weights (recency γ or learned biopsy weight) ---
         gate_m  = m.abmil_V[task](tokens_t) * m.abmil_U[task](tokens_t)
         raw_w   = m.abmil_w[task](gate_m).squeeze(-1)   # (N,)
         sigma   = (days_tok.max() - days_tok.min() + 1.0).clamp(min=1.0)
@@ -397,9 +465,27 @@ def extract_patient_longitudinal(
             anchor_day = days_tok[-1].item()
         else:
             anchor_day = float(days_list[-1])
-        bias = -m.recency_gamma[task].abs() * (days_tok - anchor_day).abs() / sigma
-        alpha = torch.softmax(raw_w + bias, dim=0)      # (N,)
+
+        days_arr_f = [float(d) for d in days_list]
+        if m.use_learned_weight:
+            tokens_w = m._apply_biopsy_weights(task, tokens_t, tok_biopsy,
+                                               days_arr_f, anchor_day, T, device)
+            gate_w  = m.abmil_V[task](tokens_w) * m.abmil_U[task](tokens_w)
+            raw_w   = m.abmil_w[task](gate_w).squeeze(-1)
+            alpha   = torch.softmax(raw_w, dim=0)
+            # Capture per-biopsy scalar weights for visualization
+            feats_bw = torch.tensor([[anchor_day, days_arr_f[i]] for i in range(T)],
+                                    dtype=torch.float32, device=device)
+            bw_vals = m.biopsy_weight_net[task](feats_bw).squeeze(1).detach().cpu().numpy()
+        else:
+            bias  = -m.recency_gamma[task].abs() * (days_tok - anchor_day).abs() / sigma
+            alpha = torch.softmax(raw_w + bias, dim=0)
+            bw_vals = None
+
         alpha_per_task[task] = alpha.detach().cpu().numpy()
+        if "biopsy_weights" not in locals():
+            biopsy_weights = {}
+        biopsy_weights[task] = bw_vals  # (T,) or None
 
         # --- Per-biopsy hazard trajectory (causal: use tokens up to end_idx) ---
         for t_idx, end_idx in enumerate(biopsy_ends):
@@ -408,18 +494,27 @@ def extract_patient_longitudinal(
             tok_t  = tokens_t[:end_idx]
             days_t = days_tok[:end_idx]
             anc    = float(days_list[t_idx])
-            gate2  = m.abmil_V[task](tok_t) * m.abmil_U[task](tok_t)
-            raw2   = m.abmil_w[task](gate2).squeeze(-1)
-            sig2   = (days_t.max() - days_t.min() + 1.0).clamp(min=1.0)
-            bias2  = -m.recency_gamma[task].abs() * (days_t - anc).abs() / sig2
-            alp2   = torch.softmax(raw2 + bias2, dim=0)
-            rep2   = (alp2.unsqueeze(1) * tok_t).sum(0)
+            if m.use_learned_weight:
+                tok_tw = m._apply_biopsy_weights(task, tok_t, tok_biopsy[:end_idx],
+                                                 days_arr_f, anc, t_idx + 1, device)
+                gate2 = m.abmil_V[task](tok_tw) * m.abmil_U[task](tok_tw)
+                raw2  = m.abmil_w[task](gate2).squeeze(-1)
+                alp2  = torch.softmax(raw2, dim=0)
+                rep2  = (alp2.unsqueeze(1) * tok_tw).sum(0)
+            else:
+                gate2  = m.abmil_V[task](tok_t) * m.abmil_U[task](tok_t)
+                raw2   = m.abmil_w[task](gate2).squeeze(-1)
+                sig2   = (days_t.max() - days_t.min() + 1.0).clamp(min=1.0)
+                bias2  = -m.recency_gamma[task].abs() * (days_t - anc).abs() / sig2
+                alp2   = torch.softmax(raw2 + bias2, dim=0)
+                rep2   = (alp2.unsqueeze(1) * tok_t).sum(0)
             haz    = m.heads[task](rep2).squeeze().item()
             hazard_traj[task].append(haz)
 
         # Final logit from full sequence
         rep_full   = (alpha.unsqueeze(1) * tokens_t).sum(0)
         logits_out[task] = m.heads[task](rep_full).squeeze().item()
+        rep_full_per_task[task] = rep_full.detach().cpu().numpy()  # (H,)
 
     return {
         "seeds_pre_gate":  seeds_pre_gate,       # (total_tokens, H)
@@ -430,26 +525,32 @@ def extract_patient_longitudinal(
         "biopsy_days":     list(days_list),      # list[float]
         "biopsy_ends":     biopsy_ends,          # list[int]
         "gate_mat":        gate_mat,             # {task: (T, n_mods)}
-        "temporal_attn":   temporal_attn,        # {task: {per_layer, alibi_bias}}
+        "temporal_attn":   temporal_attn,        # {task: {per_layer, [alibi_bias]}}
+        "biopsy_weights":  biopsy_weights,       # {task: (T,) ndarray} or None per task
         "alpha_per_task":  alpha_per_task,       # {task: (N,)}
         "hazard_traj":     hazard_traj,          # {task: [float×T]}
         "seeds_norms_grid":seeds_norms_grid,     # (T, n_mods, K) nan=absent
         "logits":          logits_out,           # {task: float}
-        "patient_id":      patient["patient_id"],
-        "records":         patient["records"],
-        "n_biopsies":      T,
+        "rep_full":        rep_full_per_task,    # {task: (H,) ndarray}
+        "patient_id":           patient["patient_id"],
+        "records":              patient["records"],
+        "n_biopsies":           T,
+        "cluster_ids_per_biopsy": cluster_ids_per_biopsy or {},
     }
 
 
 # ── Panel L_global: ALiBi slopes, recency γ, decay curves ────────────────────
 
 def plot_L_global(model: nn.Module, out_dir: Path, tasks: List[str]):
+    if model.use_learned_weight:
+        return _plot_L_global_learned(model, out_dir, tasks)
+
     slopes = model.temporal_sab.alibi_slopes.abs().detach().cpu().numpy()
     n_heads = len(slopes)
     gammas  = {t: model.recency_gamma[t].abs().item() for t in tasks}
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    fig.suptitle("Longitudinal-MK-MT — Global Model Properties", fontsize=FONT_TITLE + 1,
+    fig.suptitle("Longitudinal-MK-MT — Global Model Properties (ALiBi)", fontsize=FONT_TITLE + 1,
                  fontweight="bold", y=1.01)
 
     # Panel A: ALiBi head slopes
@@ -470,10 +571,10 @@ def plot_L_global(model: nn.Module, out_dir: Path, tasks: List[str]):
 
     # Panel B: Per-task recency γ
     ax = axes[1]
-    task_labels = [TASK_LABELS.get(t, t) for t in tasks]
+    task_labels_l = [TASK_LABELS.get(t, t) for t in tasks]
     task_cols   = [TASK_COLORS.get(t, "#888888") for t in tasks]
     gvals = [gammas[t] for t in tasks]
-    bars2 = ax.barh(task_labels, gvals, color=task_cols, edgecolor="white",
+    bars2 = ax.barh(task_labels_l, gvals, color=task_cols, edgecolor="white",
                     linewidth=0.8, height=0.55)
     for bar, val in zip(bars2, gvals):
         ax.text(bar.get_width() + 0.002, bar.get_y() + bar.get_height() / 2,
@@ -488,7 +589,7 @@ def plot_L_global(model: nn.Module, out_dir: Path, tasks: List[str]):
     ax = axes[2]
     delta_days = np.linspace(0, 730, 300)
     for hi, (s, col) in enumerate(zip(slopes, colors_heads)):
-        bias_curve = -s * delta_days / 730.0   # normalize as in model
+        bias_curve = -s * delta_days / 730.0
         ax.plot(delta_days, bias_curve, color=col, lw=1.8, label=f"H{hi} (s={s:.3f})")
     ax.axhline(0, color="grey", lw=0.8, ls="--")
     ax.set_xlabel("Temporal Distance  Δt  (days)")
@@ -502,6 +603,105 @@ def plot_L_global(model: nn.Module, out_dir: Path, tasks: List[str]):
     png = _savefig(fig, out_dir, "L_global_model_properties")
     plt.close(fig)
     print(f"  [L_global] → {png.name}")
+    return png
+
+
+def _plot_L_global_learned(model: nn.Module, out_dir: Path, tasks: List[str]):
+    """L_global for learned-weight variant: visualise biopsy_weight_net per task."""
+    dev = next(model.parameters()).device
+    anchor_days  = np.array([100, 200, 365, 548, 730], dtype=float)
+    biopsy_range = np.linspace(0, 730, 200)
+
+    n_tasks = len(tasks)
+    fig, axes = plt.subplots(1, n_tasks + 1, figsize=(5 * (n_tasks + 1), 5))
+    if n_tasks + 1 == 1:
+        axes = [axes]
+    fig.suptitle("Longitudinal-MK-MT — Learned Biopsy Weighting Network\nw(current biopsy date, previous biopsy date)",
+                 fontsize=FONT_TITLE + 1, fontweight="bold", y=1.01)
+
+    anchor_cols = plt.cm.viridis(np.linspace(0.1, 0.9, len(anchor_days)))
+
+    for ti, task in enumerate(tasks):
+        ax = axes[ti]
+        net = model.biopsy_weight_net[task]
+        col = TASK_COLORS.get(task, "#777")
+        for ai, (anc, acol) in enumerate(zip(anchor_days, anchor_cols)):
+            inp = torch.tensor([[anc, b] for b in biopsy_range], dtype=torch.float32, device=dev)
+            with torch.no_grad():
+                w = net(inp).squeeze(1).cpu().numpy()
+            ax.plot(biopsy_range, w, color=acol, lw=1.8,
+                    label=f"current={int(anc)}d")
+        ax.set_xlabel("Previous biopsy date (days post-transplant)")
+        ax.set_ylabel("Learned weight  w ∈ (0,1)")
+        ax.set_title(f"{TASK_LABELS.get(task, task)}\nw(current biopsy date, previous biopsy date)",
+                     fontsize=FONT_LABEL, color=col)
+        ax.set_ylim(0, 1.05)
+        ax.legend(fontsize=7, ncol=1, loc="best", framealpha=0.8)
+
+    # Final panel: weight vs (anchor - biopsy_day) i.e. "age of biopsy"
+    ax = axes[n_tasks]
+    age_range = np.linspace(0, 730, 200)
+    anchor_fixed = 500.0
+    for ti, task in enumerate(tasks):
+        net = model.biopsy_weight_net[task]
+        col = TASK_COLORS.get(task, "#777")
+        inp = torch.tensor([[anchor_fixed, anchor_fixed - age] for age in age_range],
+                           dtype=torch.float32, device=dev)
+        inp[:, 1] = inp[:, 1].clamp(min=0)
+        with torch.no_grad():
+            w = net(inp).squeeze(1).cpu().numpy()
+        ax.plot(age_range, w, color=col, lw=2.0, label=TASK_LABELS.get(task, task))
+    ax.set_xlabel("Biopsy age  (current − previous biopsy date)  [days]")
+    ax.set_ylabel("Learned weight  w ∈ (0,1)")
+    ax.set_title(f"Weight vs biopsy age\n(current biopsy fixed at {int(anchor_fixed)}d)", fontsize=FONT_LABEL)
+    ax.set_ylim(0, 1.05)
+    ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    png = _savefig(fig, out_dir, "L_global_learned_weights")
+    plt.close(fig)
+    print(f"  [L_global] → {png.name}")
+
+    # ── 2D heatmap: w(curr_biopsy_day, prev_biopsy_day) for each task ────────
+    grid_n = 100
+    curr_range  = np.linspace(0, 2000, grid_n)   # current biopsy day axis
+    prev_range  = np.linspace(0, 2000, grid_n)   # previous biopsy day axis
+    CURR, PREV  = np.meshgrid(curr_range, prev_range, indexing="ij")  # (grid_n, grid_n)
+
+    fig2, axes2 = plt.subplots(1, n_tasks, figsize=(5 * n_tasks, 5))
+    if n_tasks == 1:
+        axes2 = [axes2]
+    fig2.suptitle("Learned Biopsy Weight  w(current biopsy date, previous biopsy date)",
+                  fontsize=FONT_TITLE + 1, fontweight="bold")
+
+    for ti, task in enumerate(tasks):
+        ax2 = axes2[ti]
+        net = model.biopsy_weight_net[task]
+        pairs = np.stack([CURR.ravel(), PREV.ravel()], axis=1)   # (grid_n², 2)
+        inp2  = torch.tensor(pairs, dtype=torch.float32, device=dev)
+        with torch.no_grad():
+            W = net(inp2).squeeze(1).cpu().numpy().reshape(grid_n, grid_n)
+
+        # Mask out invalid region (prev biopsy after current biopsy)
+        W[PREV > CURR] = np.nan
+
+        im = ax2.imshow(W, origin="lower", aspect="auto",
+                        extent=[0, 2000, 0, 2000],
+                        cmap="RdBu_r", vmin=0, vmax=1,
+                        interpolation="bilinear")
+        # Diagonal = prev biopsy same day as current (most recent)
+        ax2.plot([0, 2000], [0, 2000], "k--", lw=1, alpha=0.5, label="prev = current")
+        col = TASK_COLORS.get(task, "#777")
+        ax2.set_xlabel("Previous biopsy date (days post-transplant)", fontsize=FONT_LABEL)
+        ax2.set_ylabel("Current biopsy date (days post-transplant)", fontsize=FONT_LABEL)
+        ax2.set_title(f"{TASK_LABELS.get(task, task)}", fontsize=FONT_LABEL, color=col, fontweight="bold")
+        fig2.colorbar(im, ax=ax2, label="Weight w ∈ (0,1)", pad=0.02)
+        ax2.legend(fontsize=7, loc="upper left")
+
+    fig2.tight_layout()
+    png2 = _savefig(fig2, out_dir, "L_global_weight_heatmap")
+    plt.close(fig2)
+    print(f"  [L_global] → {png2.name}")
     return png
 
 
@@ -798,6 +998,8 @@ def plot_L2(extr: dict, model: nn.Module, out_dir: Path, tasks: List[str]):
 
 def plot_L2b_alibi(extr: dict, model: nn.Module, out_dir: Path, ref_task: str = None):
     """Show the ALiBi bias component per head for one reference task."""
+    if not model.use_alibi:
+        return None  # no ALiBi in this variant
     pid  = extr["patient_id"]
     days = extr["biopsy_days"]
     tok_b  = extr["tok_biopsy"]
@@ -973,11 +1175,26 @@ def plot_L3(extr: dict, model: nn.Module, out_dir: Path, tasks: List[str]):
         ax.set_title(TASK_LABELS.get(task, task), fontsize=10, color=col)
         ax.set_ylim(0, biopsy_alpha.max() * 1.35)
 
-        # Recency γ annotation
-        gamma_v = model.recency_gamma[task].abs().item()
-        ax.text(0.97, 0.97, f"γ = {gamma_v:.3f}", transform=ax.transAxes,
-                ha="right", va="top", fontsize=9,
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=col, alpha=0.8))
+        # Annotation: γ (ALiBi) or learned biopsy weight (no_alibi)
+        if model.use_learned_weight:
+            bw = extr.get("biopsy_weights", {}).get(task)
+            if bw is not None and len(bw) > 0:
+                w_last = float(bw[-1])
+                ax.text(0.97, 0.97, f"w(anchor) = {w_last:.3f}", transform=ax.transAxes,
+                        ha="right", va="top", fontsize=9,
+                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=col, alpha=0.8))
+                # Overlay learned biopsy weights as a line on a twin axis
+                ax2 = ax.twinx()
+                ax2.plot(days_arr, bw, color=col, lw=1.5, ls=":", alpha=0.7,
+                         marker="o", markersize=3, label="learned weight")
+                ax2.set_ylim(0, 1.05)
+                ax2.set_ylabel("learned w", fontsize=7, color=col)
+                ax2.tick_params(axis="y", labelsize=7, colors=col)
+        else:
+            gamma_v = model.recency_gamma[task].abs().item()
+            ax.text(0.97, 0.97, f"γ = {gamma_v:.3f}", transform=ax.transAxes,
+                    ha="right", va="top", fontsize=9,
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=col, alpha=0.8))
 
     plt.tight_layout()
     png = _savefig(fig, out_dir, f"L3_recency_abmil_pid{pid}")
@@ -1854,9 +2071,13 @@ def plot_population_alpha(all_extractions: List[dict], model: nn.Module,
         ax.set_xlabel("Normalised biopsy position  (0=first, 1=last)", fontsize=9)
         ax.set_ylabel("ABMIL α weight", fontsize=9)
         ax.set_title(TASK_LABELS.get(task, task), fontsize=10, color=col)
-        gamma_v = model.recency_gamma[task].abs().item()
         slope_sign = "↑" if slope > 0 else "↓"
-        ax.text(0.03, 0.97, f"γ={gamma_v:.3f}\nslope={slope:.4f} {slope_sign}",
+        if model.use_learned_weight:
+            ann = f"learned-w\nslope={slope:.4f} {slope_sign}"
+        else:
+            gamma_v = model.recency_gamma[task].abs().item()
+            ann = f"γ={gamma_v:.3f}\nslope={slope:.4f} {slope_sign}"
+        ax.text(0.03, 0.97, ann,
                 transform=ax.transAxes, ha="left", va="top", fontsize=8,
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.8))
 
@@ -1912,9 +2133,11 @@ def plot_population_seed_attribution(all_extractions: List[dict],
             alpha = extr["alpha_per_task"].get(task)
             if alpha is None:
                 continue
-            out_val = (float(extr["records"][0].get("label", float("nan")))
-                       if outcome_src == "label"
-                       else extr["logits"].get(task, float("nan")))
+            if outcome_src == "label":
+                _lbl = extr["records"][0].get("label")
+                out_val = float("nan") if _lbl is None else float(_lbl)
+            else:
+                out_val = extr["logits"].get(task, float("nan"))
             if np.isnan(out_val):
                 continue
 
@@ -2051,27 +2274,33 @@ def plot_population_seed_attribution(all_extractions: List[dict],
                         continue
                     seed_w = seed_sum / seed_cnt  # (K,) mean alpha for this mod
 
-                    # Average pma_attn over biopsies for this modality
-                    pma_sum = None; pma_cnt = 0
+                    # Bin raw pma_attn (K, N_patches) into cluster affinities (K, n_clus)
+                    # using pre-computed per-patch cluster IDs from the .pt files.
+                    aff_sum = None; aff_n = 0
+                    clus_ids_biopsy = extr.get("cluster_ids_per_biopsy", {})
+                    n_clus_mod = len(cnames) if cnames else None
                     for t_idx in range(extr["n_biopsies"]):
                         pa = extr["pma_attn"].get((t_idx, mo))
-                        if pa is None:
+                        c_ids = clus_ids_biopsy.get((t_idx, mo))
+                        if pa is None or c_ids is None:
                             continue
-                        n_c = pa.shape[1]
-                        if pma_sum is None:
-                            pma_sum = np.zeros((K, n_c))
-                        if pa.shape == pma_sum.shape:
-                            pma_sum += pa
-                            pma_cnt += 1
-                    if pma_sum is None or pma_cnt == 0:
+                        if len(c_ids) != pa.shape[1]:
+                            continue
+                        k_c = n_clus_mod if n_clus_mod else (int(c_ids.max()) + 1)
+                        aff = _seed_cluster_mass(pa, c_ids, k_c)   # (K, k_c)
+                        if aff_sum is None:
+                            aff_sum = np.zeros((K, k_c))
+                        if aff.shape == aff_sum.shape:
+                            aff_sum += aff
+                            aff_n   += 1
+                    if aff_sum is None or aff_n == 0:
                         continue
-                    pma_mean = pma_sum / pma_cnt   # (K, n_clus)
-                    n_c = pma_mean.shape[1]
+                    n_c = aff_sum.shape[1]
                     if aff_acc.shape[1] != n_c:
                         aff_acc = np.zeros((K, n_c)); aff_cnt = np.zeros((K, n_c))
 
-                    # ABMIL-weighted affinity: alpha_k × pma_k,c
-                    weighted = seed_w[:, None] * pma_mean   # (K, n_c)
+                    # ABMIL-weighted mean cluster affinity
+                    weighted = seed_w[:, None] * (aff_sum / aff_n)   # (K, n_c)
                     aff_acc  += weighted
                     aff_cnt  += 1
 
@@ -2112,6 +2341,107 @@ def plot_population_seed_attribution(all_extractions: List[dict],
         plt.close(fig)
         print(f"  [pop_K] {task} → {png.name}")
 
+        # Save alpha_diff for cross-split aggregation
+        import json as _json
+        agg_data = {
+            "alpha_diff":  alpha_diff.tolist(),
+            "seed_labels": seed_labels,
+            "present_mods": present_mods,
+            "n_hi": int(hi_m.sum()), "n_lo": int(lo_m.sum()),
+        }
+        agg_path = out_dir / f"seed_attribution_data_{task}.json"
+        agg_path.write_text(_json.dumps(agg_data, indent=2))
+        print(f"  [pop_K] saved {agg_path.name}")
+
+
+# ── Lpop_K_agg: Cross-split mean±std seed attribution ────────────────────────
+
+def plot_population_seed_attribution_agg(variant: str, out_root: Path,
+                                          tasks: List[str], n_splits: int = 5):
+    """
+    Load seed_attribution_data_{task}.json from each split's output dir,
+    compute mean±std of alpha_diff across splits, and plot a bar chart
+    with error bars. Saves to {variant}_agg/{Lpop_K_agg_{task}.png}.
+    """
+    import json as _json
+
+    agg_dir = out_root / f"{variant}_agg"
+    agg_dir.mkdir(parents=True, exist_ok=True)
+
+    for task in tasks:
+        split_diffs, seed_labels, present_mods = [], None, None
+        for split in range(n_splits):
+            # Try both naming conventions (with and without variant prefix)
+            candidates = [
+                out_root / f"{variant}_split{split}_fold0_{task}",
+                out_root / f"split{split}_fold0_{task}",
+            ]
+            for cand in candidates:
+                jpath = cand / f"seed_attribution_data_{task}.json"
+                if jpath.exists():
+                    d = _json.loads(jpath.read_text())
+                    split_diffs.append(np.array(d["alpha_diff"]))
+                    if seed_labels is None:
+                        seed_labels = d["seed_labels"]
+                        present_mods = d["present_mods"]
+                    break
+
+        if len(split_diffs) < 2:
+            print(f"  [agg] {task}: only {len(split_diffs)} splits found, skipping")
+            continue
+
+        # Align lengths (in case of rare shape mismatch)
+        min_len = min(a.shape[0] for a in split_diffs)
+        arr = np.stack([a[:min_len] for a in split_diffs])   # (n_splits, total_seeds)
+        mean_diff = arr.mean(0)
+        std_diff  = arr.std(0)
+        seed_labels = (seed_labels or [str(i) for i in range(min_len)])[:min_len]
+
+        # Modality colors and spans
+        K = 16  # n_seeds — infer from labels
+        seed_colors = []
+        mod_spans   = {}
+        idx = 0
+        for mo in (present_mods or []):
+            cnt = sum(1 for lb in seed_labels if lb.startswith(mo[:3]))
+            mod_spans[mo] = (idx, idx + cnt)
+            for _ in range(cnt):
+                seed_colors.append(MOD_COLORS.get(mo, "#888"))
+            idx += cnt
+
+        x = np.arange(min_len)
+        bar_cols = ["#E53935" if v > 0 else "#1E88E5" for v in mean_diff]
+
+        fig, ax = plt.subplots(figsize=(max(14, min_len * 0.22), 4.5))
+        ax.bar(x, mean_diff, color=bar_cols, width=0.75, alpha=0.85, label="mean Δα")
+        ax.errorbar(x, mean_diff, yerr=std_diff, fmt="none",
+                    color="#333", capsize=2, lw=1.0, alpha=0.7)
+        ax.axhline(0, color="#333", lw=0.8)
+
+        # Modality dividers and labels
+        for mo in (present_mods or [])[1:]:
+            ax.axvline(mod_spans[mo][0] - 0.5, color="#aaa", lw=0.7, ls="--")
+        for mo in (present_mods or []):
+            mid = (mod_spans[mo][0] + mod_spans[mo][1]) / 2
+            ylim = ax.get_ylim()
+            ax.text(mid, ylim[1], mo, ha="center", va="bottom", fontsize=8,
+                    color=MOD_COLORS.get(mo, "#888"), fontweight="bold")
+
+        task_label = TASK_LABELS.get(task, task)
+        ax.set_title(f"{task_label} — Seed attribution  Δα  (mean ± std, n={len(split_diffs)} splits)\n"
+                     f"Red = enriched in high-risk,  Blue = enriched in low-risk",
+                     fontsize=FONT_LABEL, fontweight="bold")
+        ax.set_xlabel("Seed (modality · seed_k)", fontsize=FONT_LABEL - 1)
+        ax.set_ylabel("Δα  (high-risk − low-risk)", fontsize=FONT_LABEL - 1)
+        ax.set_xticks(x)
+        ax.set_xticklabels(seed_labels, rotation=60, ha="right", fontsize=5)
+        ax.spines[["top", "right"]].set_visible(False)
+        fig.tight_layout()
+
+        png = _savefig(fig, agg_dir, f"Lpop_K_agg_{task}")
+        plt.close(fig)
+        print(f"  [agg] {task} ({len(split_diffs)} splits) → {png.name}")
+
 
 # ── W&B logging ───────────────────────────────────────────────────────────────
 
@@ -2137,25 +2467,35 @@ def log_to_wandb(model: nn.Module, all_extractions: List[dict],
     fold_tag = f"split{split}_fold{fold}"
 
     # Learned model parameters
-    slopes = model.temporal_sab.alibi_slopes.abs().detach().cpu().numpy()
-    gammas = {t: model.recency_gamma[t].abs().item() for t in tasks}
+    variant_tag = getattr(model, "_variant_tag", "longitudinal_mk_mt")
+    if model.use_alibi:
+        slopes = model.temporal_sab.alibi_slopes.abs().detach().cpu().numpy()
+        slopes_cfg = {f"alibi_slope_h{i}": float(slopes[i]) for i in range(len(slopes))}
+    else:
+        slopes = np.array([])
+        slopes_cfg = {}
+    if model.use_learned_weight:
+        gammas_cfg = {}
+    else:
+        gammas = {t: model.recency_gamma[t].abs().item() for t in tasks}
+        gammas_cfg = {f"recency_gamma_{t}": float(gammas[t]) for t in tasks}
 
     config = {
-        "variant":   "longitudinal_mk_mt",
-        "split":     split,
-        "fold":      fold,
-        "tasks":     tasks,
-        "n_seeds":   model.n_seeds,
+        "variant":    variant_tag,
+        "split":      split,
+        "fold":       fold,
+        "tasks":      tasks,
+        "n_seeds":    model.n_seeds,
         "n_patients": len(all_extractions),
-        **{f"alibi_slope_h{i}": float(slopes[i]) for i in range(len(slopes))},
-        **{f"recency_gamma_{t}": float(gammas[t]) for t in tasks},
+        **slopes_cfg,
+        **gammas_cfg,
     }
 
     try:
         run = wandb.init(
             project=project,
-            name=f"longitudinal_mk_mt_{fold_tag}",
-            group="longitudinal_mk_mt",
+            name=f"{variant_tag}_{fold_tag}",
+            group=variant_tag,
             config=config,
             reinit=True,
         )
@@ -2167,8 +2507,9 @@ def log_to_wandb(model: nn.Module, all_extractions: List[dict],
     scalar_log = {}
     for i, s in enumerate(slopes):
         scalar_log[f"model/alibi_slope_h{i}"] = float(s)
-    for t in tasks:
-        scalar_log[f"model/recency_gamma/{t}"] = float(gammas[t])
+    if not model.use_learned_weight:
+        for t in tasks:
+            scalar_log[f"model/recency_gamma/{t}"] = float(gammas[t])
 
     # ── Table: per-patient summary ────────────────────────────────────────────
     table_cols = (["patient_id", "n_biopsies", "acr_label_last"] +
@@ -2284,12 +2625,100 @@ def log_to_wandb(model: nn.Module, all_extractions: List[dict],
     print(f"  [wandb] run: {run.url}")
 
 
+# ── Lpop_rep: Patient representation-space UMAP ───────────────────────────────
+
+def plot_population_rep_umap(all_extractions: List[dict], model: nn.Module,
+                             out_dir: Path, tasks: List[str]):
+    """
+    Lpop_rep: UMAP of 256-dim ABMIL-weighted patient representations (rep_full).
+
+    One figure per task, 2×2 grid coloured by:
+      (0,0) logit score (continuous, RdBu_r — RED=high-risk)
+      (0,1) n_biopsies
+      (1,0) anchor_day (days post-transplant of final biopsy)
+      (1,1) label (for acr_cls) or high/low split at median logit
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    for task in tasks:
+        reps, logits_v, n_bx, anchor_days, labels_v = [], [], [], [], []
+        for extr in all_extractions:
+            rep = extr.get("rep_full", {}).get(task)
+            if rep is None:
+                continue
+            reps.append(rep)
+            logits_v.append(extr["logits"].get(task, float("nan")))
+            n_bx.append(extr["n_biopsies"])
+            anchor_days.append(float(extr["biopsy_days"][-1]) if extr["biopsy_days"] else float("nan"))
+            lbl = extr["records"][0].get("label") if extr["records"] else None
+            labels_v.append(float("nan") if lbl is None else float(lbl))
+
+        if len(reps) < 5:
+            continue
+
+        X = np.stack(reps, axis=0).astype(np.float32)   # (N, H)
+        X = StandardScaler().fit_transform(X)
+        try:
+            emb = _umap_embed(X, n_neighbors=min(15, len(reps) - 1),
+                              min_dist=0.1, metric="cosine")
+        except Exception as exc:
+            print(f"  [rep_umap] UMAP failed for {task}: {exc}")
+            continue
+
+        logits_arr    = np.array(logits_v, dtype=float)
+        n_bx_arr      = np.array(n_bx,     dtype=float)
+        anchor_arr    = np.array(anchor_days, dtype=float)
+        labels_arr    = np.array(labels_v, dtype=float)
+
+        med_logit = np.nanmedian(logits_arr)
+        risk_group = np.where(np.isnan(logits_arr), np.nan,
+                              (logits_arr > med_logit).astype(float))
+
+        fig, axes = plt.subplots(2, 2, figsize=(10, 9))
+        fig.suptitle(f"Patient Rep Space — {TASK_LABELS.get(task, task)}  (N={len(reps)})",
+                     fontsize=FONT_TITLE + 1, fontweight="bold")
+
+        panels = [
+            (axes[0, 0], logits_arr,  "Logit score",       "RdBu_r",   False),
+            (axes[0, 1], n_bx_arr,    "# biopsies",        "viridis",   False),
+            (axes[1, 0], anchor_arr,  "Anchor day (d)",    "plasma",    False),
+            (axes[1, 1], risk_group,  "Risk group\n(median split)", "RdBu_r", True),
+        ]
+
+        for ax, vals, title, cmap, discrete in panels:
+            valid = ~np.isnan(vals)
+            sc = ax.scatter(emb[valid, 0], emb[valid, 1],
+                            c=vals[valid], cmap=cmap,
+                            s=22, alpha=0.85, linewidths=0,
+                            vmin=np.nanmin(vals), vmax=np.nanmax(vals))
+            if (~valid).any():
+                ax.scatter(emb[~valid, 0], emb[~valid, 1],
+                           c="lightgrey", s=14, alpha=0.4, linewidths=0)
+            cb = fig.colorbar(sc, ax=ax, pad=0.02, fraction=0.046)
+            if discrete:
+                cb.set_ticks([0, 1])
+                cb.set_ticklabels(["Low", "High"])
+            ax.set_title(title, fontsize=FONT_LABEL, fontweight="bold")
+            ax.set_xlabel("UMAP-1", fontsize=FONT_LABEL - 1)
+            ax.set_ylabel("UMAP-2", fontsize=FONT_LABEL - 1)
+            ax.tick_params(labelsize=FONT_LABEL - 2)
+
+        fig.tight_layout()
+        png = _savefig(fig, out_dir, f"Lpop_rep_umap_{task}")
+        plt.close(fig)
+        print(f"  [rep_umap] → {png.name}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Longitudinal-MK-MT interpretability")
     parser.add_argument("--split",      type=int, default=0)
     parser.add_argument("--fold",       type=int, default=0)
+    parser.add_argument("--variant",    type=str, default="longitudinal_mk_mt",
+                        choices=["longitudinal_mk", "longitudinal_mk_mt",
+                                 "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"],
+                        help="Model variant to load")
     parser.add_argument("--task",       type=str, default="mega",
                         choices=["mega", "acr_cls", "cls", "acr_surv", "clad", "clad_surv", "death", "death_surv"],
                         help="'mega' for multitask model; or per-task variant")
@@ -2303,15 +2732,15 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    print(f"[main] device={device}  split={args.split}  fold={args.fold}  task={args.task}")
+    print(f"[main] device={device}  split={args.split}  fold={args.fold}  task={args.task}  variant={args.variant}")
 
-    # Output directory — separate subdir for per-task vs mega
+    # Output directory — separate subdir per variant/task
     task_suffix = args.task if args.task != "mega" else "mega"
-    out_dir = OUT_ROOT / f"split{args.split}_fold{args.fold}_{task_suffix}"
+    out_dir = OUT_ROOT / f"{args.variant}_split{args.split}_fold{args.fold}_{task_suffix}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model
-    model, tasks = load_model(args.split, args.fold, device, task=args.task)
+    model, tasks = load_model(args.split, args.fold, device, task=args.task, variant=args.variant)
     print(f"[main] tasks={tasks}  n_seeds={model.n_seeds}")
 
     # Global model plots (don't need patient data)
@@ -2342,12 +2771,14 @@ def main():
         try:
             bags_list, transplant_days = load_patient_bags(patient, device)
             cluster_names = load_patient_cluster_names(patient)
+            cluster_ids_per_biopsy = load_patient_cluster_ids(patient)
             # Accumulate cluster names (first seen per modality wins)
             for mo, nms in cluster_names.items():
                 if mo not in cluster_names_pool and nms:
                     cluster_names_pool[mo] = nms
 
-            extr = extract_patient_longitudinal(model, patient, bags_list, device, tasks)
+            extr = extract_patient_longitudinal(model, patient, bags_list, device, tasks,
+                                                cluster_ids_per_biopsy=cluster_ids_per_biopsy)
             if extr is not None:
                 extr["transplant_days"] = transplant_days
             if extr is None:
@@ -2381,6 +2812,8 @@ def main():
         plot_population_seed_trends(all_extractions, model, out_dir)
         plot_population_seed_attribution(all_extractions, cluster_names_pool,
                                          model, out_dir, tasks)
+        plot_population_rep_umap(all_extractions, model, out_dir, tasks)
+        plot_population_seed_attribution_agg(args.variant, OUT_ROOT, tasks)
 
     # W&B logging
     if args.wandb_project.lower() != "none" and all_extractions:

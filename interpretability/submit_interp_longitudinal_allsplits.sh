@@ -10,8 +10,9 @@ for SPLIT in 0 1 2 3 4; do
     for TASK in "${TASKS[@]}"; do
         OUT_DIR="/ictstr01/home/aih/dinesh.haridoss/chicago_mil/interpretability/longitudinal_mk_interp/split${SPLIT}_fold0_${TASK}"
 
-        if ls "${OUT_DIR}"/Lpop_*.png 2>/dev/null | grep -q .; then
-            echo "[SKIP] split${SPLIT} task=${TASK} — Lpop panels already exist"
+        TASK_KEY="${TASK%_surv}"
+        if [ -f "${OUT_DIR}/seed_attribution_data_${TASK_KEY}.json" ] || [ -f "${OUT_DIR}/seed_attribution_data_${TASK}.json" ]; then
+            echo "[SKIP] split${SPLIT} task=${TASK} — attribution data already exists"
             continue
         fi
 

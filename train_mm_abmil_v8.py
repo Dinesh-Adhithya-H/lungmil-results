@@ -679,7 +679,7 @@ def main():
                                          fold=_f, split=args.split)
             for _r in _sd["train"] + _sd["val"] + _sd["test"]:
                 all_stems.add(_r["stem"])
-        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
+        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
             for _f in range(4):
                 _ls = build_splits_longitudinal(args.samples_dir, args.splits_csv,
                                                 fold=_f, split=args.split)
@@ -700,7 +700,7 @@ def main():
                 print(f"\n{'='*60}\n  [all-folds] task={_task}  fold={_f}  (HP sweep only)\n{'='*60}")
                 _sd = build_splits_multitask(args.samples_dir, args.splits_csv,
                                              fold=_f, split=args.split)
-                if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
+                if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
                     run_phase2_longitudinal(args, bag_cache, device, out, fold=_f)
                 else:
                     run_phase2(args, _sd, bag_cache, device, out, fold=_f)
@@ -713,7 +713,7 @@ def main():
             _orig_combined_train = args.combined_train
             args.global_hp       = True
             args.combined_train  = True
-            if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
+            if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
                 metrics = run_phase2_longitudinal(args, bag_cache, device, out, fold=0)
             else:
                 metrics = run_phase2(args, _sd0, bag_cache, device, out, fold=0)
@@ -740,7 +740,7 @@ def main():
     all_stems = list({r["stem"] for r in all_recs})
 
     # For longitudinal_mk variants: stems come from patient-level splits
-    if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt") and args.phase in ("p2", "both"):
+    if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi") and args.phase in ("p2", "both"):
         _long_splits = build_splits_longitudinal(
             samples_dir=args.samples_dir,
             splits_csv=args.splits_csv,
@@ -760,7 +760,7 @@ def main():
         p1_paths = run_phase1(args, splits_dict, bag_cache, device, out)
 
     if args.phase in ("p2", "both"):
-        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt"):
+        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
             metrics = run_phase2_longitudinal(args, bag_cache, device, out)
         else:
             metrics = run_phase2(args, splits_dict, bag_cache, device, out,
