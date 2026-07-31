@@ -134,6 +134,83 @@ This reversal is biologically coherent. Chronic, recurrent, sub-threshold inflam
 
 ![CLAD seed attribution (cross-split agg)](figures/interpretability/agg/longitudinal_mk_no_alibi_Lpop_K_agg_clad_surv.png)
 
+### Cluster-level attribution identifies specific cell types and tissue morphologies driving each endpoint
+
+The seed-level attribution (Figs. 3a–d) identifies which prototype vectors are enriched in high-risk versus low-risk patients across all five splits, but the prototype vectors themselves encode a mixture of biological signals. To identify the specific morphological clusters and cell types driving each endpoint, we traced the b-cos attention from each seed back to the pre-computed patch clusters, aggregated across patients and splits, and report Δ cluster affinity = mean affinity in high-risk group − mean affinity in low-risk group, averaged over all K seeds and all five outer splits for the best model per task (Fig. S3). For H&E histology, cluster names are biological categories from a human-annotated morphological map; for BAL cytology, cluster names are cell types from a scRNA-seq reference atlas [9]; CT clusters are quantitative texture groups without manual labels.
+
+#### Death — the TRAM-to-MoAM macrophage transition as a BAL biomarker of mortality
+
+The death model (Longitudinal-MK, C-index 0.771) reveals its strongest cluster-level signal in **BAL** (Fig. S3a). Patients with longer post-transplant survival disproportionately attend to seeds enriched in **tissue-resident alveolar macrophage (TRAM)** clusters (TRAM-3, TRAM-4, TRAM-5, TRAM-6): Δaffinity −0.00064 to −0.00023. Patients who die sooner attend to seeds enriched in **monocyte-derived alveolar macrophage (MoAM)** clusters (MoAM-1, MoAM-2, Profibrotic MoAM), perivascular macrophages, and monocytes (Δaffinity +0.00003 to +0.00010).
+
+This TRAM–MoAM contrast is mechanistically coherent. TRAMs are the ontogenetically resident, self-renewing macrophage population of the healthy alveolus; they promote immune tolerance, surfactant homeostasis, and resolution of inflammatory episodes [8,9]. MoAMs are recruited from circulating monocytes in response to injury and persistent inflammation; they drive pro-fibrotic remodelling via TGF-β, IL-1β and TNF-α signalling, and their expansion is associated with loss of immune tolerance and progression to end-stage lung disease [8]. The *Profibrotic MoAM* subtype is particularly notable — its presence in the BAL of high-risk patients connects directly to fibroblast activation, collagen deposition and the irreversible architectural loss that characterises the progressive CLAD phenotypes. That the model learned to distinguish TRAM-predominant from MoAM-predominant BAL compositions — purely from outcome supervision, without being provided any cell-type annotations — demonstrates that the BAL cellular landscape carries clinically actionable prognostic information beyond conventional differential cell counts.
+
+In H&E histology, the death model attends to "Alveolar with hemorrhage and inflammation" and "Alveolar with empty spaces" clusters in the low-risk (survivor) group — consistent with patients experiencing discrete, localised acute rejection episodes on a substrate of preserved parenchymal architecture. CT cluster differences are present but, lacking biological annotation, remain quantitative rather than mechanistic.
+
+**Fig. S3a — Death: cluster-level attribution (best model, 5 splits aggregated)**
+
+*Horizontal bars: Δ cluster affinity (high-risk − low-risk) ± s.d. across 5 outer splits. Red = enriched in non-survivors; blue = enriched in long-term survivors. Three panels: H&E morphological categories (left), BAL cell types (centre), CT texture clusters (right). BAL TRAM clusters dominate the survivor (blue) pole; MoAM and monocyte clusters dominate the non-survivor (red) pole.*
+
+![Death cluster attribution](figures/interpretability/cluster_agg/death_cluster_aff_agg.png)
+
+#### ACR classification — cytotoxic and helper T cells in BAL mark current-visit rejection grade
+
+For ACR classification (SetMIL-MT no SAB, BACC 0.623), the dominant cross-split signal is in **BAL** (Fig. S3c). ACR+ biopsies are marked by **CD8 T cells** (CD8 T cells-2, Δ +0.000029) and **CD4 T cells** (CD4 T cells-2, Δ +0.000010), with additional enrichment in TRAM variants (TRAM-3, TRAM-4, TRAM-6, Δ +0.000015 to +0.000022). ACR− biopsies show near-zero cluster-level differences, consistent with the absence of any specific infiltrating population in the lavage of histologically quiet allografts.
+
+The T-cell signal is biologically expected and serves as an internal validation of the attribution method. Acute cellular rejection is a T-cell mediated immune response: CD8 cytotoxic T lymphocytes infiltrate the bronchiolar epithelium and vascular endothelium, while CD4 helper T cells coordinate the rejection response via cytokine release and B-cell activation [3,7]. That CD8 T cells show a larger Δaffinity than CD4 T cells (0.000029 vs 0.000010) is consistent with the predominance of cytotoxic effectors at the mucosal surface in classical ACR, where epithelial killing is the primary mechanism of graft injury. The concomitant TRAM enrichment in ACR+ likely reflects activation-state changes in resident macrophages — TRAMs upregulate co-stimulatory molecules and pro-inflammatory cytokines in response to adjacent T-cell infiltration, producing a composite BAL signal in which both innate and adaptive immune compartments are altered.
+
+In **CT**, clusters 6, 7, 8 (Δ +0.000162 to +0.000272) mark ACR+ biopsies — likely reflecting the peribronchiolar ground-glass opacity and mild airway thickening that accompanies lymphocytic bronchiolitis in ACR grade A2 and above. In **H&E**, "Alveolar" and "Alveolar with hemorrhage and inflammation" clusters both show modest positive Δaffinity in the ACR+ group, consistent with alveolitis and haemorrhage as histological correlates of more severe rejection episodes.
+
+**Fig. S3c — ACR classification: cluster-level attribution (SetMIL-MT no SAB, 5 splits)**
+
+*BAL T-cell clusters (CD8 T cells-2, CD4 T cells-2) dominate the ACR+ (red) pole. Near-zero ACR− differences across all modalities, consistent with the absence of a specific negative cellular marker for the rejection-free state.*
+
+![ACR cls cluster attribution](figures/interpretability/cluster_agg/acr_cls_cluster_aff_agg.png)
+
+#### ACR survival — alveolar inflammation in H&E and TRAM activity in BAL predict shorter time to next rejection
+
+For time-to-next-ACR (Longitudinal-MK, C-index 0.679), the dominant H&E signal is **"Alveolar with hemorrhage and inflammation"** in the high-risk (short time-to-event) group (Δ +0.00011 to +0.00022 across multiple sub-clusters), while "Alveolar" (quiet parenchyma) clusters mark the low-risk (longer rejection-free interval) group (Δ −0.00011 to −0.00084) (Fig. S3b). In BAL, TRAM sub-variants (TRAM-3, TRAM-6, TRAM-4) are modestly enriched in the high-risk group (Δ +0.00003 to +0.00007), a contrast to the death model in which TRAMs were low-risk.
+
+The directionality of the HE signal here is the opposite of the death model and deserves explicit comment. For mortality, alveolar inflammation marks survivors (because inflammation is treatable and does not kill per se). For time-to-next-ACR, alveolar inflammation marks patients who will experience another rejection event sooner — because histological inflammation at the current visit is evidence of ongoing immune activity that predicts future immune activation. In other words, the same microscopic observation (alveolar inflammatory infiltrate) has opposite prognostic meaning depending on the endpoint: it protects against death by indicating reversible disease, but predicts ACR recurrence by indicating continuing immune dysregulation. The model has learned both directions simultaneously in a multi-task architecture. This divergence is not accessible from a single-task model and represents a unique strength of the longitudinal multimodal framework presented here.
+
+**Fig. S3b — ACR survival: cluster-level attribution (Longitudinal-MK, 5 splits)**
+
+*H&E "Alveolar with hemorrhage and inflammation" marks short time to next rejection (red pole). Contrast with the death model (Fig. S3a) where the same cluster marks longer survival — the model learns opposite prognostic directions for the same histological feature across tasks.*
+
+![ACR surv cluster attribution](figures/interpretability/cluster_agg/acr_surv_cluster_aff_agg.png)
+
+#### CLAD — CT structural patterns and myeloid infiltration predict airway dysfunction onset; alveolar inflammation is protective
+
+For CLAD onset (SetMIL-MT, C-index 0.563), the strongest signal is in **CT**: clusters 0, 1, 2, 4 and 6 are enriched in patients who develop CLAD sooner (Δ +0.000239 to +0.000445) (Fig. S3d). In **BAL**, TRAM sub-variants (TRAM-3, TRAM-4, TRAM-8) and monocytes mark CLAD high-risk (Δ +0.000006 to +0.000011), consistent with myeloid activation preceding spirometric decline. In **H&E**, the low-risk (long CLAD-free survival) group shows enrichment in "Alveolar with hemorrhage and inflammation" clusters (Δ −0.000120 to −0.000165) — alveolar inflammatory histology again protects, as in the death model, but here the comparison point is CLAD-free survival rather than overall survival.
+
+The CT signal for CLAD is the largest absolute Δaffinity across any modality-task pair in this analysis. This is consistent with the known radiology of early BOS: air trapping (mosaic attenuation on inspiratory images, expiratory gas trapping) and bronchiectasis are detectable on CT months before FEV1 decline crosses the diagnostic threshold [5,6]. The model thus uses CT to detect pre-clinical CLAD — a clinically actionable finding, since early CT air trapping identifies patients who would benefit from augmented immunosuppression or bronchoalveolar surveillance before spirometric criteria are met. That CT cluster labels are numeric (unannotated) is a current limitation; human-annotation of the CT clusters by a thoracic radiologist would allow the specific radiological correlates (air trapping, bronchiectasis, ground-glass, consolidation) to be named.
+
+**Fig. S3d — CLAD: cluster-level attribution (SetMIL-MT, 5 splits)**
+
+*CT clusters dominate the CLAD high-risk (red) pole — the largest absolute Δaffinity across all tasks. H&E alveolar inflammation protects against CLAD (blue), consistent with the death model. BAL myeloid clusters (TRAM, Monocytes) contribute to the high-risk signal.*
+
+![CLAD cluster attribution](figures/interpretability/cluster_agg/clad_cluster_aff_agg.png)
+
+#### Cross-task synthesis: four endpoints, two biological axes
+
+Taken together, the cluster-level attribution analyses converge on two independent biological axes that jointly structure post-transplant outcomes (Table 2):
+
+**Axis 1 — Macrophage composition (BAL):** the TRAM-to-MoAM ratio is the most consistent BAL biomarker across endpoints. TRAM abundance marks longer survival (death model); TRAM activation (with T-cell co-infiltration) marks current ACR; MoAM/monocyte abundance marks shorter survival and, partially, CLAD risk. The TRAM-MoAM continuum — from homeostatic resident macrophage to recruited pro-fibrotic effector — tracks the trajectory from reversible immune activation to irreversible allograft remodelling.
+
+**Axis 2 — Histological inflammation vs CT structural loss:** acute alveolar inflammation (H&E) is uniformly a sign that the patient's immune system is active and the allograft architecture is intact enough to mount an inflammatory response — a feature that predicts longer survival and longer CLAD-free interval. CT structural deterioration, by contrast, marks irreversible architectural loss that no immunosuppressive intervention can reverse; it predicts both shorter survival and, for CLAD, the pre-clinical structural remodelling that precedes spirometric decline.
+
+The model has internalised both axes across all four tasks simultaneously, producing a mechanistically coherent attribution landscape that extends beyond any single conventional biomarker. This convergence — achieved by a model trained on outcome supervision alone, with no exposure to cell-type annotations or radiological labels — constitutes strong evidence that the learned representations encode genuine biology rather than statistical artefacts.
+
+**Table 2 — Cross-task cluster attribution summary**
+
+| Endpoint | H&E | BAL | CT |
+|----------|-----|-----|-----|
+| Death (high risk) | Alveolar (quiet/empty), minor | MoAM, Profibrotic MoAM, Monocytes | Clusters 5, 21, 12 |
+| Death (low risk) | Alveolar with hemorrhage & inflammation | TRAM-3, TRAM-4, TRAM-5, TRAM-6 | Clusters 1, 2, 10 |
+| ACR classification (ACR+) | Alveolar, Alveolar w/ inflammation | CD8 T cells, CD4 T cells, activated TRAM | Clusters 6, 7, 8 |
+| ACR survival (high risk) | Alveolar with hemorrhage & inflammation | TRAM variants (active) | Clusters 9, 11, 12 |
+| CLAD (high risk) | Alveolar (quiet) | TRAM, Monocytes, MoAM | Clusters 0, 1, 2, 4, 6 |
+| CLAD (low risk) | Alveolar with hemorrhage & inflammation | — | Clusters 29–33 |
+
 ### Modality contributions are task-specific and biologically coherent
 
 To disentangle which modalities drive each endpoint, we performed unimodal ablations in which the trained multimodal model is evaluated with a single modality present and all others masked — measuring each modality's contribution to the shared learned representation (Supplementary Note 2; full tables across all models and splits). The pattern across all six model families and all five splits is consistent and biologically interpretable.

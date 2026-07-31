@@ -187,7 +187,8 @@ def plot_task(agg, cfg, task_key, top_n=14):
         bar_cols = ["#C62828" if v > 0 else "#1565C0" for v in delta_s]
 
         ax.barh(x, delta_s, color=bar_cols, height=0.7, alpha=0.85)
-        ax.errorbar(x, delta_s, xerr=err_s, fmt="none",
+        # errorbar for horizontal bars: first arg = x (delta values), second = y (positions)
+        ax.errorbar(delta_s, x, xerr=err_s, fmt="none",
                     color="#333", capsize=2, lw=0.9, alpha=0.7)
         ax.axvline(0, color="#444", lw=0.9)
 
