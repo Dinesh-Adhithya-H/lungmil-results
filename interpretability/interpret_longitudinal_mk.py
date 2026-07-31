@@ -2236,12 +2236,15 @@ def plot_population_seed_attribution(all_extractions: List[dict],
         gs_bot = gridspec.GridSpecFromSubplotSpec(n_mods, 2, subplot_spec=gs_outer[1],
                                                   hspace=0.55, wspace=0.4)
 
+        clus_aff_by_mod = {}  # {mo: {"hi": (K, n_c), "lo": (K, n_c), "names": [...]}}
+
         for mi, mo in enumerate(present_mods):
             s0, s1 = mod_spans[mo]
             mod_diff_vals = alpha_diff[s0:s1]      # (K,) seed diffs for this mod
             top_seeds = np.argsort(np.abs(mod_diff_vals))[::-1][:5]
 
             cnames = cluster_names_pool.get(mo, [])
+            clus_aff_by_mod[mo] = {"names": list(cnames)}
 
             for col_i, (mask, grp_lbl, extrs_g) in enumerate([
                     (lo_m, lo_lbl, [e for e, m in zip(valid_extrs, hi_m) if not m]),
@@ -2308,6 +2311,8 @@ def plot_population_seed_attribution(all_extractions: List[dict],
                     ax.set_visible(False); continue
 
                 mean_aff = np.where(aff_cnt > 0, aff_acc / aff_cnt, 0)  # (K, n_c)
+                grp_key = "hi" if col_i == 1 else "lo"
+                clus_aff_by_mod[mo][grp_key] = mean_aff.tolist()
                 top_aff  = mean_aff[top_seeds]    # (5, n_c)
                 n_c      = top_aff.shape[1]
                 clus_nms = [cnames[c][:20] if c < len(cnames) else str(c)
@@ -2352,6 +2357,17 @@ def plot_population_seed_attribution(all_extractions: List[dict],
         agg_path = out_dir / f"seed_attribution_data_{task}.json"
         agg_path.write_text(_json.dumps(agg_data, indent=2))
         print(f"  [pop_K] saved {agg_path.name}")
+
+        # Save per-modality cluster affinity for cross-split aggregation
+        caff_path = out_dir / f"cluster_aff_data_{task}.json"
+        caff_path.write_text(_json.dumps({
+            "alpha_diff":   alpha_diff.tolist(),
+            "seed_labels":  seed_labels,
+            "present_mods": present_mods,
+            "n_hi": int(hi_m.sum()), "n_lo": int(lo_m.sum()),
+            "cluster_aff":  clus_aff_by_mod,   # {mod: {"hi":(K,C), "lo":(K,C), "names":[...]}}
+        }, indent=2))
+        print(f"  [pop_K] saved {caff_path.name}")
 
 
 # ── Lpop_K_agg: Cross-split mean±std seed attribution ────────────────────────
