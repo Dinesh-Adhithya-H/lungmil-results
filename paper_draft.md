@@ -48,19 +48,19 @@ Headline test performance is summarised in Table 1 (per-split values in Suppleme
 
 **Table 1 | Test performance across eight architectures and four endpoints.**
 
-| Architecture | ACR cls (BACC) | ACR surv (C-index) | CLAD surv (C-index) | Death surv (C-index) |
+| Architecture | ACR cls BACC | ACR surv C-index | CLAD surv C-index | Death surv C-index |
 |---|---|---|---|---|
-| Linear baseline | 0.588 ± 0.055 | 0.587 ± 0.053 | 0.501 ± 0.088 | 0.580 ± 0.058 |
-| Early fusion | 0.583 ± 0.057 | 0.575 ± 0.049 | 0.505 ± 0.065 | 0.645 ± 0.057 |
-| Late fusion | 0.592 ± 0.029 | 0.585 ± 0.055 | 0.534 ± 0.083 | 0.638 ± 0.051 |
-| Middle fusion | 0.559 ± 0.040 | 0.574 ± 0.082 | 0.516 ± 0.062 | 0.656 ± 0.057 |
-| SetMIL-MT (with SAB) | 0.595 ± 0.027 | 0.489 ± 0.064 | **0.563 ± 0.080** | 0.664 ± 0.041 |
-| SetMIL-MT (no SAB) | **0.623 ± 0.034** | 0.593 ± 0.059 | 0.536 ± 0.060 | 0.656 ± 0.035 |
-| SetMIL (no SAB, single-task) | 0.611 ± 0.027 | 0.580 ± 0.031 | 0.488 ± 0.068 | 0.673 ± 0.026 |
-| **Longitudinal-MK (learned weights)** | 0.550 ± 0.039 | **0.679 ± 0.064** | 0.489 ± 0.028 | **0.771 ± 0.056** |
-| Longitudinal-MK-MT (learned weights) | 0.526 ± 0.052 | 0.630 ± 0.112 | 0.534 ± 0.100 | 0.770 ± 0.089 |
+| Linear baseline | 0.588 (0.520–0.655) | 0.587 (0.494–0.680) | 0.505 (0.414–0.596) | 0.580 (0.520–0.640) |
+| Early fusion | 0.583 (0.504–0.662) | 0.575 (0.507–0.643) | 0.505 (0.414–0.596) | 0.645 (0.566–0.724) |
+| Late fusion | 0.592 (0.552–0.632) | 0.585 (0.509–0.661) | 0.534 (0.419–0.650) | 0.638 (0.567–0.709) |
+| Middle fusion | 0.559 (0.504–0.615) | 0.574 (0.460–0.688) | 0.516 (0.430–0.602) | 0.656 (0.578–0.735) |
+| SetMIL-MT (with SAB) | 0.595 (0.557–0.633) | 0.489 (0.401–0.578) | **0.563 (0.452–0.674)** | 0.664 (0.607–0.722) |
+| SetMIL-MT (no SAB) | **0.624 (0.577–0.670)** | 0.592 (0.511–0.674) | 0.536 (0.453–0.619) | 0.656 (0.608–0.705) |
+| SetMIL (no SAB, single-task) | 0.611 (0.573–0.648) | 0.580 (0.538–0.623) | 0.488 (0.451–0.527) | 0.673 (0.638–0.709) |
+| **Longitudinal-MK (learned weights)** | 0.550 (0.496–0.603) | **0.679 (0.591–0.767)** | 0.489 (0.451–0.527) | **0.771 (0.693–0.850)** |
+| Longitudinal-MK-MT (learned weights) | 0.526 (0.453–0.598) | 0.630 (0.474–0.785) | 0.534 (0.395–0.673) | 0.770 (0.647–0.894) |
 
-Values are mean ± s.d. across five outer-split test folds. Bold marks the best entry per column (excluding the linear baseline). BACC and C-index both have a chance level of 0.5. Linear baselines use logistic regression (ACR cls) and CoxPH (survival tasks) on the same features and splits.
+Values are mean (95% CI) across five outer-split test folds; CI computed by t-distribution with 4 degrees of freedom. Bold marks the best entry per column (excluding the linear baseline). BACC and C-index both have a chance level of 0.5. Linear baselines use logistic regression (ACR cls) and CoxPH (survival tasks). The death Longitudinal-MK CI lower bound (0.693) lies entirely above the linear baseline upper bound (0.640), confirming the gain is not within the margin of uncertainty.
 
 ### Longitudinal temporal modelling substantially improves survival prediction
 
