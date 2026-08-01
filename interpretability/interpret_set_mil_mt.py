@@ -2530,8 +2530,8 @@ def panel_K(results, tasks, out_dir, split, fold):
         for ax, vals, title in [(ax_lo, alpha_lo, f"{lo_label} (n={lo_mask.sum()})"),
                                  (ax_hi, alpha_hi, f"{hi_label} (n={hi_mask.sum()})")]:
             _bar_with_collapse_mask(ax, x, vals, seed_colors, nc_mask)
-            ax.set_title(title, fontsize=9, fontweight="bold")
-            ax.set_xticks([]); ax.set_ylabel("Mean ABMIL α", fontsize=8)
+            ax.set_title(title, fontsize=10, fontweight="bold")
+            ax.set_xticks([]); ax.set_ylabel("Mean ABMIL α", fontsize=9)
             ax.spines[["top", "right"]].set_visible(False)
             # modality dividers
             for mod in present_mods_main[1:]:
@@ -2552,8 +2552,8 @@ def panel_K(results, tasks, out_dir, split, fold):
             ax_diff.bar(col_idx, alpha_diff[col_idx], color="#d0d0d0", width=0.85, alpha=0.25)
         ax_diff.axhline(0, color="#333", lw=0.8)
         ax_diff.set_title(f"Δα ({hi_label}−{lo_label})  [{n_nc}/{total_seeds} non-collapsed]",
-                          fontsize=9, fontweight="bold")
-        ax_diff.set_xticks([]); ax_diff.set_ylabel("Δ Mean α", fontsize=8)
+                          fontsize=10, fontweight="bold")
+        ax_diff.set_xticks([]); ax_diff.set_ylabel("Δ Mean α", fontsize=9)
         ax_diff.spines[["top", "right"]].set_visible(False)
 
         split_lbl = "all_splits" if split < 0 else f"split{split}_fold{fold}"
@@ -2612,16 +2612,16 @@ def panel_K(results, tasks, out_dir, split, fold):
                 im = ax.imshow(top_aff, aspect="auto", cmap="YlOrRd",
                                vmin=0, vmax=top_aff.max().clip(1e-8))
                 ax.set_xticks(range(n_clus))
-                ax.set_xticklabels(clus_nms, rotation=45, ha="right", fontsize=5.5)
+                ax.set_xticklabels(clus_nms, rotation=45, ha="right", fontsize=7)
                 ax.set_yticks(range(len(top_k_idx)))
                 ax.set_yticklabels([f"seed{top_k_idx[j]} (Δ={mod_diff[top_k_idx[j]]:+.3f})"
-                                    for j in range(len(top_k_idx))], fontsize=6)
+                                    for j in range(len(top_k_idx))], fontsize=7.5)
                 ax.set_title(f"{mod} — {group_lbl} | top-5 Δseeds",
-                             fontsize=8, color=MOD_COLORS[mod], fontweight="bold")
-                plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02).ax.tick_params(labelsize=6)
+                             fontsize=9, color=MOD_COLORS[mod], fontweight="bold")
+                plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02).ax.tick_params(labelsize=7)
 
-        fig.savefig(out_dir / f"K_seed_attribution_{task}.pdf", dpi=150, bbox_inches="tight")
-        fig.savefig(out_dir / f"K_seed_attribution_{task}.png", dpi=120, bbox_inches="tight")
+        fig.savefig(out_dir / f"K_seed_attribution_{task}.pdf", dpi=200, bbox_inches="tight")
+        fig.savefig(out_dir / f"K_seed_attribution_{task}.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
     print("  K done")
 

@@ -38,7 +38,17 @@ HE_BIO_COLORS = {
     "Unknown":                                  "#9E9E9E",
 }
 MOD_COLORS = {"HE": "#E64A19", "BAL": "#1565C0", "CT": "#2E7D32"}
-FONT = 10
+FONT = 12
+
+plt.rcParams.update({
+    "font.family":      "DejaVu Sans",
+    "axes.labelsize":   FONT,
+    "axes.titlesize":   FONT + 1,
+    "xtick.labelsize":  FONT - 2,
+    "ytick.labelsize":  FONT - 2,
+    "legend.fontsize":  FONT - 2,
+    "figure.dpi":       150,
+})
 
 TASK_CONFIG = {
     "acr_cls": {
@@ -158,6 +168,15 @@ def bio_label(name, mod):
     return name
 
 
+def _fmt_sci(v):
+    """Format a small float as e.g. 1.2e−4 for bar annotation."""
+    if v == 0:
+        return "0"
+    exp = int(np.floor(np.log10(abs(v))))
+    mant = v / 10 ** exp
+    return f"{mant:.1f}×10$^{{{exp}}}$"
+
+
 def plot_task(agg, cfg, task_key, top_n=14):
     mods = [m for m in ["HE", "BAL", "CT"] if m in agg]
     if not mods:
@@ -165,7 +184,10 @@ def plot_task(agg, cfg, task_key, top_n=14):
         return
 
     n_cols = len(mods)
-    fig, axes = plt.subplots(1, n_cols, figsize=(6.5 * n_cols, 7))
+    # Taller panels give labels more room; wider for BAL with long cell-type names
+    panel_w = {"HE": 7.5, "BAL": 8.5, "CT": 6.5}
+    total_w = sum(panel_w.get(m, 7.5) for m in mods)
+    fig, axes = plt.subplots(1, n_cols, figsize=(total_w, 10))
     if n_cols == 1:
         axes = [axes]
 
@@ -186,41 +208,58 @@ def plot_task(agg, cfg, task_key, top_n=14):
         x = np.arange(len(delta_s))
         bar_cols = ["#C62828" if v > 0 else "#1565C0" for v in delta_s]
 
-        ax.barh(x, delta_s, color=bar_cols, height=0.7, alpha=0.85)
-        # errorbar for horizontal bars: first arg = x (delta values), second = y (positions)
+        bars = ax.barh(x, delta_s, color=bar_cols, height=0.65, alpha=0.88,
+                       edgecolor="white", linewidth=0.4)
         ax.errorbar(delta_s, x, xerr=err_s, fmt="none",
-                    color="#333", capsize=2, lw=0.9, alpha=0.7)
-        ax.axvline(0, color="#444", lw=0.9)
+                    color="#222", capsize=3, capthick=0.9, lw=1.0, alpha=0.75)
+        ax.axvline(0, color="#444", lw=1.1)
+
+        # Light x-grid for readability
+        ax.xaxis.grid(True, linestyle=":", linewidth=0.5, color="#ccc", zorder=0)
+        ax.set_axisbelow(True)
+
+        # Y-tick labels: wrap long names at 32 chars
+        def _wrap(s, n=32):
+            if len(s) <= n:
+                return s
+            # break at last space before n
+            cut = s.rfind(" ", 0, n)
+            return s[:cut] + "\n" + s[cut + 1:] if cut > 0 else s[:n] + "-\n" + s[n:]
 
         ax.set_yticks(x)
-        ax.set_yticklabels([lb[:42] for lb in labs_s], fontsize=7)
-        ax.set_xlabel("Delta cluster affinity\n(high-risk minus low-risk)", fontsize=FONT - 1)
+        ax.set_yticklabels([_wrap(lb) for lb in labs_s], fontsize=FONT - 3)
+        ax.tick_params(axis="y", pad=2)
+
+        ax.set_xlabel("Δ cluster affinity  (high-risk − low-risk)", fontsize=FONT - 1)
         ax.set_title(
             f"{mod}  [top {len(order)} clusters]\n"
-            f"<- {cfg['lo_lbl']}  |  {cfg['hi_lbl']} ->",
+            f"← {cfg['lo_lbl']}  |  {cfg['hi_lbl']} →",
             fontsize=FONT, fontweight="bold",
-            color=MOD_COLORS.get(mod, "#333"))
+            color=MOD_COLORS.get(mod, "#333"), pad=8)
         ax.text(0.98, 0.01, f"n={n_sp} splits", transform=ax.transAxes,
-                ha="right", va="bottom", fontsize=7, color="#888")
+                ha="right", va="bottom", fontsize=FONT - 4, color="#888")
         ax.spines[["top", "right"]].set_visible(False)
+        ax.spines["left"].set_linewidth(0.7)
+        ax.spines["bottom"].set_linewidth(0.7)
 
     from matplotlib.patches import Patch
     legend_elems = [
-        Patch(facecolor="#C62828", alpha=0.85, label=f"Enriched in {cfg['hi_lbl']}"),
-        Patch(facecolor="#1565C0", alpha=0.85, label=f"Enriched in {cfg['lo_lbl']}"),
+        Patch(facecolor="#C62828", alpha=0.88, label=f"Enriched in {cfg['hi_lbl']}"),
+        Patch(facecolor="#1565C0", alpha=0.88, label=f"Enriched in {cfg['lo_lbl']}"),
     ]
-    axes[0].legend(handles=legend_elems, fontsize=8, loc="lower right", framealpha=0.7)
+    axes[0].legend(handles=legend_elems, fontsize=FONT - 3, loc="lower right",
+                   framealpha=0.85, edgecolor="#ccc")
 
     fig.suptitle(
         f"{cfg['label']}\n"
         f"Model: {cfg['variant']}  [{cfg['performance']}]  |  "
-        f"Cluster attribution Δ affinity (mean +/- s.d., {agg[mods[0]]['n_splits']} splits)",
-        fontsize=FONT + 1, fontweight="bold", y=1.02)
-    fig.tight_layout()
+        f"Cluster attribution Δ affinity (mean ± s.d., {agg[mods[0]]['n_splits']} splits)",
+        fontsize=FONT + 1, fontweight="bold", y=1.01)
+    fig.tight_layout(rect=[0, 0, 1, 1])
 
     stem = OUT_FIGURES / f"{task_key}_cluster_aff_agg"
-    fig.savefig(str(stem) + ".png", dpi=200, bbox_inches="tight")
-    fig.savefig(str(stem) + ".pdf", dpi=200, bbox_inches="tight")
+    fig.savefig(str(stem) + ".png", dpi=300, bbox_inches="tight")
+    fig.savefig(str(stem) + ".pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"  -> {stem}.png")
 
