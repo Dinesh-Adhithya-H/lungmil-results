@@ -37,20 +37,24 @@ TASK_META = {
 
 # Human-readable variant names
 VARIANT_LABELS = {
-    "early":            "Early fusion",
-    "late":             "Late fusion",
-    "middle":           "Middle fusion",
-    "set_mil_mt":       "SetMIL-MT (SAB)",
-    "set_mil_mt_no_sab":"SetMIL-MT (no SAB)",
-    "set_mil_no_sab":   "SetMIL (single-task)",
+    "early":                    "Early fusion",
+    "late":                     "Late fusion",
+    "middle":                   "Middle fusion",
+    "set_mil_mt":               "SetMIL-MT (SAB)",
+    "set_mil_mt_no_sab":        "SetMIL-MT (no SAB)",
+    "set_mil_no_sab":           "SetMIL (single-task)",
+    "longitudinal_mk":          "LongitudinalMK",
+    "longitudinal_mk_no_alibi": "LongitudinalMK (no ALiBi)",
+    "longitudinal_mk_mt":       "LongitudinalMK-MT",
+    "longitudinal_mk_mt_no_alibi":"LongitudinalMK-MT (no ALiBi)",
 }
 
 # Best model per task (as reported in paper)
 BEST_MODEL_PER_TASK = {
     "cls":       "set_mil_mt_no_sab",
-    "acr_surv":  "early",          # best with ablation data; longitudinal has no ablation stored
+    "acr_surv":  "longitudinal_mk_no_alibi",
     "clad_surv": "set_mil_mt",
-    "death_surv":"early",          # best with ablation data
+    "death_surv":"longitudinal_mk_no_alibi",
 }
 
 # ── 1. Collect all unimodal ablation rows ─────────────────────────────────────

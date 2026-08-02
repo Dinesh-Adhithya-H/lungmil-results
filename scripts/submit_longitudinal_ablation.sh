@@ -7,8 +7,8 @@
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=80G
 #SBATCH --gres=gpu:1 --constraint="a100_40gb|a100_80gb|h100_80gb"
 #SBATCH --time=02:00:00
-#SBATCH --output=/home/aih/dinesh.haridoss/chicago_mil/results_mm_abmil_v8/slurm_logs/%j_lmk_ablation.out
-#SBATCH --error=/home/aih/dinesh.haridoss/chicago_mil/results_mm_abmil_v8/slurm_logs/%j_lmk_ablation.err
+#SBATCH --output=/home/aih/dinesh.haridoss/chicago_mil/results/mm_abmil_v8/slurm_logs/%j_lmk_ablation.out
+#SBATCH --error=/home/aih/dinesh.haridoss/chicago_mil/results/mm_abmil_v8/slurm_logs/%j_lmk_ablation.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=dinesh.haridoss@helmholtz-munich.de
 set -euo pipefail
