@@ -138,22 +138,14 @@ def ablate_longitudinal(model, patient_records, device, bag_cache):
     return results
 
 
+# Per-task best models for longitudinal_mk_no_alibi
+LONGI_TASKS = {
+    "acr_surv":  "acr_surv",
+    "death_surv": "death_surv",
+}
+
+
 def process_split(split, device):
-    save_dir = RESULTS_DIR / f"split{split}_fold0/longitudinal_mk_mega"
-    ckpt     = save_dir / "model_longitudinal_mk_final.pt"
-    json_out = save_dir / "metrics_longitudinal_mk_final.json"
-
-    if not ckpt.exists():
-        print(f"[split{split}] checkpoint missing, skip"); return
-    if not json_out.exists():
-        print(f"[split{split}] metrics JSON missing, skip"); return
-
-    existing = json.loads(json_out.read_text())
-    # Overwrite if ablation is missing or was written empty (n=0 for all mods)
-    existing_abl = existing.get("unimodal_ablation", {})
-    if existing_abl and any(existing_abl.get(m, {}).get("n", 0) > 0 for m in MODALITIES):
-        print(f"[split{split}] unimodal_ablation already present with data, skip"); return
-
     print(f"\n[split{split}] Loading test splits...")
     long_splits = build_splits_longitudinal(
         samples_dir=SAMPLES_DIR,
@@ -169,24 +161,47 @@ def process_split(split, device):
     stems = list({r["stem"] for r in flat_test})
     bag_cache = preload_bags(stems, SAMPLES_DIR, n_workers=4)
 
-    print(f"[split{split}] Building model and loading checkpoint...")
-    model = build_model_v8(
-        variant="longitudinal_mk",
-        slot_k=SLOT_K,
-        n_cross_layers=N_CROSS_LAYERS,
-        task="mega",
-        modal_dropout=MODAL_DROPOUT,
-        max_he_patches=MAX_HE_PATCHES,
-    ).to(device)
-    model.load_state_dict(torch.load(ckpt, map_location=device, weights_only=True))
-    model.eval()
+    for task_key, task_suffix in LONGI_TASKS.items():
+        save_dir = RESULTS_DIR / f"split{split}_fold0/longitudinal_mk_no_alibi_{task_suffix}"
+        ckpt     = save_dir / "model_longitudinal_mk_no_alibi_final.pt"
+        json_out = save_dir / "metrics_longitudinal_mk_no_alibi_final.json"
 
-    print(f"[split{split}] Running unimodal ablation on test set...")
-    abl = ablate_longitudinal(model, patient_test, device, bag_cache)
+        if not ckpt.exists():
+            print(f"[split{split}/{task_key}] checkpoint missing: {ckpt}, skip"); continue
+        if not json_out.exists():
+            print(f"[split{split}/{task_key}] metrics JSON missing, skip"); continue
 
-    existing["unimodal_ablation"] = abl
-    json_out.write_text(json.dumps(existing, indent=2))
-    print(f"[split{split}] Patched {json_out}")
+        existing = json.loads(json_out.read_text())
+        existing_abl = existing.get("unimodal_ablation", {})
+        if existing_abl and any(existing_abl.get(m, {}).get("n", 0) > 0 for m in MODALITIES):
+            print(f"[split{split}/{task_key}] unimodal_ablation already present, skip"); continue
+
+        print(f"[split{split}/{task_key}] Building model and loading checkpoint...")
+        model = build_model_v8(
+            variant="longitudinal_mk_no_alibi",
+            slot_k=SLOT_K,
+            n_cross_layers=N_CROSS_LAYERS,
+            task=task_key,
+            modal_dropout=MODAL_DROPOUT,
+            max_he_patches=MAX_HE_PATCHES,
+        ).to(device)
+        model.load_state_dict(torch.load(ckpt, map_location=device, weights_only=True))
+        model.eval()
+
+        print(f"[split{split}/{task_key}] Running unimodal ablation...")
+        abl = ablate_longitudinal(model, patient_test, device, bag_cache)
+
+        # Keep only the relevant metric per task
+        for mod, entry in abl.items():
+            if task_key == "acr_surv":
+                entry["c_index"] = entry.pop("acr_c_index", None)
+            elif task_key == "death_surv":
+                entry["c_index"] = entry.pop("death_c_index", None)
+
+        existing["unimodal_ablation"] = abl
+        json_out.write_text(json.dumps(existing, indent=2))
+        print(f"[split{split}/{task_key}] Patched {json_out}")
+        del model; torch.cuda.empty_cache()
 
 
 def main():

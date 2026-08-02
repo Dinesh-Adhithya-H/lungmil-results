@@ -2,8 +2,8 @@
 #SBATCH --job-name=unified_umap
 #SBATCH --partition=cpu_p
 #SBATCH --qos=cpu_normal
-#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=32G
-#SBATCH --time=00:40:00
+#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=64G
+#SBATCH --time=01:00:00
 #SBATCH --output=/home/aih/dinesh.haridoss/chicago_mil/results/mm_abmil_v8/slurm_logs/%j_unified_umap.out
 #SBATCH --error=/home/aih/dinesh.haridoss/chicago_mil/results/mm_abmil_v8/slurm_logs/%j_unified_umap.err
 #SBATCH --mail-type=END,FAIL
