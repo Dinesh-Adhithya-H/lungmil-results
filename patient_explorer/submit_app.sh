@@ -9,8 +9,15 @@
 #SBATCH --output=/home/aih/dinesh.haridoss/logs/explorer_app_%j.out
 
 # ── Auto-resubmit on wall-time (24/7 operation) ───────────────────────────────
+# NOTE: streamlit runs in background + wait, so bash can catch USR1 while it runs.
 SCRIPT_PATH="/ictstr01/home/aih/dinesh.haridoss/chicago_mil/patient_explorer/submit_app.sh"
-_resubmit() { echo "[wall-time] Resubmitting..."; sbatch "$SCRIPT_PATH"; kill "$CF_PID" 2>/dev/null; exit 0; }
+_resubmit() {
+    echo "[wall-time] USR1 received — resubmitting"
+    sbatch "$SCRIPT_PATH"
+    kill "$STREAMLIT_PID" 2>/dev/null
+    kill "$CF_PID"        2>/dev/null
+    exit 0
+}
 trap '_resubmit' USR1 TERM
 
 source /home/aih/dinesh.haridoss/miniconda3/etc/profile.d/conda.sh
@@ -71,14 +78,19 @@ echo "════════════════════════�
 export EXPLORER_DATA="$(pwd)/data"
 export EXPLORER_PASSWORD="${EXPLORER_PASSWORD:-$(cat /home/aih/dinesh.haridoss/.secrets/app_password 2>/dev/null || echo "")}"
 
+# Run streamlit in background so bash can handle USR1 while it's running
 streamlit run app.py \
     --server.port 8501 \
     --server.headless true \
     --server.address 127.0.0.1 \
-    2>&1
+    2>&1 &
+STREAMLIT_PID=$!
+
+# wait instead of blocking foreground — bash processes traps between waits
+wait $STREAMLIT_PID
 
 kill $CF_PID 2>/dev/null
 
-# ── Always resubmit when streamlit exits (crash or normal exit) ───────────────
-echo "[exit] Streamlit exited — resubmitting job"
+# ── Resubmit if we reach here (crash or unexpected exit, not wall-time) ───────
+echo "[exit] Streamlit exited (pid $STREAMLIT_PID) — resubmitting"
 sbatch "$SCRIPT_PATH"

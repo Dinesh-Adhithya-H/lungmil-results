@@ -1677,12 +1677,17 @@ def panel_G(results, tasks, out_dir, split, fold):
 
         splits_here = np.array([results[i].get("_split", -1) for i in idx_valid])
 
-        fig = plt.figure(figsize=(30, 4.5))
-        grd = gridspec.GridSpec(1, 7, figure=fig, wspace=0.14)
-        axs = [fig.add_subplot(grd[0, i]) for i in range(7)]
+        fig = plt.figure(figsize=(22, 12))
+        grd = gridspec.GridSpec(2, 4, figure=fig, wspace=0.22, hspace=0.35)
+        # Row 0: 4 UMAP panels; Row 1: Risk×TTE, KM, CV-split, (spare)
+        axs = [fig.add_subplot(grd[0, i]) for i in range(4)] + \
+              [fig.add_subplot(grd[1, i]) for i in range(3)] + \
+              [fig.add_subplot(grd[1, 3])]  # spare slot for CV split → index 7
+        # remap indices so existing code works:
+        # axs[0]=label, [1]=risk, [2]=TTE, [3]=combo, [4]=risk×TTE, [5]=KM, [6]=split
         split_lbl = "all_splits" if split < 0 else f"split{split}_fold{fold}"
         fig.suptitle(f"G — {task} | {split_lbl}  N={N}",
-                     fontsize=10, fontweight="bold")
+                     fontsize=13, fontweight="bold", y=1.01)
 
         # 0: label scatter with KDE contours per class
         ax = axs[0]
@@ -1698,9 +1703,9 @@ def panel_G(results, tasks, out_dir, split, fold):
             _kde_contours(ax, xy[m0], "#1E88E5", levels=3, alpha=0.4)
         if m1.sum() >= 10:
             _kde_contours(ax, xy[m1], "#E53935", levels=3, alpha=0.4)
-        ax.set_title("ACR label", fontsize=8, fontweight="bold")
+        ax.set_title("ACR label", fontsize=11, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
-        ax.legend(markerscale=1.5, fontsize=7, framealpha=0.75, loc="best")
+        ax.legend(markerscale=1.5, fontsize=9, framealpha=0.75, loc="best")
 
         # 1: risk score scatter (scatter is better than hexbin for N~150)
         ax = axs[1]
@@ -1718,14 +1723,14 @@ def panel_G(results, tasks, out_dir, split, fold):
                             c=scores[valid], cmap=CMAP_HAZARD, norm=norm_s,
                             s=MS, alpha=0.80, edgecolors="none", zorder=3)
             cb = fig.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
-            cb.ax.tick_params(labelsize=7)
-            cb.set_label(score_lbl, fontsize=7)
+            cb.ax.tick_params(labelsize=9)
+            cb.set_label(score_lbl, fontsize=9)
             # annotate top-5 highest-risk patients
             top5 = np.argsort(scores[valid])[-5:]
             for ti in top5:
                 ax.annotate("▲", xy=(xy[valid][ti, 0], xy[valid][ti, 1]),
                             fontsize=6, color="#B71C1C", ha="center", va="center")
-        ax.set_title(score_lbl, fontsize=8, fontweight="bold")
+        ax.set_title(score_lbl, fontsize=11, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
 
         # 2: TTE scatter — events colored by TTE (red=short), censored as small grey
@@ -1747,8 +1752,8 @@ def panel_G(results, tasks, out_dir, split, fold):
                              s=MS * 1.4, alpha=0.85, edgecolors="white", linewidths=0.3,
                              zorder=4, label=f"Event (n={ev_m.sum()})")
             cb2 = fig.colorbar(sc2, ax=ax, shrink=0.75, pad=0.02)
-            cb2.ax.tick_params(labelsize=7)
-            cb2.set_label("TTE (days)", fontsize=7)
+            cb2.ax.tick_params(labelsize=9)
+            cb2.set_label("TTE (days)", fontsize=9)
             # annotate 5 shortest-TTE events (most urgent)
             tte_ev = tte[ev_m]
             xy_ev  = xy[ev_m]
@@ -1761,7 +1766,7 @@ def panel_G(results, tasks, out_dir, split, fold):
             ax.legend(fontsize=6, framealpha=0.7, markerscale=1.2,
                       loc="best", handlelength=1)
         ax.set_title(f"TTE (events, med={vcenter if ev_m.sum() > 5 else 0:.0f}d)",
-                     fontsize=8, fontweight="bold")
+                     fontsize=11, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
 
         # 3: modality combo — major combos colored, rare → "Other" grey
@@ -1783,10 +1788,10 @@ def panel_G(results, tasks, out_dir, split, fold):
             ax.scatter(xy[mask, 0], xy[mask, 1], s=sz, marker=mk,
                        color=combo_color[combo], alpha=0.82, edgecolors="none",
                        label=f"{combo} (n={mask.sum()})", zorder=3 + ci)
-        ax.set_title("Modality combo", fontsize=8, fontweight="bold")
+        ax.set_title("Modality combo", fontsize=11, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
-        ax.legend(fontsize=5.5, markerscale=1.6, framealpha=0.80, loc="best",
-                  ncol=1, handlelength=1.2, title="combo (n)", title_fontsize=5.5)
+        ax.legend(fontsize=8, markerscale=1.6, framealpha=0.80, loc="best",
+                  ncol=1, handlelength=1.2, title="combo (n)", title_fontsize=8)
 
         # 4: risk × TTE scatter with LOWESS trend
         ax = axs[4]
@@ -1803,17 +1808,17 @@ def panel_G(results, tasks, out_dir, split, fold):
                         label="LOWESS")
             except Exception:
                 pass
-            ax.set_xlabel(score_lbl, fontsize=8)
-            ax.set_ylabel("TTE (days)", fontsize=8)
-            ax.set_title("Risk vs TTE", fontsize=9, fontweight="bold")
-            ax.tick_params(labelsize=7)
+            ax.set_xlabel(score_lbl, fontsize=10)
+            ax.set_ylabel("TTE (days)", fontsize=10)
+            ax.set_title("Risk vs TTE", fontsize=11, fontweight="bold")
+            ax.tick_params(labelsize=9)
             ax.legend(handles=[
                 plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#E53935',
-                           markersize=6, label=f'Event (n={(ev[valid4]==1).sum()})'),
+                           markersize=7, label=f'Event (n={(ev[valid4]==1).sum()})'),
                 plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#1E88E5',
-                           markersize=6, label=f'Censored (n={(ev[valid4]==0).sum()})'),
+                           markersize=7, label=f'Censored (n={(ev[valid4]==0).sum()})'),
                 plt.Line2D([0], [0], color='#E65100', lw=2, label='LOWESS'),
-            ], fontsize=6.5, framealpha=0.7)
+            ], fontsize=9, framealpha=0.7)
             ax.spines[["top", "right"]].set_visible(False)
 
         # 5: model-stratified KM / outcome curve (top vs bottom tertile of scores)
@@ -1842,12 +1847,12 @@ def panel_G(results, tasks, out_dir, split, fold):
                 ax.step(t_lo, s_lo, where="post", color="#1E88E5", lw=2.0,
                         label=f"Low risk (≤P33, n={lo.sum()})")
             ax.set_ylim(0, 1.05); ax.set_xlim(left=0)
-            ax.set_xlabel("Days from transplant", fontsize=8)
-            ax.set_ylabel("Survival probability", fontsize=8)
-            ax.set_title("KM: top vs bottom tertile", fontsize=8, fontweight="bold")
-            ax.legend(fontsize=7, framealpha=0.8)
+            ax.set_xlabel("Days from transplant", fontsize=10)
+            ax.set_ylabel("Survival probability", fontsize=10)
+            ax.set_title("KM: top vs bottom tertile", fontsize=11, fontweight="bold")
+            ax.legend(fontsize=9, framealpha=0.8)
             ax.spines[["top", "right"]].set_visible(False)
-            ax.tick_params(labelsize=7)
+            ax.tick_params(labelsize=9)
         else:
             ax.text(0.5, 0.5, "insufficient data\nfor KM", ha="center", va="center",
                     transform=ax.transAxes, fontsize=9, color="#888")
@@ -1868,17 +1873,17 @@ def panel_G(results, tasks, out_dir, split, fold):
             unk = splits_here < 0
             ax.scatter(xy[unk, 0], xy[unk, 1], s=MS * 0.5, alpha=0.3,
                        color="#aaa", edgecolors="none", label="unknown", zorder=2)
-        ax.set_title("CV split", fontsize=8, fontweight="bold")
+        ax.set_title("CV split", fontsize=11, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
-        ax.legend(fontsize=6, framealpha=0.8, loc="best", markerscale=1.5,
-                  handlelength=1, title="split", title_fontsize=6)
+        ax.legend(fontsize=8, framealpha=0.8, loc="best", markerscale=1.5,
+                  handlelength=1, title="split", title_fontsize=8)
 
         _uniform_lim(axs[:4], xy)
         # Sync split panel limits to match UMAP panels
         xl = axs[0].get_xlim(); yl = axs[0].get_ylim()
         axs[6].set_xlim(xl); axs[6].set_ylim(yl)
-        fig.savefig(out_dir / f"G_final_rep_hexbin_{task}.pdf", dpi=150, bbox_inches="tight")
-        fig.savefig(out_dir / f"G_final_rep_hexbin_{task}.png", dpi=120, bbox_inches="tight")
+        fig.savefig(out_dir / f"G_final_rep_hexbin_{task}.pdf", dpi=200, bbox_inches="tight")
+        fig.savefig(out_dir / f"G_final_rep_hexbin_{task}.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
     print("  G done")
 
