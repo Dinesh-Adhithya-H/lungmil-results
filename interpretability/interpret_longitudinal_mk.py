@@ -2821,6 +2821,30 @@ def main():
             traceback.print_exc()
             continue
 
+    # Save patient-level cache for downstream unified UMAP script
+    if all_extractions:
+        npy_path = out_dir / "results_raw.npy"
+        slim = []
+        for e in all_extractions:
+            slim.append({
+                "patient_id":  e["patient_id"],
+                "rep_full":    e.get("rep_full", {}),
+                "logits":      e.get("logits", {}),
+                "present_mods":e.get("present_mods", []),
+                "label":       e["records"][0].get("label") if e.get("records") else None,
+                "event_acr":   e["records"][0].get("event_acr") if e.get("records") else None,
+                "tte_acr":     e["records"][0].get("tte_acr")   if e.get("records") else None,
+                "event_clad":  e["records"][0].get("event_clad") if e.get("records") else None,
+                "tte_clad":    e["records"][0].get("tte_clad")   if e.get("records") else None,
+                "event_death": e["records"][0].get("event_death") if e.get("records") else None,
+                "tte_death":   e["records"][0].get("tte_death")   if e.get("records") else None,
+                "n_biopsies":  e.get("n_biopsies", 1),
+                "biopsy_days": e.get("biopsy_days", []),
+                "_split":      args.split,
+            })
+        np.save(npy_path, slim)
+        print(f"  [cache] results_raw.npy → {npy_path}")
+
     # Population-level plots
     if all_extractions:
         print(f"[main] Population plots (N={len(all_extractions)} patients)")
