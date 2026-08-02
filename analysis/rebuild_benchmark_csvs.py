@@ -49,28 +49,39 @@ P1_VARIANTS_ORDER = [
 ]
 
 TASK_CFG = {
-    "acr_cls":   {"csv": "comparison_acr_cls.csv",   "suffix": "cls",       "metric_key": "bacc",    "metric_lbl": "BACC",    "label": "ACR classification (BACC)"},
-    "acr_surv":  {"csv": "comparison_acr_surv.csv",  "suffix": "acr_surv",  "metric_key": "c_index", "metric_lbl": "C-index", "label": "ACR survival (C-index)"},
-    "clad_surv": {"csv": "comparison_clad.csv",      "suffix": "clad_surv", "metric_key": "c_index", "metric_lbl": "C-index", "label": "CLAD survival (C-index)"},
-    "death_surv":{"csv": "comparison_death.csv",     "suffix": "death_surv","metric_key": "c_index", "metric_lbl": "C-index", "label": "Death survival (C-index)"},
+    # suffix = filename suffix; nested_key = key inside test{} for multi-task longi JSONs
+    "acr_cls":   {"csv": "comparison_acr_cls.csv",   "suffix": "cls",       "metric_key": "bacc",    "nested_key": "acr_cls",  "metric_lbl": "BACC",    "label": "ACR classification (BACC)"},
+    "acr_surv":  {"csv": "comparison_acr_surv.csv",  "suffix": "acr_surv",  "metric_key": "c_index", "nested_key": "acr_surv", "metric_lbl": "C-index", "label": "ACR survival (C-index)"},
+    "clad_surv": {"csv": "comparison_clad.csv",      "suffix": "clad_surv", "metric_key": "c_index", "nested_key": "clad",     "metric_lbl": "C-index", "label": "CLAD survival (C-index)"},
+    "death_surv":{"csv": "comparison_death.csv",     "suffix": "death_surv","metric_key": "c_index", "nested_key": "death",    "metric_lbl": "C-index", "label": "Death survival (C-index)"},
 }
 
 
-def extract_metric(variant, suffix, split, metric_key):
+def extract_metric(variant, suffix, split, metric_key, nested_key=None):
     path = METRICS / f"metrics_split{split}_fold0_{variant}_{suffix}.json"
     if not path.exists():
         return float("nan")
     try:
         d = json.loads(path.read_text())
-        return float(d.get("test", {}).get(metric_key) or float("nan"))
+        test = d.get("test", {})
+        # Flat structure (most models): test.metric_key
+        val = test.get(metric_key)
+        if val is not None:
+            return float(val)
+        # Nested structure (longitudinal multi-task): test.nested_key.metric_key
+        if nested_key and nested_key in test:
+            val = test[nested_key].get(metric_key)
+            if val is not None:
+                return float(val)
+        return float("nan")
     except Exception:
         return float("nan")
 
 
-def build_p2_rows(suffix, metric_key):
+def build_p2_rows(suffix, metric_key, nested_key=None):
     rows = []
     for variant, (label, color, group) in P2_VARIANTS.items():
-        splits = [extract_metric(variant, suffix, s, metric_key) for s in range(5)]
+        splits = [extract_metric(variant, suffix, s, metric_key, nested_key) for s in range(5)]
         valid = [v for v in splits if not np.isnan(v)]
         rows.append({
             "model":  label,
@@ -117,7 +128,7 @@ def load_p1_rows(csv_path):
 all_dfs = {}
 for task_key, cfg in TASK_CFG.items():
     p1_rows = load_p1_rows(PRED / cfg["csv"])
-    p2_rows = build_p2_rows(cfg["suffix"], cfg["metric_key"])
+    p2_rows = build_p2_rows(cfg["suffix"], cfg["metric_key"], cfg.get("nested_key"))
     all_rows = p1_rows + p2_rows
     df = pd.DataFrame(all_rows)
     # Write CSV (drop internal _* cols)

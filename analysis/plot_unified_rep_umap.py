@@ -235,18 +235,20 @@ def make_unified_umap(task_key, cfg, out_dir):
     combo_col["Other"] = "#aaaaaa"
     disp_combos = [c if c in combo_col else "Other" for c in raw_combos]
 
-    # ── Build figure: 2×3 grid ────────────────────────────────────────────────
+    # ── Build figure: 2×4 grid (7 panels + 1 empty) ──────────────────────────
     MS = 9
-    fig = plt.figure(figsize=(18, 11), facecolor=BG)
+    fig = plt.figure(figsize=(24, 11), facecolor=BG)
     fig.suptitle(f"Patient Rep Space  —  {cfg['label']}  (N={len(records)})",
                  fontsize=12, fontweight="bold", y=0.98, color="#1A1018")
-    grd = gridspec.GridSpec(2, 3, figure=fig, wspace=0.28, hspace=0.38)
+    grd = gridspec.GridSpec(2, 4, figure=fig, wspace=0.28, hspace=0.38)
     ax_score = fig.add_subplot(grd[0, 0])
     ax_label = fig.add_subplot(grd[0, 1])
     ax_tte   = fig.add_subplot(grd[0, 2])
+    ax_hex   = fig.add_subplot(grd[0, 3])
     ax_mod   = fig.add_subplot(grd[1, 0])
     ax_km    = fig.add_subplot(grd[1, 1])
     ax_split = fig.add_subplot(grd[1, 2])
+    # grd[1,3] intentionally empty
 
     def _scatter(ax, vals, cmap, title, vmin=None, vmax=None, alpha=0.8, s=MS):
         valid = ~np.isnan(vals)
@@ -268,28 +270,69 @@ def make_unified_umap(task_key, cfg, out_dir):
     # 0 — risk score
     _scatter(ax_score, scores, "RdBu_r", f"① Risk score\n({score_lbl})", vmin=0, vmax=1)
 
-    # 1 — label / event
-    _scatter(ax_label, labels, "RdBu_r", "② True label\n(ACR+/event=red)", vmin=0, vmax=1)
+    # 1 — task-aware outcome panel
+    if cfg["score_type"] == "surv":
+        # For survival: show event indicator (event=1 red, censored=0 blue)
+        _scatter(ax_label, ev_raw, "RdBu_r",
+                 f"② Event indicator\n(event=red, censored=blue)", vmin=0, vmax=1)
+    else:
+        # For classification: show true class label
+        _scatter(ax_label, labels, "RdBu_r",
+                 "② True label\n(positive=red, negative=blue)", vmin=0, vmax=1)
 
-    # 2 — TTE (years), event markers
+    # 2 — TTE panel (task-aware)
     valid_t = ~np.isnan(tte_yrs)
-    ev_cols = np.where(ev_raw == 1, HI, LO)
-    ax_tte.scatter(xy[valid_t, 0], xy[valid_t, 1],
-                   c=ev_cols[valid_t], s=np.clip(12 - tte_yrs[valid_t] * 1.2, 3, 14),
-                   alpha=0.75, linewidths=0)
-    ax_tte.set_title(f"③ TTE (size∝urgency)\n(red=event, blue=censored)", fontsize=9, fontweight="bold", pad=4)
+    if cfg["score_type"] == "surv":
+        # Continuous TTE colormap; event patients marked with 'x', censored with 'o'
+        tte_clipped = np.clip(tte_yrs, 0, np.nanpercentile(tte_yrs[valid_t], 95))
+        sc_tte = ax_tte.scatter(
+            xy[valid_t, 0], xy[valid_t, 1],
+            c=tte_clipped[valid_t], cmap="plasma_r",
+            s=MS, alpha=0.82, linewidths=0,
+            vmin=0, vmax=np.nanpercentile(tte_clipped[valid_t], 95))
+        cb_tte = fig.colorbar(sc_tte, ax=ax_tte, pad=0.02, fraction=0.046, shrink=0.85)
+        cb_tte.ax.tick_params(labelsize=7)
+        cb_tte.set_label("TTE (years)", fontsize=7)
+        # Overlay event markers
+        ev_mask  = valid_t & (ev_raw == 1)
+        cen_mask = valid_t & (ev_raw == 0)
+        ax_tte.scatter(xy[ev_mask,  0], xy[ev_mask,  1], marker="x", s=18,
+                       color=HI, linewidths=0.9, alpha=0.9, label="event", zorder=3)
+        ax_tte.scatter(xy[cen_mask, 0], xy[cen_mask, 1], marker="o", s=6,
+                       color="none", edgecolors=LO, linewidths=0.5, alpha=0.5,
+                       label="censored", zorder=2)
+        ax_tte.legend(fontsize=6.5, framealpha=0.75, loc="lower right", markerscale=1.2)
+        ax_tte.set_title("③ Time to event\n(short TTE=bright, ×=event ○=censored)",
+                         fontsize=9, fontweight="bold", pad=4)
+    else:
+        # Classification: TTE colormap + event colour
+        ev_cols = np.where(ev_raw == 1, HI, LO)
+        ax_tte.scatter(xy[valid_t, 0], xy[valid_t, 1],
+                       c=ev_cols[valid_t], s=MS, alpha=0.75, linewidths=0)
+        ax_tte.set_title("③ TTE / event\n(red=event, blue=censored)",
+                         fontsize=9, fontweight="bold", pad=4)
     ax_tte.set_xlabel("UMAP-1", fontsize=8); ax_tte.set_ylabel("UMAP-2", fontsize=8)
     ax_tte.tick_params(labelsize=7); ax_tte.set_facecolor(BG)
     ax_tte.spines[["top","right"]].set_visible(False)
 
-    # 3 — modality combination
+    # 3 — hexbin density
+    hx = ax_hex.hexbin(xy[:, 0], xy[:, 1], gridsize=30, cmap="YlOrRd",
+                       mincnt=1, linewidths=0.2)
+    fig.colorbar(hx, ax=ax_hex, pad=0.02, fraction=0.046, shrink=0.85,
+                 label="Count").ax.tick_params(labelsize=7)
+    ax_hex.set_title("④ Patient density\n(hexbin)", fontsize=9, fontweight="bold", pad=4)
+    ax_hex.set_xlabel("UMAP-1", fontsize=8); ax_hex.set_ylabel("UMAP-2", fontsize=8)
+    ax_hex.tick_params(labelsize=7); ax_hex.set_facecolor("#f0ede8")
+    ax_hex.spines[["top","right"]].set_visible(False)
+
+    # 4 — modality combination
     for combo in list(combo_col.keys()):
         idx = [i for i, c in enumerate(disp_combos) if c == combo]
         if not idx:
             continue
         ax_mod.scatter(xy[idx, 0], xy[idx, 1], color=combo_col[combo],
                        s=MS, alpha=0.75, linewidths=0, label=combo[:30])
-    ax_mod.set_title("④ Modality combination", fontsize=9, fontweight="bold", pad=4)
+    ax_mod.set_title("⑤ Modality combination", fontsize=9, fontweight="bold", pad=4)
     ax_mod.set_xlabel("UMAP-1", fontsize=8); ax_mod.set_ylabel("UMAP-2", fontsize=8)
     ax_mod.tick_params(labelsize=7); ax_mod.set_facecolor(BG)
     ax_mod.spines[["top","right"]].set_visible(False)
@@ -308,7 +351,7 @@ def make_unified_umap(task_key, cfg, out_dir):
             ax_km.set_xlabel("Time (years)", fontsize=8)
             ax_km.set_ylabel("Event-free probability", fontsize=8)
             ax_km.legend(fontsize=7, framealpha=0.8)
-    ax_km.set_title("⑤ KM: top vs bottom risk tertile", fontsize=9, fontweight="bold", pad=4)
+    ax_km.set_title("⑥ KM: top vs bottom risk tertile", fontsize=9, fontweight="bold", pad=4)
     ax_km.tick_params(labelsize=7); ax_km.set_facecolor(BG)
     ax_km.spines[["top","right"]].set_visible(False)
     ax_km.set_ylim(-0.05, 1.05)
@@ -320,7 +363,7 @@ def make_unified_umap(task_key, cfg, out_dir):
         col = SPLIT_COLS[si % len(SPLIT_COLS)]
         ax_split.scatter(xy[idx, 0], xy[idx, 1], color=col, s=MS,
                          alpha=0.7, linewidths=0, label=f"s{sp}" if sp >= 0 else "all")
-    ax_split.set_title("⑥ CV split annotation", fontsize=9, fontweight="bold", pad=4)
+    ax_split.set_title("⑦ CV split annotation", fontsize=9, fontweight="bold", pad=4)
     ax_split.set_xlabel("UMAP-1", fontsize=8); ax_split.set_ylabel("UMAP-2", fontsize=8)
     ax_split.tick_params(labelsize=7); ax_split.set_facecolor(BG)
     ax_split.spines[["top","right"]].set_visible(False)
