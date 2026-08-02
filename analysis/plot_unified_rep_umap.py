@@ -57,7 +57,7 @@ TASK_CFG = {
     "clad_surv": {
         "label":      "CLAD survival",
         "metric":     "C-index",
-        "rep_key":    "clad_surv",
+        "rep_key":    "clad",       # internal task name in SetMIL heads (TASK_GROUPS["clad_surv"]=["clad"])
         "ev_key":     "event_clad",
         "tte_key":    "tte_clad",
         "score_type": "surv",
@@ -66,7 +66,7 @@ TASK_CFG = {
     "acr_surv": {
         "label":      "ACR survival",
         "metric":     "C-index",
-        "rep_key":    "acr_surv",
+        "rep_key":    "acr_surv",   # longi model task="acr_surv" → heads["acr_surv"] (default TASK_GROUP)
         "ev_key":     "event_acr",
         "tte_key":    "tte_acr",
         "score_type": "surv",
@@ -78,7 +78,7 @@ TASK_CFG = {
     "death_surv": {
         "label":      "Death survival",
         "metric":     "C-index",
-        "rep_key":    "death_surv",
+        "rep_key":    "death",      # internal task name in longi heads (TASK_GROUPS["death_surv"]=["death"])
         "ev_key":     "event_death",
         "tte_key":    "tte_death",
         "score_type": "surv",
