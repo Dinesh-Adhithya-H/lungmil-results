@@ -339,7 +339,7 @@ def make_unified_umap(task_key, cfg, out_dir):
 
 # ── Run all tasks ─────────────────────────────────────────────────────────────
 for task_key, cfg in TASK_CFG.items():
-    task_out = FIG_ROOT / task_key.replace("_surv", "").replace("acr_cls","acr_cls")
+    task_out = FIG_ROOT / task_key
     make_unified_umap(task_key, cfg, task_out)
 
 # ── 4-panel combined overview ─────────────────────────────────────────────────
