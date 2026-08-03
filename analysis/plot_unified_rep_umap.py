@@ -273,20 +273,20 @@ def make_unified_umap(task_key, cfg, out_dir):
     combo_col["Other"] = "#aaaaaa"
     disp_combos = [c if c in combo_col else "Other" for c in raw_combos]
 
-    # ── Build figure: 2×4 grid (7 panels + 1 empty) ──────────────────────────
+    # ── Build figure: 2×4 grid (8 panels) ───────────────────────────────────
     MS = 9
     fig = plt.figure(figsize=(24, 11), facecolor=BG)
     fig.suptitle(f"Patient Rep Space  —  {cfg['label']}  (N={len(records)})",
                  fontsize=12, fontweight="bold", y=0.98, color="#1A1018")
     grd = gridspec.GridSpec(2, 4, figure=fig, wspace=0.28, hspace=0.38)
-    ax_score = fig.add_subplot(grd[0, 0])
-    ax_label = fig.add_subplot(grd[0, 1])
-    ax_tte   = fig.add_subplot(grd[0, 2])
-    ax_hex   = fig.add_subplot(grd[0, 3])
-    ax_mod   = fig.add_subplot(grd[1, 0])
-    ax_km    = fig.add_subplot(grd[1, 1])
-    ax_split = fig.add_subplot(grd[1, 2])
-    # grd[1,3] intentionally empty
+    ax_score    = fig.add_subplot(grd[0, 0])
+    ax_label    = fig.add_subplot(grd[0, 1])
+    ax_tte      = fig.add_subplot(grd[0, 2])
+    ax_ev_hex   = fig.add_subplot(grd[0, 3])   # ④ event density hexbin
+    ax_mod      = fig.add_subplot(grd[1, 0])
+    ax_km       = fig.add_subplot(grd[1, 1])
+    ax_split    = fig.add_subplot(grd[1, 2])
+    ax_tte_hex  = fig.add_subplot(grd[1, 3])   # ⑧ avg TTE hexbin
 
     def _scatter(ax, vals, cmap, title, vmin=None, vmax=None, alpha=0.8, s=MS):
         valid = ~np.isnan(vals)
@@ -353,15 +353,27 @@ def make_unified_umap(task_key, cfg, out_dir):
     ax_tte.tick_params(labelsize=7); ax_tte.set_facecolor(BG)
     ax_tte.spines[["top","right"]].set_visible(False)
 
-    # 3 — hexbin density
-    hx = ax_hex.hexbin(xy[:, 0], xy[:, 1], gridsize=30, cmap="YlOrRd",
-                       mincnt=1, linewidths=0.2)
-    fig.colorbar(hx, ax=ax_hex, pad=0.02, fraction=0.046, shrink=0.85,
-                 label="Count").ax.tick_params(labelsize=7)
-    ax_hex.set_title("④ Patient density\n(hexbin)", fontsize=9, fontweight="bold", pad=4)
-    ax_hex.set_xlabel("UMAP-1", fontsize=8); ax_hex.set_ylabel("UMAP-2", fontsize=8)
-    ax_hex.tick_params(labelsize=7); ax_hex.set_facecolor("#f0ede8")
-    ax_hex.spines[["top","right"]].set_visible(False)
+    # 3 — event density hexbin (fraction of events per hex cell)
+    valid_ev = ~np.isnan(ev_raw)
+    if valid_ev.sum() > 10:
+        hx_ev = ax_ev_hex.hexbin(
+            xy[valid_ev, 0], xy[valid_ev, 1],
+            C=ev_raw[valid_ev],
+            reduce_C_function=np.mean,
+            gridsize=30, cmap="RdBu_r", linewidths=0.2,
+            vmin=0, vmax=1)
+        cb_ev = fig.colorbar(hx_ev, ax=ax_ev_hex, pad=0.02, fraction=0.046, shrink=0.85)
+        cb_ev.set_label("Event rate", fontsize=7)
+        cb_ev.ax.tick_params(labelsize=7)
+        if cfg["score_type"] == "surv":
+            ax_ev_hex.set_title("④ Event density\n(event rate per hexagon)", fontsize=9, fontweight="bold", pad=4)
+        else:
+            ax_ev_hex.set_title("④ Positive label density\n(positive rate per hexagon)", fontsize=9, fontweight="bold", pad=4)
+    else:
+        ax_ev_hex.text(0.5, 0.5, "no event data", ha="center", va="center", transform=ax_ev_hex.transAxes)
+    ax_ev_hex.set_xlabel("UMAP-1", fontsize=8); ax_ev_hex.set_ylabel("UMAP-2", fontsize=8)
+    ax_ev_hex.tick_params(labelsize=7); ax_ev_hex.set_facecolor("#f0ede8")
+    ax_ev_hex.spines[["top","right"]].set_visible(False)
 
     # 4 — modality combination
     for combo in list(combo_col.keys()):
@@ -406,6 +418,25 @@ def make_unified_umap(task_key, cfg, out_dir):
     ax_split.tick_params(labelsize=7); ax_split.set_facecolor(BG)
     ax_split.spines[["top","right"]].set_visible(False)
     ax_split.legend(fontsize=6.5, framealpha=0.8, ncol=2, markerscale=1.2)
+
+    # 7 — avg TTE hexbin
+    valid_th = ~np.isnan(tte_yrs)
+    if valid_th.sum() > 10:
+        tte_clipped_hex = np.clip(tte_yrs, 0, np.nanpercentile(tte_yrs[valid_th], 95))
+        hx_tte = ax_tte_hex.hexbin(
+            xy[valid_th, 0], xy[valid_th, 1],
+            C=tte_clipped_hex[valid_th],
+            reduce_C_function=np.mean,
+            gridsize=30, cmap="plasma_r", linewidths=0.2)
+        cb_th = fig.colorbar(hx_tte, ax=ax_tte_hex, pad=0.02, fraction=0.046, shrink=0.85)
+        cb_th.set_label("Mean TTE (years)", fontsize=7)
+        cb_th.ax.tick_params(labelsize=7)
+    else:
+        ax_tte_hex.text(0.5, 0.5, "no TTE data", ha="center", va="center", transform=ax_tte_hex.transAxes)
+    ax_tte_hex.set_title("⑧ Avg TTE per hexagon\n(bright=short TTE=urgent)", fontsize=9, fontweight="bold", pad=4)
+    ax_tte_hex.set_xlabel("UMAP-1", fontsize=8); ax_tte_hex.set_ylabel("UMAP-2", fontsize=8)
+    ax_tte_hex.tick_params(labelsize=7); ax_tte_hex.set_facecolor("#f0ede8")
+    ax_tte_hex.spines[["top","right"]].set_visible(False)
 
     fig.patch.set_facecolor(BG)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
