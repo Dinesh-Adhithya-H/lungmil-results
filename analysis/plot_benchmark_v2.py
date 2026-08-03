@@ -1,0 +1,256 @@
+"""
+Benchmark bar plots — fixed model order, linear baselines included.
+Produces per-task + combined 4-panel figures.
+Run via: sbatch analysis/submit_benchmark_v2.sh
+"""
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.patches import Patch
+
+ROOT    = Path(__file__).resolve().parent.parent
+PRED    = ROOT / "results" / "predictions"
+LIN_CSV = ROOT / "results" / "linear_models" / "metrics_summary.csv"
+OUT_DIR = ROOT / "figures" / "benchmark"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+C_LIN   = "#888888"   # grey   — linear baselines
+C_P1    = "#1A5C8A"   # blue   — P1 unimodal
+C_ENS   = "#2D1548"   # dark plum — P1 ensemble
+C_FUS   = "#17685A"   # teal   — early/middle/late fusion
+C_SET   = "#452870"   # plum   — SetMIL family
+C_LMK   = "#952030"   # crimson — LongitudinalMK
+BEST_EDGE = "#BF7320"
+BG = "#FAF6F2"
+
+# ── Fixed model order (no sorting within groups) ──────────────────────────────
+# Each entry: (display_label, colour, group_tag)
+MODEL_DEFS = [
+    ("Linear (All)",          C_LIN,  "linear"),
+    ("Linear (Clinical)",     C_LIN,  "linear"),
+    ("Linear (HE)",           C_LIN,  "linear"),
+    ("Linear (BAL)",          C_LIN,  "linear"),
+    ("Linear (CT)",           C_LIN,  "linear"),
+    # separator
+    ("P1 HE",                 C_P1,   "p1"),
+    ("P1 BAL",                C_P1,   "p1"),
+    ("P1 CT",                 C_P1,   "p1"),
+    ("P1 Clinical",           C_P1,   "p1"),
+    ("P1 wtd ensemble",       C_ENS,  "p1"),
+    # separator
+    ("Early fusion",          C_FUS,  "fusion"),
+    ("Middle fusion",         C_FUS,  "fusion"),
+    ("Late fusion",           C_FUS,  "fusion"),
+    # separator
+    ("SetMIL",                C_SET,  "setmil"),
+    ("SetMIL-MT",             C_SET,  "setmil"),
+    ("SetMIL-MT (no SAB)",    C_SET,  "setmil"),
+    # separator
+    ("LongMK-MT",             C_LMK,  "longi"),
+    ("LongMK-MT (no ALiBi)",  C_LMK,  "longi"),
+    ("LongMK (no ALiBi) ★",  C_LMK,  "longi"),
+]
+MODEL_LABELS = [m[0] for m in MODEL_DEFS]
+MODEL_COLORS = {m[0]: m[1] for m in MODEL_DEFS}
+MODEL_GROUPS = {m[0]: m[2] for m in MODEL_DEFS}
+
+# Group boundaries (after which to draw separator)
+GROUP_BREAKS = ["linear", "p1", "fusion", "setmil"]
+
+SPLIT_COLS = ["s0", "s1", "s2", "s3", "s4"]
+
+TASKS = {
+    "acr_cls":   {"file": "comparison_acr_cls.csv",   "metric": "BACC",    "label": "ACR classification (BACC)",
+                  "lin_task": "ACR",    "lin_metric": "bacc"},
+    "acr_surv":  {"file": "comparison_acr_surv.csv",  "metric": "C-index", "label": "ACR survival (C-index)",
+                  "lin_task": "ACR_TTE","lin_metric": "cindex"},
+    "clad_surv": {"file": "comparison_clad.csv",      "metric": "C-index", "label": "CLAD survival (C-index)",
+                  "lin_task": "CLAD",   "lin_metric": "cindex"},
+    "death_surv":{"file": "comparison_death.csv",     "metric": "C-index", "label": "Death survival (C-index)",
+                  "lin_task": "Death",  "lin_metric": "cindex"},
+}
+
+# Mapping from comparison CSV model names → display labels
+CSV_TO_DISPLAY = {
+    "P1 HE": "P1 HE", "P1 BAL": "P1 BAL", "P1 CT": "P1 CT",
+    "P1 Clinical": "P1 Clinical", "P1 wtd ensemble": "P1 wtd ensemble",
+    "Early fusion":   "Early fusion",
+    "Middle fusion":  "Middle fusion",
+    "Late fusion":    "Late fusion",
+    "SetMIL":         "SetMIL",
+    "SetMIL-MT":      "SetMIL-MT",
+    "SetMIL-MT (no SAB)": "SetMIL-MT (no SAB)",
+    "LongMK-MT":           "LongMK-MT",
+    "LongMK-MT (no ALiBi)":"LongMK-MT (no ALiBi)",
+    "LongMK (no ALiBi) ★": "LongMK (no ALiBi) ★",
+}
+
+
+def load_linear(lin_task, lin_metric):
+    df = pd.read_csv(LIN_CSV)
+    df = df[df["task"] == lin_task].copy()
+    MOD_MAP = {"All": "Linear (All)", "Clinical": "Linear (Clinical)",
+               "H&E": "Linear (HE)", "BAL": "Linear (BAL)", "CT": "Linear (CT)"}
+    out = {}
+    for mod, disp in MOD_MAP.items():
+        rows = df[df["modality"] == mod]
+        splits = []
+        for _, r in rows.iterrows():
+            v = r.get(lin_metric, np.nan)
+            try:
+                splits.append(float(v))
+            except (TypeError, ValueError):
+                splits.append(np.nan)
+        valid = [v for v in splits if not np.isnan(v)]
+        if valid:
+            out[disp] = {"mean": np.nanmean(splits), "std": np.nanstd(splits), "splits": splits}
+    return out
+
+
+def load_task_df(task_key):
+    meta = TASKS[task_key]
+    df = pd.read_csv(PRED / meta["file"])
+    out = {}
+    for _, row in df.iterrows():
+        raw_name = str(row["model"]).strip()
+        disp = CSV_TO_DISPLAY.get(raw_name)
+        if disp is None:
+            continue
+        splits = []
+        for s in SPLIT_COLS:
+            try:
+                splits.append(float(row.get(s, np.nan)))
+            except (TypeError, ValueError):
+                splits.append(np.nan)
+        valid = [v for v in splits if not np.isnan(v)]
+        if not valid:
+            continue
+        mean = float(row["mean"]) if not pd.isna(row.get("mean")) else np.nanmean(splits)
+        std  = float(row["std"])  if not pd.isna(row.get("std"))  else np.nanstd(splits)
+        out[disp] = {"mean": mean, "std": std, "splits": splits}
+    return out
+
+
+def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
+    meta = TASKS[task_key]
+    lin_data = load_linear(meta["lin_task"], meta["lin_metric"])
+    mdl_data = load_task_df(task_key)
+    all_data = {**lin_data, **mdl_data}
+
+    # Build ordered arrays
+    means, stds, splits_list, colors = [], [], [], []
+    for lbl in MODEL_LABELS:
+        d = all_data.get(lbl)
+        if d:
+            means.append(d["mean"])
+            stds.append(d["std"])
+            splits_list.append(d["splits"])
+        else:
+            means.append(np.nan)
+            stds.append(0)
+            splits_list.append([np.nan] * 5)
+        colors.append(MODEL_COLORS[lbl])
+
+    means  = np.array(means)
+    stds   = np.array(stds)
+    n      = len(MODEL_LABELS)
+    y      = np.arange(n)
+
+    # Draw group separator lines
+    prev_grp = None
+    for i, lbl in enumerate(MODEL_LABELS):
+        grp = MODEL_GROUPS[lbl]
+        if prev_grp is not None and prev_grp != grp and prev_grp in GROUP_BREAKS:
+            ax.axhline(i - 0.5, color="#cccccc", linewidth=0.8, linestyle="--", zorder=0)
+        prev_grp = grp
+
+    # Bars
+    valid = ~np.isnan(means)
+    for i in range(n):
+        if valid[i]:
+            ax.barh(y[i], means[i], color=colors[i], alpha=0.85, height=0.6, zorder=2)
+
+    # Best model highlight (amber border)
+    best_idx = np.nanargmax(means)
+    ax.barh(y[best_idx], means[best_idx], color=colors[best_idx], alpha=0.85,
+            height=0.6, edgecolor=BEST_EDGE, linewidth=2.2, zorder=3)
+
+    # Error bars
+    for i in range(n):
+        if valid[i] and stds[i] > 0:
+            ax.errorbar(means[i], y[i], xerr=stds[i], fmt="none",
+                        ecolor="#333", elinewidth=0.9, capsize=3, alpha=0.6, zorder=4)
+
+    # Per-split dots
+    for i in range(n):
+        for sv in splits_list[i]:
+            if not np.isnan(sv):
+                ax.scatter(sv, y[i], s=12, color="white", edgecolors=colors[i],
+                           linewidths=0.7, zorder=5, alpha=0.9)
+
+    # Chance / 0.5 line
+    ax.axvline(0.5, color="#999", linewidth=0.7, linestyle=":", alpha=0.5)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(MODEL_LABELS, fontsize=7.5)
+    if show_ylabel:
+        ax.set_ylabel("Model", fontsize=8)
+    ax.set_xlabel(meta["metric"], fontsize=9)
+    ax.set_title(meta["label"], fontsize=10, fontweight="bold", pad=6)
+    ax.tick_params(axis="both", labelsize=7.5)
+    ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_facecolor(BG)
+    ax.invert_yaxis()
+
+    # x-range: start from a bit below lowest bar
+    xmin = max(0.0, np.nanmin(means) - np.nanmax(stds) - 0.06)
+    xmax = min(1.0, np.nanmax(means) + np.nanmax(stds) + 0.06)
+    ax.set_xlim(xmin, xmax)
+
+
+def make_legend():
+    return [
+        Patch(facecolor=C_LIN, label="Linear baseline"),
+        Patch(facecolor=C_P1,  label="P1 unimodal"),
+        Patch(facecolor=C_ENS, label="P1 ensemble"),
+        Patch(facecolor=C_FUS, label="Fusion (early/mid/late)"),
+        Patch(facecolor=C_SET, label="SetMIL family"),
+        Patch(facecolor=C_LMK, label="LongitudinalMK ★"),
+        Patch(facecolor="white", edgecolor=BEST_EDGE, linewidth=2, label="Best model (amber border)"),
+    ]
+
+
+# ── Per-task figures ──────────────────────────────────────────────────────────
+for task_key in TASKS:
+    fig, ax = plt.subplots(figsize=(8, 10), facecolor=BG)
+    fig.patch.set_facecolor(BG)
+    plot_task(ax, task_key, fig)
+    ax.legend(handles=make_legend(), fontsize=7, loc="lower right",
+              framealpha=0.9, edgecolor="#ccc")
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(OUT_DIR / f"benchmark_v2_{task_key}.{ext}", dpi=180, bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"Saved benchmark_v2_{task_key}")
+
+# ── 4-panel combined ──────────────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 4, figsize=(30, 11), facecolor=BG)
+fig.patch.set_facecolor(BG)
+fig.suptitle("Benchmark — all models, all tasks (fixed model order, linear baselines included)",
+             fontsize=12, fontweight="bold")
+for ax, task_key in zip(axes, TASKS):
+    plot_task(ax, task_key, fig, show_ylabel=False)
+fig.legend(handles=make_legend(), loc="lower center", ncol=7, fontsize=8,
+           bbox_to_anchor=(0.5, -0.02), frameon=False)
+fig.tight_layout()
+for ext in ("png", "pdf"):
+    fig.savefig(OUT_DIR / f"benchmark_v2_all.{ext}", dpi=150, bbox_inches="tight", facecolor=BG)
+plt.close(fig)
+print("Saved benchmark_v2_all")
+print("Done.")
