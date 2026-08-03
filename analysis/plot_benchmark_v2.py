@@ -27,12 +27,12 @@ SHARED_MODEL_COLORS = {
     "Linear BAL":         "#9E9E9E",
     "Linear CT":          "#757575",
     "Linear Clinical":    "#616161",
-    "Linear All":         "#424242",
+    "wt avg Linear":     "#424242",
     "ABMIL HE":           "#90CAF9",
     "ABMIL BAL":          "#42A5F5",
     "ABMIL CT":           "#1976D2",
     "ABMIL Clinical":     "#1565C0",
-    "ABMIL All":          "#0D47A1",
+    "wt avg ABMIL":      "#0D47A1",
     "Early fusion":       "#80CBC4",
     "Middle fusion":      "#26A69A",
     "Late fusion":        "#00796B",
@@ -50,7 +50,7 @@ MODEL_DEFS = [
     ("Linear BAL",            SHARED_MODEL_COLORS["Linear BAL"],         "linear"),
     ("Linear CT",             SHARED_MODEL_COLORS["Linear CT"],          "linear"),
     ("Linear Clinical",       SHARED_MODEL_COLORS["Linear Clinical"],    "linear"),
-    ("Linear All",            SHARED_MODEL_COLORS["Linear All"],         "linear"),
+    ("wt avg Linear",            SHARED_MODEL_COLORS["wt avg Linear"],         "linear"),
     # separator
     ("ABMIL HE",              SHARED_MODEL_COLORS["ABMIL HE"],           "p1"),
     ("ABMIL BAL",             SHARED_MODEL_COLORS["ABMIL BAL"],          "p1"),
@@ -95,7 +95,7 @@ CSV_TO_DISPLAY = {
     "P1 BAL":          "ABMIL BAL",
     "P1 CT":           "ABMIL CT",
     "P1 Clinical":     "ABMIL Clinical",
-    "P1 wtd ensemble": "ABMIL All",
+    "P1 wtd ensemble": "wt avg ABMIL",
     "Early fusion":    "Early fusion",
     "Middle fusion":   "Middle fusion",
     "Late fusion":     "Late fusion",
@@ -111,7 +111,7 @@ def load_linear(lin_task, lin_metric):
     df = pd.read_csv(LIN_CSV)
     df = df[df["task"] == lin_task].copy()
     MOD_MAP = {"HE": "Linear HE", "BAL": "Linear BAL", "CT": "Linear CT",
-               "Clinical": "Linear Clinical", "All": "Linear All",
+               "Clinical": "Linear Clinical", "All": "wt avg Linear",
                "H&E": "Linear HE"}
     out = {}
     for mod, disp in MOD_MAP.items():
