@@ -23,12 +23,14 @@ OUT_ROOT  = ROOT / "figures" / "interpretability"
 BG = "#FAF6F2"
 
 TASKS = {
-    "acr_surv":  {"ckpt_dir": "longitudinal_mk_no_alibi_acr_surv",  "net_key": "acr_surv",
-                  "label": "ACR survival",   "color": "#1565C0"},
+    "acr_cls":   {"ckpt_dir": "longitudinal_mk_no_alibi_cls",        "net_key": "acr_cls",
+                  "label": "ACR classification", "color": "#6A1B9A"},
+    "acr_surv":  {"ckpt_dir": "longitudinal_mk_no_alibi_acr_surv",   "net_key": "acr_surv",
+                  "label": "ACR survival",       "color": "#1565C0"},
     "clad_surv": {"ckpt_dir": "longitudinal_mk_no_alibi_clad_surv",  "net_key": "clad",
-                  "label": "CLAD survival",  "color": "#2E7D32"},
+                  "label": "CLAD survival",      "color": "#2E7D32"},
     "death_surv":{"ckpt_dir": "longitudinal_mk_no_alibi_death_surv", "net_key": "death",
-                  "label": "Death survival", "color": "#952030"},
+                  "label": "Death survival",     "color": "#952030"},
 }
 
 GRID_N   = 100
@@ -129,7 +131,7 @@ def plot_combined(results: dict):
         return
 
     n = len(tasks_with_data)
-    fig, axes = plt.subplots(2, n, figsize=(6 * n, 11), facecolor=BG)
+    fig, axes = plt.subplots(2, n, figsize=(6 * n, 10), facecolor=BG)
     fig.patch.set_facecolor(BG)
     fig.suptitle("Learned biopsy time-weighting — all tasks (5-split mean ± std)",
                  fontsize=13, fontweight="bold")
