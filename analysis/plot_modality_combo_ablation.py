@@ -26,11 +26,11 @@ TASK_CFG = {
     "acr_cls":   {"suffix": "cls",       "metric": "bacc",    "label": "ACR classification (BACC)",
                   "best_variant": "set_mil_mt_no_sab", "best_label": "SetMIL-MT (no SAB)"},
     "acr_surv":  {"suffix": "acr_surv",  "metric": "c_index", "label": "ACR survival (C-index)",
-                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK (no ALiBi)"},
+                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK"},
     "clad_surv": {"suffix": "clad_surv", "metric": "c_index", "label": "CLAD survival (C-index)",
                   "best_variant": "set_mil_mt", "best_label": "SetMIL-MT"},
     "death_surv":{"suffix": "death_surv","metric": "c_index", "label": "Death survival (C-index)",
-                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK (no ALiBi)"},
+                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK"},
 }
 
 ALL_VARIANTS = {
@@ -40,9 +40,8 @@ ALL_VARIANTS = {
     "set_mil_no_sab":              "SetMIL",
     "set_mil_mt":                  "SetMIL-MT",
     "set_mil_mt_no_sab":           "SetMIL-MT (no SAB)",
-    "longitudinal_mk_mt":          "LongMK-MT",
-    "longitudinal_mk_mt_no_alibi": "LongMK-MT (no ALiBi)",
-    "longitudinal_mk_no_alibi":    "LongMK (no ALiBi)",
+    "longitudinal_mk_mt_no_alibi": "LongMK-MT",
+    "longitudinal_mk_no_alibi":    "LongMK",
 }
 
 MOD_ORDER = ["HE", "BAL", "CT", "Clinical"]

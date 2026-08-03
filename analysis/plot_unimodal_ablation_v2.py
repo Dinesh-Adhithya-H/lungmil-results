@@ -28,7 +28,7 @@ MODEL_ORDER = [
     "Linear",
     "Early fusion", "Middle fusion", "Late fusion",
     "SetMIL", "SetMIL-MT", "SetMIL-MT (no SAB)",
-    "LongMK-MT", "LongMK-MT (no ALiBi)", "LongMK (no ALiBi)",
+    "LongMK-MT", "LongMK",
 ]
 # Internal variant name → display label
 VARIANT_LABELS = {
@@ -38,9 +38,8 @@ VARIANT_LABELS = {
     "set_mil_no_sab":              "SetMIL",
     "set_mil_mt":                  "SetMIL-MT",
     "set_mil_mt_no_sab":           "SetMIL-MT (no SAB)",
-    "longitudinal_mk_mt":          "LongMK-MT",
-    "longitudinal_mk_mt_no_alibi": "LongMK-MT (no ALiBi)",
-    "longitudinal_mk_no_alibi":    "LongMK (no ALiBi)",
+    "longitudinal_mk_mt_no_alibi": "LongMK-MT",
+    "longitudinal_mk_no_alibi":    "LongMK",
 }
 
 MOD_ORDER  = ["HE", "BAL", "CT", "Clinical"]

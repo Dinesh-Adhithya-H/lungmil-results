@@ -19,29 +19,27 @@ OUT_DIR = ROOT / "figures" / "benchmark"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Colours ───────────────────────────────────────────────────────────────────
-C_LIN   = "#888888"   # grey   — linear baselines
-C_P1    = "#1A5C8A"   # blue   — P1 unimodal
-C_ENS   = "#2D1548"   # dark plum — P1 ensemble
-C_FUS   = "#17685A"   # teal   — early/middle/late fusion
-C_SET   = "#452870"   # plum   — SetMIL family
+C_LIN   = "#888888"   # grey    — linear baselines
+C_P1    = "#1A5C8A"   # blue    — ABMIL unimodal
+C_FUS   = "#17685A"   # teal    — early/middle/late fusion
+C_SET   = "#452870"   # plum    — SetMIL family
 C_LMK   = "#952030"   # crimson — LongitudinalMK
-BEST_EDGE = "#BF7320"
 BG = "#FAF6F2"
 
-# ── Fixed model order (no sorting within groups) ──────────────────────────────
+# ── Fixed model order ─────────────────────────────────────────────────────────
 # Each entry: (display_label, colour, group_tag)
 MODEL_DEFS = [
-    ("Linear (All)",          C_LIN,  "linear"),
-    ("Linear (Clinical)",     C_LIN,  "linear"),
-    ("Linear (HE)",           C_LIN,  "linear"),
-    ("Linear (BAL)",          C_LIN,  "linear"),
-    ("Linear (CT)",           C_LIN,  "linear"),
+    ("Linear HE",             C_LIN,  "linear"),
+    ("Linear BAL",            C_LIN,  "linear"),
+    ("Linear CT",             C_LIN,  "linear"),
+    ("Linear Clinical",       C_LIN,  "linear"),
+    ("Linear All",            C_LIN,  "linear"),
     # separator
-    ("P1 HE",                 C_P1,   "p1"),
-    ("P1 BAL",                C_P1,   "p1"),
-    ("P1 CT",                 C_P1,   "p1"),
-    ("P1 Clinical",           C_P1,   "p1"),
-    ("P1 wtd ensemble",       C_ENS,  "p1"),
+    ("ABMIL HE",              C_P1,   "p1"),
+    ("ABMIL BAL",             C_P1,   "p1"),
+    ("ABMIL CT",              C_P1,   "p1"),
+    ("ABMIL Clinical",        C_P1,   "p1"),
+    ("ABMIL All",             C_P1,   "p1"),
     # separator
     ("Early fusion",          C_FUS,  "fusion"),
     ("Middle fusion",         C_FUS,  "fusion"),
@@ -52,8 +50,7 @@ MODEL_DEFS = [
     ("SetMIL-MT (no SAB)",    C_SET,  "setmil"),
     # separator
     ("LongMK-MT",             C_LMK,  "longi"),
-    ("LongMK-MT (no ALiBi)",  C_LMK,  "longi"),
-    ("LongMK (no ALiBi) ★",  C_LMK,  "longi"),
+    ("LongMK",                C_LMK,  "longi"),
 ]
 MODEL_LABELS = [m[0] for m in MODEL_DEFS]
 MODEL_COLORS = {m[0]: m[1] for m in MODEL_DEFS}
@@ -77,25 +74,28 @@ TASKS = {
 
 # Mapping from comparison CSV model names → display labels
 CSV_TO_DISPLAY = {
-    "P1 HE": "P1 HE", "P1 BAL": "P1 BAL", "P1 CT": "P1 CT",
-    "P1 Clinical": "P1 Clinical", "P1 wtd ensemble": "P1 wtd ensemble",
-    "Early fusion":   "Early fusion",
-    "Middle fusion":  "Middle fusion",
-    "Late fusion":    "Late fusion",
-    "SetMIL":         "SetMIL",
-    "SetMIL-MT":      "SetMIL-MT",
-    "SetMIL-MT (no SAB)": "SetMIL-MT (no SAB)",
-    "LongMK-MT":           "LongMK-MT",
-    "LongMK-MT (no ALiBi)":"LongMK-MT (no ALiBi)",
-    "LongMK (no ALiBi) ★": "LongMK (no ALiBi) ★",
+    "P1 HE":           "ABMIL HE",
+    "P1 BAL":          "ABMIL BAL",
+    "P1 CT":           "ABMIL CT",
+    "P1 Clinical":     "ABMIL Clinical",
+    "P1 wtd ensemble": "ABMIL All",
+    "Early fusion":    "Early fusion",
+    "Middle fusion":   "Middle fusion",
+    "Late fusion":     "Late fusion",
+    "SetMIL":          "SetMIL",
+    "SetMIL-MT":       "SetMIL-MT",
+    "SetMIL-MT (no SAB)":   "SetMIL-MT (no SAB)",
+    "LongMK-MT (no ALiBi)": "LongMK-MT",
+    "LongMK (no ALiBi) ★":  "LongMK",
 }
 
 
 def load_linear(lin_task, lin_metric):
     df = pd.read_csv(LIN_CSV)
     df = df[df["task"] == lin_task].copy()
-    MOD_MAP = {"All": "Linear (All)", "Clinical": "Linear (Clinical)",
-               "H&E": "Linear (HE)", "BAL": "Linear (BAL)", "CT": "Linear (CT)"}
+    MOD_MAP = {"HE": "Linear HE", "BAL": "Linear BAL", "CT": "Linear CT",
+               "Clinical": "Linear Clinical", "All": "Linear All",
+               "H&E": "Linear HE"}
     out = {}
     for mod, disp in MOD_MAP.items():
         rows = df[df["modality"] == mod]
@@ -175,11 +175,6 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
         if valid[i]:
             ax.barh(y[i], means[i], color=colors[i], alpha=0.85, height=0.6, zorder=2)
 
-    # Best model highlight (amber border)
-    best_idx = np.nanargmax(means)
-    ax.barh(y[best_idx], means[best_idx], color=colors[best_idx], alpha=0.85,
-            height=0.6, edgecolor=BEST_EDGE, linewidth=2.2, zorder=3)
-
     # Error bars
     for i in range(n):
         if valid[i] and stds[i] > 0:
@@ -217,12 +212,10 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
 def make_legend():
     return [
         Patch(facecolor=C_LIN, label="Linear baseline"),
-        Patch(facecolor=C_P1,  label="P1 unimodal"),
-        Patch(facecolor=C_ENS, label="P1 ensemble"),
+        Patch(facecolor=C_P1,  label="ABMIL"),
         Patch(facecolor=C_FUS, label="Fusion (early/mid/late)"),
         Patch(facecolor=C_SET, label="SetMIL family"),
-        Patch(facecolor=C_LMK, label="LongitudinalMK ★"),
-        Patch(facecolor="white", edgecolor=BEST_EDGE, linewidth=2, label="Best model (amber border)"),
+        Patch(facecolor=C_LMK, label="LongitudinalMK"),
     ]
 
 
@@ -246,7 +239,7 @@ fig.suptitle("Benchmark — all models, all tasks (fixed model order, linear bas
              fontsize=12, fontweight="bold")
 for ax, task_key in zip(axes, TASKS):
     plot_task(ax, task_key, fig, show_ylabel=False)
-fig.legend(handles=make_legend(), loc="lower center", ncol=7, fontsize=8,
+fig.legend(handles=make_legend(), loc="lower center", ncol=5, fontsize=8,
            bbox_to_anchor=(0.5, -0.02), frameon=False)
 fig.tight_layout()
 for ext in ("png", "pdf"):
