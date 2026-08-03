@@ -1,15 +1,19 @@
 """
 Plot 5-split averaged biopsy time-weighting heatmap for longitudinal_mk_no_alibi.
 
-For each task (acr_surv, clad_surv, death_surv):
+For each task (acr_cls, acr_surv, clad_surv, death_surv):
   - Load biopsy_weight_net weights from all 5 split checkpoints (CPU-only, small MLP)
-  - Evaluate w(curr_day, prev_day) on 100x100 grid
+  - Evaluate w(curr_day, prev_day) on 100x100 grid bounded by actual data range
   - Average across splits; compute std
   - Plot mean heatmap + std heatmap side by side
+
+Grid bounds: derived at runtime from the max TTE in the splits CSV so the heatmap
+shows only the range the model actually trained on (not extrapolated future dates).
 
 Run via: sbatch analysis/submit_L_global_avg.sh
 """
 from pathlib import Path
+import csv
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,24 +21,42 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT     = Path(__file__).resolve().parent.parent
+ROOT      = Path(__file__).resolve().parent.parent
 CKPT_ROOT = ROOT / "results" / "mm_abmil_v8" / "phase2"
 OUT_ROOT  = ROOT / "figures" / "interpretability"
+SPLITS_CSV = Path("/home/aih/dinesh.haridoss/chicago/plots/multimodal_splits_nested_cv.csv")
 BG = "#FAF6F2"
+
+
+def get_day_max(tte_col: str) -> float:
+    """Read max TTE for a specific column — upper bound on biopsy days for that task."""
+    max_val = 0.0
+    with open(SPLITS_CSV) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                v = float(row.get(tte_col, 0) or 0)
+                if v > max_val:
+                    max_val = v
+            except ValueError:
+                pass
+    # Round up to next 500 for a clean axis
+    rounded = int(np.ceil(max_val / 500) * 500)
+    print(f"  [day_max] {tte_col} max = {max_val:.0f} d → grid bound = {rounded} d")
+    return float(rounded)
 
 TASKS = {
     "acr_cls":   {"ckpt_dir": "longitudinal_mk_no_alibi_cls",        "net_key": "acr_cls",
-                  "label": "ACR classification", "color": "#6A1B9A"},
+                  "label": "ACR classification", "color": "#6A1B9A", "tte_col": "acr_days"},
     "acr_surv":  {"ckpt_dir": "longitudinal_mk_no_alibi_acr_surv",   "net_key": "acr_surv",
-                  "label": "ACR survival",       "color": "#1565C0"},
+                  "label": "ACR survival",       "color": "#1565C0", "tte_col": "acr_days"},
     "clad_surv": {"ckpt_dir": "longitudinal_mk_no_alibi_clad_surv",  "net_key": "clad",
-                  "label": "CLAD survival",      "color": "#2E7D32"},
+                  "label": "CLAD survival",      "color": "#2E7D32", "tte_col": "clad_days"},
     "death_surv":{"ckpt_dir": "longitudinal_mk_no_alibi_death_surv", "net_key": "death",
-                  "label": "Death survival",     "color": "#952030"},
+                  "label": "Death survival",     "color": "#952030", "tte_col": "death_days"},
 }
 
-GRID_N   = 100
-DAY_MAX  = 2000
+GRID_N = 100
 
 
 def make_net():
@@ -51,9 +73,9 @@ def load_net(ckpt_path: Path, net_key: str) -> nn.Module:
     return net
 
 
-def eval_grid(net: nn.Module) -> np.ndarray:
-    curr_range = np.linspace(0, DAY_MAX, GRID_N)
-    prev_range = np.linspace(0, DAY_MAX, GRID_N)
+def eval_grid(net: nn.Module, day_max: float) -> np.ndarray:
+    curr_range = np.linspace(0, day_max, GRID_N)
+    prev_range = np.linspace(0, day_max, GRID_N)
     CURR, PREV = np.meshgrid(curr_range, prev_range, indexing="ij")
     pairs = np.stack([CURR.ravel(), PREV.ravel()], axis=1).astype(np.float32)
     with torch.no_grad():
@@ -62,7 +84,7 @@ def eval_grid(net: nn.Module) -> np.ndarray:
     return W
 
 
-def compute_split_matrices(task_key: str, cfg: dict):
+def compute_split_matrices(task_key: str, cfg: dict, day_max: float):
     mats = []
     for split in range(5):
         ckpt = CKPT_ROOT / f"split{split}_fold0" / cfg["ckpt_dir"] / "model_longitudinal_mk_no_alibi_final.pt"
@@ -70,7 +92,7 @@ def compute_split_matrices(task_key: str, cfg: dict):
             print(f"  MISSING: {ckpt}")
             continue
         net = load_net(ckpt, cfg["net_key"])
-        mats.append(eval_grid(net))
+        mats.append(eval_grid(net, day_max))
         print(f"  split {split} done")
     if not mats:
         return None, None, 0
@@ -80,11 +102,12 @@ def compute_split_matrices(task_key: str, cfg: dict):
     return mean, std, len(mats)
 
 
-def plot_task(task_key: str, cfg: dict, mean: np.ndarray, std: np.ndarray, n_splits: int):
+def plot_task(task_key: str, cfg: dict, mean: np.ndarray, std: np.ndarray,
+              n_splits: int, day_max: float):
     out_dir = OUT_ROOT / task_key
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    extent = [0, DAY_MAX, 0, DAY_MAX]
+    extent = [0, day_max, 0, day_max]
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG)
     fig.patch.set_facecolor(BG)
     fig.suptitle(f"Learned biopsy time-weighting — {cfg['label']}  (mean ± std, n={n_splits} splits)",
@@ -95,7 +118,7 @@ def plot_task(task_key: str, cfg: dict, mean: np.ndarray, std: np.ndarray, n_spl
     ax.set_facecolor(BG)
     im = ax.imshow(mean, origin="lower", aspect="auto", extent=extent,
                    cmap="RdBu_r", vmin=0, vmax=1, interpolation="bilinear")
-    ax.plot([0, DAY_MAX], [0, DAY_MAX], "k--", lw=1, alpha=0.5)
+    ax.plot([0, day_max], [0, day_max], "k--", lw=1, alpha=0.5)
     ax.set_xlabel("Previous biopsy date (days post-transplant)", fontsize=10)
     ax.set_ylabel("Current biopsy date (days post-transplant)", fontsize=10)
     ax.set_title("Mean weight  w ∈ (0,1)", fontsize=10, color=cfg["color"], fontweight="bold")
@@ -108,7 +131,7 @@ def plot_task(task_key: str, cfg: dict, mean: np.ndarray, std: np.ndarray, n_spl
     im2 = ax2.imshow(std, origin="lower", aspect="auto", extent=extent,
                      cmap="Oranges", vmin=0, vmax=max(vmax_std, 0.05),
                      interpolation="bilinear")
-    ax2.plot([0, DAY_MAX], [0, DAY_MAX], "k--", lw=1, alpha=0.5)
+    ax2.plot([0, day_max], [0, day_max], "k--", lw=1, alpha=0.5)
     ax2.set_xlabel("Previous biopsy date (days post-transplant)", fontsize=10)
     ax2.set_ylabel("Current biopsy date (days post-transplant)", fontsize=10)
     ax2.set_title("Std across splits", fontsize=10, color="#555", fontweight="bold")
@@ -123,7 +146,7 @@ def plot_task(task_key: str, cfg: dict, mean: np.ndarray, std: np.ndarray, n_spl
 
 
 def plot_combined(results: dict):
-    tasks_with_data = [(k, cfg, r["mean"], r["std"], r["n"])
+    tasks_with_data = [(k, cfg, r["mean"], r["std"], r["n"], r["day_max"])
                        for (k, cfg), r in zip(TASKS.items(), results.values())
                        if r["mean"] is not None]
     if not tasks_with_data:
@@ -135,17 +158,17 @@ def plot_combined(results: dict):
     fig.patch.set_facecolor(BG)
     fig.suptitle("Learned biopsy time-weighting — all tasks (5-split mean ± std)",
                  fontsize=13, fontweight="bold")
-    extent = [0, DAY_MAX, 0, DAY_MAX]
 
-    for ti, (task_key, cfg, mean, std, n_splits) in enumerate(tasks_with_data):
+    for ti, (task_key, cfg, mean, std, n_splits, day_max) in enumerate(tasks_with_data):
+        extent = [0, day_max, 0, day_max]
         # Mean row
         ax = axes[0, ti]
         ax.set_facecolor(BG)
         im = ax.imshow(mean, origin="lower", aspect="auto", extent=extent,
                        cmap="RdBu_r", vmin=0, vmax=1, interpolation="bilinear")
-        ax.plot([0, DAY_MAX], [0, DAY_MAX], "k--", lw=1, alpha=0.4)
-        ax.set_title(f"{cfg['label']}\nMean weight (n={n_splits})", fontsize=10,
-                     color=cfg["color"], fontweight="bold")
+        ax.plot([0, day_max], [0, day_max], "k--", lw=1, alpha=0.4)
+        ax.set_title(f"{cfg['label']}\nMean weight (n={n_splits}, max={int(day_max)}d)",
+                     fontsize=10, color=cfg["color"], fontweight="bold")
         if ti == 0:
             ax.set_ylabel("Current biopsy date (days)", fontsize=9)
         ax.set_xlabel("Previous biopsy date (days)", fontsize=9)
@@ -157,7 +180,7 @@ def plot_combined(results: dict):
         vmax_std = max(np.nanpercentile(std, 95) if np.any(~np.isnan(std)) else 0.1, 0.05)
         im2 = ax2.imshow(std, origin="lower", aspect="auto", extent=extent,
                          cmap="Oranges", vmin=0, vmax=vmax_std, interpolation="bilinear")
-        ax2.plot([0, DAY_MAX], [0, DAY_MAX], "k--", lw=1, alpha=0.4)
+        ax2.plot([0, day_max], [0, day_max], "k--", lw=1, alpha=0.4)
         ax2.set_title("Std across splits", fontsize=9, color="#555")
         if ti == 0:
             ax2.set_ylabel("Current biopsy date (days)", fontsize=9)
@@ -176,10 +199,11 @@ if __name__ == "__main__":
     results = {}
     for task_key, cfg in TASKS.items():
         print(f"\n=== {task_key} ===")
-        mean, std, n = compute_split_matrices(task_key, cfg)
-        results[task_key] = {"mean": mean, "std": std, "n": n}
+        day_max = get_day_max(cfg["tte_col"])
+        mean, std, n = compute_split_matrices(task_key, cfg, day_max)
+        results[task_key] = {"mean": mean, "std": std, "n": n, "day_max": day_max}
         if mean is not None:
-            plot_task(task_key, cfg, mean, std, n)
+            plot_task(task_key, cfg, mean, std, n, day_max)
 
     print("\n=== Combined ===")
     plot_combined(results)
