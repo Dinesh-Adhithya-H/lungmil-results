@@ -214,55 +214,91 @@ CT cluster names = CT morphology-based labels.
 
 ### 3 — Benchmark (all models, all tasks)
 
+#### 3a — Main benchmark bar plots (v2, current)
+
 | # | File | What | Status |
 |---|------|------|--------|
-| 3a | `benchmark/benchmark_multimodal_acr_cls.png` | All models vs ACR cls | ✅ |
-| 3b | `benchmark/benchmark_multimodal_acr_surv.png` | All models vs ACR surv | ✅ |
-| 3c | `benchmark/benchmark_multimodal_clad_surv.png` | All models vs CLAD | ✅ |
-| 3d | `benchmark/benchmark_multimodal_death_surv.png` | All models vs Death | ✅ |
-| 3e | `benchmark/benchmark_multimodal_all.png` | 4-panel combined | ✅ |
+| 3a | `benchmark/benchmark_v2_acr_cls.png` | 18 models vs ACR cls | ✅ |
+| 3b | `benchmark/benchmark_v2_acr_surv.png` | 18 models vs ACR surv | ✅ |
+| 3c | `benchmark/benchmark_v2_clad_surv.png` | 18 models vs CLAD | ✅ |
+| 3d | `benchmark/benchmark_v2_death_surv.png` | 18 models vs Death | ✅ |
+| 3e | `benchmark/benchmark_v2_all.png` | 4-panel combined | ✅ |
+
+Script: `analysis/plot_benchmark_v2.py` via `analysis/submit_benchmark_ablation_v2.sh`.
+
+**Fixed model order (18 models):**
+
+| Group | Models |
+|-------|--------|
+| Linear baselines | Linear HE, Linear BAL, Linear CT, Linear Clinical, wt avg Linear |
+| ABMIL unimodal | ABMIL HE, ABMIL BAL, ABMIL CT, ABMIL Clinical, wt avg ABMIL |
+| Fusion | Early fusion, Middle fusion, Late fusion |
+| SetMIL | SetMIL, SetMIL-MT, SetMIL-MT (no SAB) |
+| LongitudinalMK | LongMK-MT, LongMK |
+
+**Design choices:**
+- Each model has a unique colour within its group family (greys → blues → teals → purples → reds); colour is identical across all 3 benchmark figures (defined in `SHARED_MODEL_COLORS`).
+- No best-model highlighting — readers rank visually from bar length.
+- Per-split dots (white fill, coloured edge) show cross-split variability on each bar.
+- Error bars = ± std across 5 splits. Dashed vertical at 0.5 = chance level.
+- Y-axis inverted: best bar at top.
+
+**Data loading:**
+- Linear baselines: read from `results/linear_models/metrics_summary.csv` (`load_linear()` function). Modality map: H&E → "Linear HE", All → "wt avg Linear".
+- All other models: per-split JSON files `results/mm_abmil_v8/metrics_split{s}_fold0_{variant}_{suffix}.json`.
+  - Flat JSON for non-longi models: `d["test"]["c_index"]`.
+  - Nested JSON for longi models: `d["test"]["acr_surv"]["c_index"]`, `d["test"]["clad"]["c_index"]`, `d["test"]["death"]["c_index"]`.
+- CSV_TO_DISPLAY maps legacy CSV model names (e.g. "P1 wtd ensemble") to display labels ("wt avg ABMIL").
 
 ---
 
-#### How made — benchmark figures
+#### 3b — Unimodal ablation (v2)
 
-**Step 1 — Raw metric extraction** (`analysis/rebuild_benchmark_csvs.py`)
+| # | File | What | Status |
+|---|------|------|--------|
+| 6a | `interpretability/unimodal_ablation/unimodal_ablation_v2_{task}.png` | Grouped bars per modality, all models | ✅ |
+| 6b | `interpretability/unimodal_ablation/unimodal_ablation_v2_heatmap_{task}.png` | Model×modality heatmap | ✅ |
+| 6c | `interpretability/unimodal_ablation/unimodal_ablation_v2_all.png` | 4-task combined | ✅ |
 
-Every training run writes a metrics JSON at `results/mm_abmil_v8/metrics_split{s}_fold0_{variant}_{task}.json`.  
-The script iterates over all 9 P2 variants × 4 tasks × 5 splits = 180 JSON files and reads the test metric:
+Script: `analysis/plot_unimodal_ablation_v2.py`.
 
-- Most models use a **flat structure**: `d["test"]["c_index"]` or `d["test"]["bacc"]`  
-- Longitudinal multi-task models use a **nested structure**: `d["test"]["acr_surv"]["c_index"]` (because the model outputs multiple task heads simultaneously, each stored under its internal task name).  
-  Internal nested keys: `acr_cls` → `"acr_cls"`, `acr_surv` → `"acr_surv"`, `clad_surv` → `"clad"`, `death_surv` → `"death"`.
+**What unimodal ablation shows:** For each model, what metric is achieved when only ONE modality is active (others zeroed at the feature level). This is different from training unimodal-only models — the same jointly-trained weights are used but with zeroed input for the suppressed modalities.
 
-Per-split values are assembled into 4 CSVs (`results/predictions/comparison_{task}.csv`) with columns `model, s0, s1, s2, s3, s4, mean, std`.  
-P1 unimodal baseline rows (pre-existing) are kept as-is at the top.
+**Data source:** `unimodal_ablation` block inside each metrics JSON:
+```json
+"unimodal_ablation": { "HE": {"bacc": 0.58}, "BAL": {"c_index": 0.61}, ... }
+```
+Longitudinal models (`longitudinal_mk_*`) do not have this block — they appear only in the "All modalities" column of the combo plot.
 
-**Step 2 — Bar+strip plots** (`analysis/plot_benchmark_multimodal.py`)
+**Layout:** Grouped bar chart. X-axis = modalities (HE, BAL, CT, Clinical). Within each group, one bar per model in fixed MODEL_ORDER. Same SHARED_MODEL_COLORS. Heatmap version: rows = models, columns = modalities, colour = mean metric value.
 
-One horizontal bar chart per task, plus a 4-panel combined figure.
+---
 
-Layout per panel:  
-- **Bar** = mean metric across 5 splits. Bar colour encodes model family:  
-  - Blue `#1A5C8A` = Phase-1 unimodal (HE / BAL / CT / Clinical individually)  
-  - Dark plum `#2D1548` = Phase-1 weighted ensemble  
-  - Teal `#17685A` = Phase-2 non-temporal fusions (early, middle, late)  
-  - Plum `#452870` = SetMIL family (SetMIL, SetMIL-MT, SetMIL-MT-no-SAB)  
-  - Crimson `#952030` = Longitudinal family (LongMK-MT, LongMK-MT-no-ALiBi, LongMK-no-ALiBi)  
-- **Error bars** = ± std across 5 splits.  
-- **Hollow per-split dots** (white fill, coloured edge) = individual split values overlaid on bar, showing cross-split variability.  
-- **Amber border** `#BF7320` = best model (highest mean).  
-- **Dashed vertical line** at 0.5 = chance level.  
-- Y-axis is inverted so best model appears at top.
+#### 3c — Modality combination ablation
 
-Metric per task: BACC for ACR cls, C-index for all survival tasks.  
-Models ordered by their position in the CSV (P1 first, then P2 by family).
+| # | File | What | Status |
+|---|------|------|--------|
+| 7a | `benchmark/modality_combo_{task}.png` | Single mods + "All 4" for all models | ✅ |
+| 7b | `benchmark/modality_combo_all.png` | 4-task 2×2 combined | ✅ |
 
-P2 variant display names:  
+Script: `analysis/plot_modality_combo_ablation.py`.
+
+**What it shows:** For each model, performance with each single modality alone (HE, BAL, CT, Clinical) vs with all 4 combined. Reveals which modalities matter most per model and whether multi-modal fusion actually helps vs any single modality.
+
+**Data loading:** Same `unimodal_ablation` block for per-modality, `d["test"]` for the All-4 value. Longitudinal models: per-modality = all NaN (no ablation data), All-4 extracted from nested JSON using `longi_key` mapping (`clad_surv` → `"clad"`, `death_surv` → `"death"`). This is why longitudinal models only appear in the "All 4" column.
+
+**X-axis:** HE | BAL | CT | Clinical | All 4 (separator line before last column). Error bars and per-split dots shown. Same SHARED_MODEL_COLORS as main benchmark.
+
+---
+
+#### How made — benchmark figures (legacy v1)
+
+Script: `analysis/plot_benchmark_multimodal.py` (older version, single-colour per group, amber best-model border, different label names). Kept for reference only; v2 is the current version.
+
+P2 variant display names (v1):  
 `early` → "Early fusion", `middle` → "Middle fusion", `late` → "Late fusion",  
 `set_mil_no_sab` → "SetMIL", `set_mil_mt` → "SetMIL-MT", `set_mil_mt_no_sab` → "SetMIL-MT (no SAB)",  
-`longitudinal_mk_mt` → "LongMK-MT", `longitudinal_mk_mt_no_alibi` → "LongMK-MT (no ALiBi)",  
-`longitudinal_mk_no_alibi` → "LongMK (no ALiBi) ★"
+`longitudinal_mk_mt_no_alibi` → "LongMK-MT (no ALiBi)", `longitudinal_mk_no_alibi` → "LongMK (no ALiBi) ★"
 
 ---
 
@@ -305,33 +341,55 @@ TTE converted from days to years for display.
 
 ### 5 — Time weighting heatmaps (longitudinal model)
 
-| # | File | Task | Status |
-|---|------|------|--------|
-| 5a | `interpretability/acr_surv/L_global_weight_heatmap.png` | ACR surv | ✅ |
-| 5b | `interpretability/clad_surv/L_global_weight_heatmap.png` | CLAD | ✅ |
-| 5c | `interpretability/death_surv/L_global_weight_heatmap.png` | Death | ✅ |
+| # | File | Task | Note | Status |
+|---|------|------|------|--------|
+| 5a | `interpretability/acr_surv/L_global_weight_heatmap.png` | ACR surv | Single split (split 0) | ✅ |
+| 5b | `interpretability/clad_surv/L_global_weight_heatmap.png` | CLAD | Single split (split 0) | ✅ |
+| 5c | `interpretability/death_surv/L_global_weight_heatmap.png` | Death | Single split (split 0) | ✅ |
+| 5d | `interpretability/acr_surv/L_global_weight_heatmap_avg.png` | ACR surv | **5-split mean ± std** | ✅ |
+| 5e | `interpretability/clad_surv/L_global_weight_heatmap_avg.png` | CLAD | **5-split mean ± std** | ✅ |
+| 5f | `interpretability/death_surv/L_global_weight_heatmap_avg.png` | Death | **5-split mean ± std** | ✅ |
+| 5g | `interpretability/agg/L_global_weight_heatmap_avg_all.png` | All 3 tasks | **5-split combined** | ✅ |
 
 ---
 
 #### How made — time weighting heatmaps
 
-Script: `interpretability/interpret_longitudinal_mk.py` — GPU job, split 0 fold 0 only (single representative split; `L_global` is a model weight shared across all patients so split 0 is sufficient).
+**What `biopsy_weight_net` is**
 
-**What `L_global` is**  
-`longitudinal_mk_no_alibi` is a transformer-like model that processes a patient's ordered biopsy sequence. At each biopsy visit *i*, it attends to all previous visits *j ≤ i* using a learned temporal attention bias `L_global[i, j]`. Unlike ALiBi (Attention with Linear Biases, which fixes the bias as a function of distance), `L_global` is **fully learned** — the model discovers which temporal transitions matter most for each task, without assuming recency should always dominate.
+`longitudinal_mk_no_alibi` processes each patient's ordered biopsy sequence. Instead of the ALiBi fixed-distance bias, it uses a **fully learned 2-layer MLP** (`biopsy_weight_net`) per task: `Linear(2,16) → ReLU → Linear(16,1) → Sigmoid`. The input is `[current_biopsy_day, previous_biopsy_day]` (both in days post-transplant); the output is a scalar gate `w ∈ (0,1)` that multiplies the PMA seed vectors from the previous biopsy before ABMIL aggregation. This lets the model discover task-specific temporal weighting without imposing recency bias.
 
-`L_global` is a shared T×T matrix (same for all patients, all splits of the same model) where T = max number of biopsy visits. `L_global[i, j]` = the additive bias added to the raw attention score between biopsy *i* (query) and biopsy *j* (key) before softmax. High values → model attends more to that (i, j) transition.
+The MLP is a **model-level parameter**: all patients share the same `biopsy_weight_net` within one trained model. Its 2D output surface `w(curr, prev)` is the "time weighting heatmap".
 
-**Heatmap layout**  
-- Rows = current biopsy position *i* (increasing = later in post-transplant time)  
-- Columns = previous biopsy position *j*  
-- Colour = `L_global[i, j]` value; bright = strong temporal weight  
-- Diagonal = self-attention (current biopsy attending to itself)  
-- Off-diagonal entries show how far back the model looks: a bright off-diagonal means the model found early biopsies informative for predicting at later time points  
+**Heatmap layout**
+- X-axis = Previous biopsy date (days post-transplant, 0–2000)
+- Y-axis = Current biopsy date (days post-transplant, 0–2000)
+- Colour = `w(curr, prev) ∈ (0,1)`; red = high weight (this historical biopsy strongly informs current prediction), blue = low weight (suppressed)
+- Region above the diagonal (prev > curr = impossible) is masked to NaN (white)
+- Dashed diagonal = self-attention at zero lag
 
-**Biological read-out**  
-- ACR surv: early diagonal dominance → current biopsy most predictive of next rejection  
-- Death surv: broader off-diagonal weight → full history integrated to predict long-term survival
+**Biological read-out**
+- ACR surv: near-diagonal structure → recent biopsies more informative for rejection prediction
+- Death surv: broader off-diagonal weight → full history integrated for long-term mortality risk
+- CLAD surv: intermediate pattern — early-to-late transitions weighted
+
+**Single-split version** (5a–5c)
+
+Script: `interpretability/interpret_longitudinal_mk.py`, GPU job, split 0 fold 0 only. Evaluates `biopsy_weight_net[task]` on 100×100 grid, renders directly.
+
+**5-split averaged version** (5d–5g)
+
+Script: `analysis/plot_L_global_avg.py` via `analysis/submit_L_global_avg.sh` (CPU-only, ~2 min).  
+No GPU needed: extracts only the `biopsy_weight_net` weights from each checkpoint (4 parameters tensors totalling <1KB), reconstructs the MLP on CPU, evaluates on the same 100×100 grid for each of the 5 splits, then computes:
+- `mean_W[i,j] = mean over splits 0–4 of w(curr_i, prev_j)`
+- `std_W[i,j] = std over splits 0–4`
+
+Output per task: left panel = mean heatmap, right panel = std heatmap (orange; shows where weight varies across training runs).
+
+Low std = the temporal pattern is robust across different train/test splits; high std = sensitivity to which patients were in training.
+
+Checkpoint path: `results/mm_abmil_v8/phase2/split{s}_fold0/longitudinal_mk_no_alibi_{task}/model_longitudinal_mk_no_alibi_final.pt`  
+State-dict key prefix: `biopsy_weight_net.{net_key}.` where `net_key` = `"acr_surv"`, `"clad"`, or `"death"` for the three tasks.
 
 ---
 
@@ -422,13 +480,17 @@ figures/
 
 ---
 
-## Missing
+## Missing / Potential improvements
 
-| # | What | Priority |
-|---|------|----------|
-| 2t | A/B/D instance+seed panels for ACR surv + Death (longi model) | Medium |
-| 3h | Full benchmark table with per-split rows (s0–s4 + mean±std) | Low |
-| 6d | Unimodal ablation updated with longitudinal_mk models | Medium |
+| # | What | Priority | Notes |
+|---|------|----------|-------|
+| 2t | A/B/D instance+seed panels for ACR surv + Death (longi model) | Medium | Requires GPU interpret job for longitudinal model |
+| 3h | Numeric benchmark table (mean±std grid, all models × tasks) | Low | `plot_benchmark_table.py` exists but needs label sync with v2 |
+| 6d | Unimodal ablation for LongMK models | Medium | Needs re-inference with per-modality zeroing per split |
+| — | KM curves: add confidence bands (Greenwood formula) | Low | Currently plain step functions |
+| — | UMAP: add convex hull or 95%-ellipse per risk tertile on panel ① | Low | Visually clarifies group separation |
+| — | Cluster affinity: add permutation p-values per cluster | Low | Bootstrap n=1000, FDR-correct across clusters |
+| — | Benchmark: add Wilcoxon signed-rank vs linear baseline (annotate bars) | Low | Paired test across 5 splits, FDR-correct |
 
 ---
 
