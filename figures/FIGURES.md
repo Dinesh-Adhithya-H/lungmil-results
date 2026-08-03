@@ -53,10 +53,20 @@ Source files per task (keyed by best model):
 
 | Task | Model | Source `results_raw.npy` |
 |------|-------|-------------------------|
-| ACR cls | `set_mil_mt_no_sab` | `set_mil_mt_interp/all_splits_cls/results_raw.npy` (single file, all 5 splits) |
+| ACR cls | `set_mil_mt_no_sab` | `set_mil_mt_interp/all_splits_cls/results_raw.npy` (single file, all 5 splits pooled) |
 | CLAD surv | `set_mil_mt` | `set_mil_mt_interp/all_splits_clad_surv/results_raw.npy` |
 | ACR surv | `longitudinal_mk_no_alibi` | `longitudinal_mk_interp/longitudinal_mk_no_alibi_split{0-4}_fold0_acr_surv/results_raw.npy` (5 separate files, merged) |
 | Death surv | `longitudinal_mk_no_alibi` | `longitudinal_mk_interp/longitudinal_mk_no_alibi_split{0-4}_fold0_death_surv/results_raw.npy` |
+
+**Critical design: representations are always out-of-sample**
+
+Every patient representation in the UMAP was produced by a model that **never saw that patient during training**.
+
+- **SetMIL tasks:** `extract_all_splits()` in `interpret_set_mil_mt.py` loops over splits 0–4. For each split *s* it (1) loads the checkpoint trained on `split{s}_fold0` (trained on train+val of split *s*), (2) runs inference on `splits["test"]` — the held-out patients for that split only, (3) tags each record with `_split = s`. All 5 test sets are pooled → `all_splits_{task}/results_raw.npy`. Each patient (or biopsy) appears **exactly once**, always as a test sample. Total ≈ 4210 biopsy records across 5 splits.
+
+- **Longitudinal tasks:** 5 separate `results_raw.npy` files, one per `longitudinal_mk_no_alibi_split{s}_fold0_{task}/`. Each is produced by `interpret_longitudinal_mk.py --split {s} --fold 0`, which loads that split's model and evaluates on that split's test patients only. The UMAP script merges all 5 files. Total = 226 unique patients, each appearing once.
+
+- **Panel ⑦ CV split annotation** lets you visually verify this: each colour = one outer split. If representations were not out-of-sample, we would expect within-split clustering driven by model-specific bias — absence of such structure confirms proper evaluation.
 
 SetMIL npy structure: list of dicts with keys `final_reps` (dict by internal task name), `logits`, `label`, `present_mods`, `_split`.  
 Longitudinal npy structure: slim dicts with `rep_full` (dict by internal task name), `logits`, `patient_id`, `_split` — but **no patient-level outcome fields** (event, TTE are `None` because biopsy-level records don't carry them).
@@ -89,19 +99,20 @@ Cosine metric is used because the representations are attention-weighted sums of
 - Classification (ACR cls): score = sigmoid(logit) → P(ACR+) in [0, 1].  
 - Survival (ACR surv, CLAD, Death): score = percentile rank of logit across all test patients → [0, 1]. Percentile rank is used so the colour scale is uniform regardless of logit magnitude.
 
-**Step 6 — Seven panels (2×4 layout, last cell empty)**
+**Step 6 — Eight panels (2×4 layout, all cells filled)**
 
-| Panel | What is shown | Colourmap |
-|-------|--------------|-----------|
-| ① Risk score | Sigmoid(logit) for cls; percentile rank of logit for surv | RdBu_r (blue=low, red=high) |
-| ② Event / label | **For survival:** event indicator (1=event red, 0=censored blue). **For classification:** true class label (1=ACR+ red, 0=ACR- blue) | RdBu_r |
-| ③ Time to event | Continuous TTE in years (clipped at 95th percentile). **Survival:** `×` markers = events, `○` = censored overlaid. **Classification:** event/censored colour only | plasma_r (bright=short TTE = urgent) |
-| ④ Patient density | Hexbin density (gridsize=30) | YlOrRd |
-| ⑤ Modality combination | Each unique combination of present modalities (HE+BAL+CT, HE+Clinical, etc.) colour-coded; combos with <5 patients → "Other" (grey) | tab20 |
-| ⑥ KM top vs bottom tertile | Kaplan-Meier curves: top tertile (score ≥ 67th percentile) in red vs bottom tertile (score ≤ 33rd percentile) in blue | — |
-| ⑦ CV split annotation | Which of the 5 outer CV splits each patient came from | 5 fixed colours |
+| Panel | What is shown | Colourmap | Notes |
+|-------|--------------|-----------|-------|
+| ① Risk score | Sigmoid(logit) for cls; percentile rank of logit for surv | RdBu_r (blue=low risk, red=high risk) | Percentile rank used for survival so colour scale is uniform regardless of logit magnitude |
+| ② Event / label | **Survival:** event indicator (1=event, 0=censored). **Classification:** true class label (1=ACR+, 0=ACR-) | RdBu_r | Task-aware: surv uses event status, cls uses true label |
+| ③ Time to event | Continuous TTE in years (clipped at 95th pct). **Survival:** `×` = events, `○` = censored overlaid. **Classification:** event/censored colour only | plasma_r (bright=short TTE=urgent) | |
+| ④ Event density | Hexbin of event rate per hexagon: mean(event indicator) per hex cell, median-centred | RdBu_r (red=above-median event rate) | `reduce_C_function=np.mean` on event indicator; `vmin/vmax` set symmetrically around median of occupied hexagons; colorbar label shows median value |
+| ⑤ Modality combination | Unique modality combinations present per patient (HE+BAL+CT, HE+Clinical, etc.); combos with <5 patients → "Other" (grey) | tab20 | |
+| ⑥ KM: top vs bottom risk tertile | Kaplan-Meier curves: top tertile (score ≥ 67th pct) red vs bottom tertile (score ≤ 33rd pct) blue; middle excluded to maximise separation | — | Log-rank p computed inline |
+| ⑦ CV split annotation | Which of the 5 outer CV splits each patient came from; absence of within-split clustering confirms out-of-sample integrity | 5 fixed colours | |
+| ⑧ Avg TTE per hexagon | Mean TTE (years) per hex cell, median-centred | RdBu (blue=above-median TTE=safer, red=below-median=urgent) | Same `reduce_C_function=np.mean` approach; median-centred diverging scale so above/below average urgency is immediately visible |
 
-The combined 4-panel overview (`agg/unified_rep_umap_all_tasks.png`) shows only panel ① (risk score) for all 4 tasks side by side in a 2×2 grid.
+The combined 4-panel overview (`agg/unified_rep_umap_all_tasks.png`) shows only panel ① (risk score) for all 4 tasks in a 2×2 grid.
 
 ---
 
@@ -304,7 +315,7 @@ TTE converted from days to years for display.
 
 #### How made — time weighting heatmaps
 
-Script: `interpretability/interpret_longitudinal_mk.py` — GPU job.
+Script: `interpretability/interpret_longitudinal_mk.py` — GPU job, split 0 fold 0 only (single representative split; `L_global` is a model weight shared across all patients so split 0 is sufficient).
 
 **What `L_global` is**  
 `longitudinal_mk_no_alibi` is a transformer-like model that processes a patient's ordered biopsy sequence. At each biopsy visit *i*, it attends to all previous visits *j ≤ i* using a learned temporal attention bias `L_global[i, j]`. Unlike ALiBi (Attention with Linear Biases, which fixes the bias as a function of distance), `L_global` is **fully learned** — the model discovers which temporal transitions matter most for each task, without assuming recency should always dominate.
@@ -378,9 +389,16 @@ Coverage: early, late, middle, set_mil_mt, set_mil_mt_no_sab, set_mil_no_sab. Lo
 | 7d | `trajectories/panel_D_LT227.png` | LT227 | Treatment-responsive — logit drops after IS adjustment |
 | 7e | `trajectories/Fig7_patient_trajectories.png` | Combined | 4-panel composite |
 
-**How made:** `interpretability/interpret_longitudinal_mk.py` — GPU.  
-- Runs `longitudinal_mk_no_alibi` on 4 hand-selected patients from the Death survival test set.  
-- Plots log-hazard at each biopsy visit (x = days post-transplant) with clinical event annotations (ACR grade, CLAD, death/censoring). Red dashed line = logit > 1.5 (proposed surveillance threshold).
+---
+
+#### How made — patient trajectories
+
+Script: `interpretability/interpret_longitudinal_mk.py` — GPU, split 0 fold 0, `--task death_surv`.  
+- 4 patients hand-selected from the Death survival test set to represent archetypal clinical courses (stable survivor, early-onset non-survivor, late-escalating, treatment-responsive).  
+- For each patient the script runs a full forward pass, extracting the log-hazard score (model logit) at every biopsy visit.  
+- X-axis = days post-transplant. Y-axis = log-hazard (raw logit, not transformed). Clinical event annotations overlaid: ACR grade (triangle markers), CLAD onset (vertical line), death or censoring (end marker).  
+- Red dashed line = logit > 1.5, the proposed threshold for surveillance intensification (chosen empirically from the training cohort risk distribution).  
+- These are **in-sample** for split 0 fold 0 — they are illustrative case studies, not held-out validation. The selection criterion was clinical diversity, not model performance.
 
 ---
 
