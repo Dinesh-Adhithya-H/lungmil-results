@@ -67,17 +67,74 @@ All PNGs have matching PDFs (300 dpi, vector).
 | 2s | `interpretability/cluster_agg/clad_cluster_aff_agg.png` | CLAD | Named biological cluster affinity | ✅ |
 | **2t** | **A+B+D panels for acr_surv + death** | ACR surv, Death | Instance+seed UMAPs for longitudinal model | ❌ MISSING |
 
-**How made (2a–2g, 2e–2g):** `interpretability/interpret_set_mil_mt.py` — GPU job; loads SetMIL checkpoint, runs forward pass on test set, extracts PMA seed vectors and ABMIL attention weights, runs UMAP, plots all panels.  
+---
 
-**How made (2h–2k — Lpop_K_agg):** `interpretability/gen_cluster_aff_agg.py` reads `seed_attribution_data_*.json` from all 5 splits, averages Δα per seed, plots aggregated bar chart.  
+#### How made — 2a–2g (instance + seed panels, SetMIL tasks)
 
-**How made (2l–2o — multimod_seed_attribution):** `analysis/plot_multimod_seed_attribution.py` — CPU job (sbatch cpu_p, 8G).  
-- Reads `seed_attribution_data_{task}.json` from `longitudinal_mk_no_alibi_split{0-4}_fold0_{task}/` for all 5 splits.  
-- `seed_labels` field has modality prefix: `HE·s00 ... HE·s15, BAL·s00 ... BAL·s15, CT·s00 ... CT·s15` (48 total).  
-- `alpha_diff` = Δα per seed (mean_hi_risk − mean_lo_risk), precomputed by the interpretability pipeline.  
-- Groups seeds by modality prefix, averages Δα and std across splits, plots horizontal bars sorted by |Δα|. Red = high-risk associated, blue = low-risk associated.  
+Script: `interpretability/interpret_set_mil_mt.py` — GPU job (~30 min per task/split).  
+- Loads `set_mil_mt_no_sab` (ACR cls) or `set_mil_mt` (CLAD) checkpoint from the best split.  
+- Runs a forward pass on the full test set to collect: PMA seed vectors (K=16 per modality × 4 modalities = 64 seeds), ABMIL attention weights α per seed, final patient representations (256-dim ABMIL output).  
+- UMAP of all instance feature vectors (patches / cells / CT voxels) with cosine metric → instance space for panels A and B.  
+- Seeds overlaid in instance space at their B-cos attention-weighted centroid (panel B); seed size ∝ mean α across test patients.  
+- ABMIL α per seed averaged over patients → bar chart (panel D).  
+- Δα = mean α(predicted high-risk) − mean α(predicted low-risk) per seed → bar chart (panel K).
 
-**How made (2p–2s — cluster affinity):** `interpretability/gen_cluster_aff_agg.py` — maps PMA seed attention to named biological clusters (published BAL cell-type annotations + HE/CT unsupervised labels), aggregates over 5 splits.
+---
+
+#### How made — 2h–2k (Lpop_K_agg — aggregated seed attribution, all tasks)
+
+Script: `interpretability/gen_cluster_aff_agg.py` (also handles seed agg from `seed_attribution_data_*.json`).  
+Source files: `{variant}_split{0-4}_fold0_{task}/seed_attribution_data_{task}.json` — one JSON per split containing:  
+- `seed_labels`: list of 48 strings with modality prefix (`HE·s00 … HE·s15`, `BAL·s00 … BAL·s15`, `CT·s00 … CT·s15`).  
+- `alpha_diff`: list of 48 floats, Δα per seed (precomputed inside the interpretability pipeline as mean_hi − mean_lo).  
+
+Aggregation: stack Δα arrays across 5 splits → mean and std per seed. Plot as horizontal bar chart sorted by |Δα|, colour-coded by sign.
+
+---
+
+#### How made — 2l–2o (multimod_seed_attribution — per-modality Δα, all surv tasks)
+
+Script: `analysis/plot_multimod_seed_attribution.py` — CPU job (sbatch cpu_p, 8G, ~5 min).  
+Same source JSONs as Lpop_K_agg (`seed_attribution_data_{task}.json`, 5 splits).  
+Additional step: seeds are **grouped by modality prefix** (split on `·`), so HE·s00–HE·s15 form one panel, BAL·s00–BAL·s15 another, CT·s00–CT·s15 a third. Each modality panel shows its 16 seeds as horizontal bars sorted by |Δα|. Combined 3-task × 3-modality summary figure in `agg/multimod_seed_attribution_all_tasks.png`.
+
+---
+
+#### How made — 2p–2s (cluster_aff_agg — named biological cluster attribution)
+
+Script: `interpretability/gen_cluster_aff_agg.py` — CPU job.  
+Output: `figures/interpretability/cluster_agg/{task}_cluster_aff_agg.png` — one figure per task, one panel per modality (HE, BAL, CT), top 14 clusters by |Δ affinity|.
+
+**What is cluster affinity?**  
+Each instance (patch, cell, CT voxel) is assigned to a named biological cluster (unsupervised k-means or published annotation). For a given patient/biopsy, the **cluster affinity** for cluster *c* in modality *m* = sum of PMA B-cos attention weights over all instances in that cluster. It measures how strongly the model focuses on tissue type *c* when making its prediction.  
+Δ affinity = mean cluster affinity in the high-risk group − mean cluster affinity in the low-risk group.  
+Positive Δ → this cluster/tissue type is more attended to in high-risk patients → model uses it as a risk signal.
+
+**Data sources by model family:**
+
+*SetMIL (ACR cls, CLAD):*  
+- Source: `set_mil_mt_interp/{variant}_split{s}_fold0_{task}/paper_interp_data.json`  
+- This JSON has a `tasks.{task}.cluster_affinity.{modality}` dict containing `delta` (already computed as hi − lo mean affinity per cluster) and `cluster_names`.  
+- Loaded for splits 0–4, stacked into arrays, mean and std computed across splits.
+
+*Longitudinal (ACR surv, Death):*  
+- Source: `longitudinal_mk_interp/{variant}_split{s}_fold0_{task}/cluster_aff_data_{task}.json`  
+- This JSON has `cluster_aff.{modality}.hi` (list of per-patient affinity vectors, high-risk group), `.lo` (low-risk group), and `.names` (cluster names).  
+- Δ computed per split: `hi.mean(axis=0) − lo.mean(axis=0)`, then stacked across 5 splits → mean ± std.
+
+**HE cluster name mapping:**  
+HE cluster IDs are mapped to biological tissue names via `results/cluster_name_maps/HE_cluster_map.json`:  
+- "Alveolar with hemorrhage and inflammation" (red)  
+- "Alveolar with empty spaces" (orange)  
+- "Alveolar" (green)  
+- "Bronchial" (blue)  
+- "Lymphocytoplasmic inflammation" (purple)  
+- "Cartilage" (brown)  
+
+BAL cluster names = published cell-type annotations (e.g. macrophages, neutrophils, lymphocytes, TRAM).  
+CT cluster names = CT morphology-based labels.  
+
+**Plot layout:** one panel per modality. X-axis = Δ cluster affinity. Top 14 clusters by |Δ| shown. Red bars = enriched in high-risk; blue = enriched in low-risk. Error bars = std across 5 CV splits.
 
 ---
 
