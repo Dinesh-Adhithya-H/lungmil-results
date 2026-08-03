@@ -353,22 +353,25 @@ def make_unified_umap(task_key, cfg, out_dir):
     ax_tte.tick_params(labelsize=7); ax_tte.set_facecolor(BG)
     ax_tte.spines[["top","right"]].set_visible(False)
 
-    # 3 — event density hexbin (fraction of events per hex cell)
+    # 3 — event density hexbin (fraction of events per hex cell, median-centred)
     valid_ev = ~np.isnan(ev_raw)
     if valid_ev.sum() > 10:
         hx_ev = ax_ev_hex.hexbin(
             xy[valid_ev, 0], xy[valid_ev, 1],
             C=ev_raw[valid_ev],
             reduce_C_function=np.mean,
-            gridsize=30, cmap="RdBu_r", linewidths=0.2,
-            vmin=0, vmax=1)
+            gridsize=30, cmap="RdBu_r", linewidths=0.2)
+        hex_vals = hx_ev.get_array()
+        med_ev = np.nanmedian(hex_vals)
+        half = max(abs(float(hex_vals.max()) - med_ev), abs(med_ev - float(hex_vals.min())), 1e-6)
+        hx_ev.set_clim(med_ev - half, med_ev + half)
         cb_ev = fig.colorbar(hx_ev, ax=ax_ev_hex, pad=0.02, fraction=0.046, shrink=0.85)
-        cb_ev.set_label("Event rate", fontsize=7)
+        cb_ev.set_label(f"Event rate (med={med_ev:.2f})", fontsize=7)
         cb_ev.ax.tick_params(labelsize=7)
         if cfg["score_type"] == "surv":
-            ax_ev_hex.set_title("④ Event density\n(event rate per hexagon)", fontsize=9, fontweight="bold", pad=4)
+            ax_ev_hex.set_title("④ Event density\n(median-centred, red=above median)", fontsize=9, fontweight="bold", pad=4)
         else:
-            ax_ev_hex.set_title("④ Positive label density\n(positive rate per hexagon)", fontsize=9, fontweight="bold", pad=4)
+            ax_ev_hex.set_title("④ Positive label density\n(median-centred, red=above median)", fontsize=9, fontweight="bold", pad=4)
     else:
         ax_ev_hex.text(0.5, 0.5, "no event data", ha="center", va="center", transform=ax_ev_hex.transAxes)
     ax_ev_hex.set_xlabel("UMAP-1", fontsize=8); ax_ev_hex.set_ylabel("UMAP-2", fontsize=8)
@@ -419,7 +422,7 @@ def make_unified_umap(task_key, cfg, out_dir):
     ax_split.spines[["top","right"]].set_visible(False)
     ax_split.legend(fontsize=6.5, framealpha=0.8, ncol=2, markerscale=1.2)
 
-    # 7 — avg TTE hexbin
+    # 7 — avg TTE hexbin (median-centred)
     valid_th = ~np.isnan(tte_yrs)
     if valid_th.sum() > 10:
         tte_clipped_hex = np.clip(tte_yrs, 0, np.nanpercentile(tte_yrs[valid_th], 95))
@@ -427,13 +430,17 @@ def make_unified_umap(task_key, cfg, out_dir):
             xy[valid_th, 0], xy[valid_th, 1],
             C=tte_clipped_hex[valid_th],
             reduce_C_function=np.mean,
-            gridsize=30, cmap="plasma_r", linewidths=0.2)
+            gridsize=30, cmap="RdBu", linewidths=0.2)
+        tte_hex_vals = hx_tte.get_array()
+        med_tte = np.nanmedian(tte_hex_vals)
+        half_tte = max(abs(float(tte_hex_vals.max()) - med_tte), abs(med_tte - float(tte_hex_vals.min())), 1e-6)
+        hx_tte.set_clim(med_tte - half_tte, med_tte + half_tte)
         cb_th = fig.colorbar(hx_tte, ax=ax_tte_hex, pad=0.02, fraction=0.046, shrink=0.85)
-        cb_th.set_label("Mean TTE (years)", fontsize=7)
+        cb_th.set_label(f"Mean TTE yrs (med={med_tte:.1f})", fontsize=7)
         cb_th.ax.tick_params(labelsize=7)
     else:
         ax_tte_hex.text(0.5, 0.5, "no TTE data", ha="center", va="center", transform=ax_tte_hex.transAxes)
-    ax_tte_hex.set_title("⑧ Avg TTE per hexagon\n(bright=short TTE=urgent)", fontsize=9, fontweight="bold", pad=4)
+    ax_tte_hex.set_title("⑧ Avg TTE per hexagon\n(median-centred, blue=above median TTE)", fontsize=9, fontweight="bold", pad=4)
     ax_tte_hex.set_xlabel("UMAP-1", fontsize=8); ax_tte_hex.set_ylabel("UMAP-2", fontsize=8)
     ax_tte_hex.tick_params(labelsize=7); ax_tte_hex.set_facecolor("#f0ede8")
     ax_tte_hex.spines[["top","right"]].set_visible(False)
