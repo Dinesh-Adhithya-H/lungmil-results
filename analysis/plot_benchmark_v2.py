@@ -19,38 +19,55 @@ OUT_DIR = ROOT / "figures" / "benchmark"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Colours ───────────────────────────────────────────────────────────────────
-C_LIN   = "#888888"   # grey    — linear baselines
-C_P1    = "#1A5C8A"   # blue    — ABMIL unimodal
-C_FUS   = "#17685A"   # teal    — early/middle/late fusion
-C_SET   = "#452870"   # plum    — SetMIL family
-C_LMK   = "#952030"   # crimson — LongitudinalMK
 BG = "#FAF6F2"
+
+# Shared per-model colors — identical across benchmark, unimodal ablation, and combo plots
+SHARED_MODEL_COLORS = {
+    "Linear HE":          "#BDBDBD",
+    "Linear BAL":         "#9E9E9E",
+    "Linear CT":          "#757575",
+    "Linear Clinical":    "#616161",
+    "Linear All":         "#424242",
+    "ABMIL HE":           "#90CAF9",
+    "ABMIL BAL":          "#42A5F5",
+    "ABMIL CT":           "#1976D2",
+    "ABMIL Clinical":     "#1565C0",
+    "ABMIL All":          "#0D47A1",
+    "Early fusion":       "#80CBC4",
+    "Middle fusion":      "#26A69A",
+    "Late fusion":        "#00796B",
+    "SetMIL":             "#CE93D8",
+    "SetMIL-MT":          "#9C27B0",
+    "SetMIL-MT (no SAB)": "#6A1B9A",
+    "LongMK-MT":          "#EF9A9A",
+    "LongMK":             "#C62828",
+}
 
 # ── Fixed model order ─────────────────────────────────────────────────────────
 # Each entry: (display_label, colour, group_tag)
 MODEL_DEFS = [
-    ("Linear HE",             C_LIN,  "linear"),
-    ("Linear BAL",            C_LIN,  "linear"),
-    ("Linear CT",             C_LIN,  "linear"),
-    ("Linear Clinical",       C_LIN,  "linear"),
-    ("Linear All",            C_LIN,  "linear"),
+    ("Linear HE",             SHARED_MODEL_COLORS["Linear HE"],          "linear"),
+    ("Linear BAL",            SHARED_MODEL_COLORS["Linear BAL"],         "linear"),
+    ("Linear CT",             SHARED_MODEL_COLORS["Linear CT"],          "linear"),
+    ("Linear Clinical",       SHARED_MODEL_COLORS["Linear Clinical"],    "linear"),
+    ("Linear All",            SHARED_MODEL_COLORS["Linear All"],         "linear"),
     # separator
-    ("ABMIL HE",              C_P1,   "p1"),
-    ("ABMIL BAL",             C_P1,   "p1"),
-    ("ABMIL CT",              C_P1,   "p1"),
-    ("ABMIL Clinical",        C_P1,   "p1"),
-    ("ABMIL All",             C_P1,   "p1"),
+    ("ABMIL HE",              SHARED_MODEL_COLORS["ABMIL HE"],           "p1"),
+    ("ABMIL BAL",             SHARED_MODEL_COLORS["ABMIL BAL"],          "p1"),
+    ("ABMIL CT",              SHARED_MODEL_COLORS["ABMIL CT"],           "p1"),
+    ("ABMIL Clinical",        SHARED_MODEL_COLORS["ABMIL Clinical"],     "p1"),
+    ("ABMIL All",             SHARED_MODEL_COLORS["ABMIL All"],          "p1"),
     # separator
-    ("Early fusion",          C_FUS,  "fusion"),
-    ("Middle fusion",         C_FUS,  "fusion"),
-    ("Late fusion",           C_FUS,  "fusion"),
+    ("Early fusion",          SHARED_MODEL_COLORS["Early fusion"],       "fusion"),
+    ("Middle fusion",         SHARED_MODEL_COLORS["Middle fusion"],      "fusion"),
+    ("Late fusion",           SHARED_MODEL_COLORS["Late fusion"],        "fusion"),
     # separator
-    ("SetMIL",                C_SET,  "setmil"),
-    ("SetMIL-MT",             C_SET,  "setmil"),
-    ("SetMIL-MT (no SAB)",    C_SET,  "setmil"),
+    ("SetMIL",                SHARED_MODEL_COLORS["SetMIL"],             "setmil"),
+    ("SetMIL-MT",             SHARED_MODEL_COLORS["SetMIL-MT"],          "setmil"),
+    ("SetMIL-MT (no SAB)",    SHARED_MODEL_COLORS["SetMIL-MT (no SAB)"], "setmil"),
     # separator
-    ("LongMK-MT",             C_LMK,  "longi"),
-    ("LongMK",                C_LMK,  "longi"),
+    ("LongMK-MT",             SHARED_MODEL_COLORS["LongMK-MT"],          "longi"),
+    ("LongMK",                SHARED_MODEL_COLORS["LongMK"],             "longi"),
 ]
 MODEL_LABELS = [m[0] for m in MODEL_DEFS]
 MODEL_COLORS = {m[0]: m[1] for m in MODEL_DEFS}
@@ -210,13 +227,7 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
 
 
 def make_legend():
-    return [
-        Patch(facecolor=C_LIN, label="Linear baseline"),
-        Patch(facecolor=C_P1,  label="ABMIL"),
-        Patch(facecolor=C_FUS, label="Fusion (early/mid/late)"),
-        Patch(facecolor=C_SET, label="SetMIL family"),
-        Patch(facecolor=C_LMK, label="LongitudinalMK"),
-    ]
+    return [Patch(facecolor=col, label=lbl) for lbl, col, _ in MODEL_DEFS]
 
 
 # ── Per-task figures ──────────────────────────────────────────────────────────
@@ -224,8 +235,8 @@ for task_key in TASKS:
     fig, ax = plt.subplots(figsize=(8, 10), facecolor=BG)
     fig.patch.set_facecolor(BG)
     plot_task(ax, task_key, fig)
-    ax.legend(handles=make_legend(), fontsize=7, loc="lower right",
-              framealpha=0.9, edgecolor="#ccc")
+    ax.legend(handles=make_legend(), fontsize=6.5, loc="lower right",
+              ncol=2, framealpha=0.9, edgecolor="#ccc")
     fig.tight_layout()
     for ext in ("png", "pdf"):
         fig.savefig(OUT_DIR / f"benchmark_v2_{task_key}.{ext}", dpi=180, bbox_inches="tight", facecolor=BG)
@@ -239,7 +250,7 @@ fig.suptitle("Benchmark — all models, all tasks (fixed model order, linear bas
              fontsize=12, fontweight="bold")
 for ax, task_key in zip(axes, TASKS):
     plot_task(ax, task_key, fig, show_ylabel=False)
-fig.legend(handles=make_legend(), loc="lower center", ncol=5, fontsize=8,
+fig.legend(handles=make_legend(), loc="lower center", ncol=6, fontsize=7,
            bbox_to_anchor=(0.5, -0.02), frameon=False)
 fig.tight_layout()
 for ext in ("png", "pdf"):

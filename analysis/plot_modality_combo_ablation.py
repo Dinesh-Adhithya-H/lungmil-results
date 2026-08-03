@@ -22,14 +22,40 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 BG = "#FAF6F2"
 
+# Shared per-model colors — identical across benchmark, unimodal ablation, and combo plots
+SHARED_MODEL_COLORS = {
+    "Linear HE":          "#BDBDBD",
+    "Linear BAL":         "#9E9E9E",
+    "Linear CT":          "#757575",
+    "Linear Clinical":    "#616161",
+    "Linear All":         "#424242",
+    "ABMIL HE":           "#90CAF9",
+    "ABMIL BAL":          "#42A5F5",
+    "ABMIL CT":           "#1976D2",
+    "ABMIL Clinical":     "#1565C0",
+    "ABMIL All":          "#0D47A1",
+    "Early fusion":       "#80CBC4",
+    "Middle fusion":      "#26A69A",
+    "Late fusion":        "#00796B",
+    "SetMIL":             "#CE93D8",
+    "SetMIL-MT":          "#9C27B0",
+    "SetMIL-MT (no SAB)": "#6A1B9A",
+    "LongMK-MT":          "#EF9A9A",
+    "LongMK":             "#C62828",
+}
+
 TASK_CFG = {
     "acr_cls":   {"suffix": "cls",       "metric": "bacc",    "label": "ACR classification (BACC)",
+                  "longi_key": "acr_cls",
                   "best_variant": "set_mil_mt_no_sab", "best_label": "SetMIL-MT (no SAB)"},
     "acr_surv":  {"suffix": "acr_surv",  "metric": "c_index", "label": "ACR survival (C-index)",
+                  "longi_key": "acr_surv",
                   "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK"},
     "clad_surv": {"suffix": "clad_surv", "metric": "c_index", "label": "CLAD survival (C-index)",
+                  "longi_key": "clad",
                   "best_variant": "set_mil_mt", "best_label": "SetMIL-MT"},
     "death_surv":{"suffix": "death_surv","metric": "c_index", "label": "Death survival (C-index)",
+                  "longi_key": "death",
                   "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK"},
 }
 
@@ -74,9 +100,13 @@ COMBO_ORDER = (
 )
 
 
-def load_unimodal_per_split(variant, suffix, metric):
+LONGI_VARIANTS = {"longitudinal_mk_mt_no_alibi", "longitudinal_mk_no_alibi"}
+
+
+def load_unimodal_per_split(variant, suffix, metric, longi_key=None):
     per_mod = {m: [] for m in MOD_ORDER}
     all_vals = []
+    is_longi = variant in LONGI_VARIANTS
     for split in range(5):
         path = METRICS / f"metrics_split{split}_fold0_{variant}_{suffix}.json"
         if not path.exists():
@@ -87,15 +117,19 @@ def load_unimodal_per_split(variant, suffix, metric):
             for mod in MOD_ORDER:
                 v = ua.get(mod, {}).get(metric)
                 per_mod[mod].append(float(v) if v is not None else np.nan)
-            # All-modality from test
+            # All-modality performance from test
             test = d.get("test", {})
-            v_all = test.get(metric)
-            if v_all is None and isinstance(test, dict):
-                for k, sub in test.items():
-                    if isinstance(sub, dict):
-                        v_all = sub.get(metric)
-                        if v_all is not None:
-                            break
+            if is_longi and longi_key:
+                # longi files have nested test: {"acr_surv": {"c_index": ...}, ...}
+                v_all = test.get(longi_key, {}).get(metric)
+            else:
+                v_all = test.get(metric)
+                if v_all is None:
+                    for sub in test.values():
+                        if isinstance(sub, dict):
+                            v_all = sub.get(metric)
+                            if v_all is not None:
+                                break
             all_vals.append(float(v_all) if v_all is not None else np.nan)
         except Exception:
             continue
@@ -104,7 +138,6 @@ def load_unimodal_per_split(variant, suffix, metric):
 
 def plot_combo_for_task(task_key, cfg):
     n_variants = len(ALL_VARIANTS)
-    model_colors = plt.cm.tab20(np.linspace(0, 1, n_variants))
     variant_list = list(ALL_VARIANTS.items())
 
     fig, ax = plt.subplots(figsize=(14, 5), facecolor=BG)
@@ -119,8 +152,9 @@ def plot_combo_for_task(task_key, cfg):
 
     for vi, (variant, disp) in enumerate(variant_list):
         offset = (vi - n_variants / 2 + 0.5) * bar_w
-        per_mod, all_vals = load_unimodal_per_split(variant, cfg["suffix"], cfg["metric"])
-        col = model_colors[vi]
+        per_mod, all_vals = load_unimodal_per_split(variant, cfg["suffix"], cfg["metric"],
+                                                     longi_key=cfg.get("longi_key"))
+        col = SHARED_MODEL_COLORS.get(disp, "#888888")
 
         for xi, mod in enumerate(MOD_ORDER):
             vals = per_mod[mod]
@@ -164,8 +198,8 @@ def plot_combo_for_task(task_key, cfg):
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.tick_params(labelsize=8)
 
-    legend_handles = [Patch(facecolor=model_colors[i], label=disp)
-                      for i, (_, disp) in enumerate(variant_list)]
+    legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(disp, "#888"), label=disp)
+                      for _, disp in variant_list]
     ax.legend(handles=legend_handles, fontsize=6.5, ncol=3, framealpha=0.85,
               loc="lower right", edgecolor="#ccc")
 
@@ -181,18 +215,18 @@ def plot_combined():
     fig.patch.set_facecolor(BG)
     fig.suptitle("Modality contribution (unimodal → all) — all models, all tasks",
                  fontsize=12, fontweight="bold")
+    n_variants = len(ALL_VARIANTS)
+    bar_w = 0.7 / n_variants
     for ax, (task_key, cfg) in zip(axes.flat, TASK_CFG.items()):
         ax.set_facecolor(BG)
-        n_variants = len(ALL_VARIANTS)
-        model_colors = plt.cm.tab20(np.linspace(0, 1, n_variants))
-        bar_w = 0.7 / n_variants
         x_labels = [COMBO_LABELS[c] for c in SINGLE_MODS] + ["All 4"]
         x = np.arange(len(x_labels))
 
         for vi, (variant, disp) in enumerate(ALL_VARIANTS.items()):
             offset = (vi - n_variants / 2 + 0.5) * bar_w
-            per_mod, all_vals = load_unimodal_per_split(variant, cfg["suffix"], cfg["metric"])
-            col = model_colors[vi]
+            per_mod, all_vals = load_unimodal_per_split(variant, cfg["suffix"], cfg["metric"],
+                                                         longi_key=cfg.get("longi_key"))
+            col = SHARED_MODEL_COLORS.get(disp, "#888888")
             for xi, mod in enumerate(MOD_ORDER):
                 vals = per_mod[mod]
                 valid = [v for v in vals if not np.isnan(v)]
@@ -212,8 +246,8 @@ def plot_combined():
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
         ax.tick_params(labelsize=7)
 
-    legend_handles = [Patch(facecolor=plt.cm.tab20(i / len(ALL_VARIANTS)), label=disp)
-                      for i, (_, disp) in enumerate(ALL_VARIANTS.items())]
+    legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(disp, "#888"), label=disp)
+                      for _, disp in ALL_VARIANTS.items()]
     fig.legend(handles=legend_handles, loc="lower center", ncol=5, fontsize=7,
                bbox_to_anchor=(0.5, -0.04), frameon=False)
     fig.tight_layout()

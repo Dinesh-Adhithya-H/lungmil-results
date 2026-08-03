@@ -23,6 +23,29 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 BG = "#FAF6F2"
 
+# Shared per-model colors — identical across benchmark, unimodal ablation, and combo plots
+SHARED_MODEL_COLORS = {
+    "Linear HE":          "#BDBDBD",
+    "Linear BAL":         "#9E9E9E",
+    "Linear CT":          "#757575",
+    "Linear Clinical":    "#616161",
+    "Linear All":         "#424242",
+    "ABMIL HE":           "#90CAF9",
+    "ABMIL BAL":          "#42A5F5",
+    "ABMIL CT":           "#1976D2",
+    "ABMIL Clinical":     "#1565C0",
+    "ABMIL All":          "#0D47A1",
+    "Early fusion":       "#80CBC4",
+    "Middle fusion":      "#26A69A",
+    "Late fusion":        "#00796B",
+    "SetMIL":             "#CE93D8",
+    "SetMIL-MT":          "#9C27B0",
+    "SetMIL-MT (no SAB)": "#6A1B9A",
+    "LongMK-MT":          "#EF9A9A",
+    "LongMK":             "#C62828",
+    "Linear":             "#9E9E9E",  # aggregated linear (unimodal ablation only)
+}
+
 # Fixed model order (same as benchmark)
 MODEL_ORDER = [
     "Linear",
@@ -114,8 +137,6 @@ def plot_task_bars(task_key, cfg):
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
 
-    model_colors = plt.cm.tab20(np.linspace(0, 1, n_models))
-
     for mi, mdl in enumerate(MODEL_ORDER):
         offset = (mi - n_models / 2 + 0.5) * bar_w
         for mi2, mod in enumerate(MOD_ORDER):
@@ -125,7 +146,7 @@ def plot_task_bars(task_key, cfg):
                 d = dl_data.get(mdl, {}).get(mod)
             if d is None:
                 continue
-            col = model_colors[mi]
+            col = SHARED_MODEL_COLORS.get(mdl, "#888888")
             ax.bar(x[mi2] + offset, d["mean"], width=bar_w * 0.85,
                    color=col, alpha=0.85, zorder=2)
             if d["std"] > 0:
@@ -145,7 +166,7 @@ def plot_task_bars(task_key, cfg):
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.tick_params(labelsize=8)
 
-    legend_handles = [Patch(facecolor=model_colors[i], label=m) for i, m in enumerate(MODEL_ORDER)]
+    legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(m, "#888"), label=m) for m in MODEL_ORDER]
     ax.legend(handles=legend_handles, fontsize=6.5, ncol=2, framealpha=0.85,
               loc="lower right", edgecolor="#ccc")
 
@@ -202,7 +223,6 @@ def plot_combined():
     fig.suptitle("Unimodal ablation — all models, all tasks", fontsize=12, fontweight="bold")
 
     n_models = len(MODEL_ORDER)
-    model_colors = plt.cm.tab20(np.linspace(0, 1, n_models))
     bar_w = 0.7 / n_models
     x = np.arange(len(MOD_ORDER))
 
@@ -216,7 +236,7 @@ def plot_combined():
                 d = lin_data.get(mod) if mdl == "Linear" else dl_data.get(mdl, {}).get(mod)
                 if d is None:
                     continue
-                col = model_colors[mi]
+                col = SHARED_MODEL_COLORS.get(mdl, "#888888")
                 ax.bar(x[mi2] + offset, d["mean"], width=bar_w * 0.85, color=col, alpha=0.85, zorder=2)
                 if d["std"] > 0:
                     ax.errorbar(x[mi2] + offset, d["mean"], yerr=d["std"],
@@ -229,7 +249,7 @@ def plot_combined():
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
         ax.tick_params(labelsize=7)
 
-    legend_handles = [Patch(facecolor=model_colors[i], label=m) for i, m in enumerate(MODEL_ORDER)]
+    legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(m, "#888"), label=m) for m in MODEL_ORDER]
     fig.legend(handles=legend_handles, loc="lower center", ncol=5, fontsize=7,
                bbox_to_anchor=(0.5, -0.06), frameon=False)
     fig.tight_layout()
