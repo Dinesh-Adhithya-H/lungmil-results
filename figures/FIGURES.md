@@ -35,10 +35,73 @@ All PNGs have matching PDFs (300 dpi, vector).
 | 1d | `interpretability/death_surv/unified_rep_umap_death_surv.png` | Death | ✅ |
 | 1e | `interpretability/agg/unified_rep_umap_all_tasks.png` | All 4 (2×2 grid) | ✅ |
 
-**How made:** `analysis/plot_unified_rep_umap.py` via `analysis/submit_unified_rep_umap.sh` (cpu_p, 350G).  
-- Loads `results_raw.npy` from the best model per task (SetMIL: splits CSV join for labels; Longi: patient lookup from splits CSV because biopsy records don't carry patient-level outcomes).  
-- UMAP with cosine metric, n_neighbors=30, min_dist=0.3, fit on 256-dim ABMIL output representations.  
-- 2×4 layout per task: ① Risk score (plasma), ② Event indicator (tab10), ③ TTE continuous (plasma_r), ④ Modality combo (tab20), ⑤ Hexbin density, ⑥ Hexbin risk score, ⑦ Hexbin TTE, ⑧ CV split.
+---
+
+#### How made — unified patient representation UMAPs
+
+Script: `analysis/plot_unified_rep_umap.py` via `analysis/submit_unified_rep_umap.sh` (cpu_p, 350G, 8 CPUs).  
+350G is required because the SetMIL `results_raw.npy` file (covering all 4210 biopsies across all splits) is ~40GB and must be loaded into memory.
+
+**Step 1 — What the representation is**
+
+The 256-dimensional vector fed into UMAP is the ABMIL output representation — the weighted sum of PMA seed vectors after attention pooling.  
+Specifically, each patient/biopsy's representation = Σ_k (α_k × seed_k), where α_k is the learned ABMIL attention weight for seed k and seed_k is the 256-dim PMA prototype vector. This is the same vector the final classification/survival head reads from, so it is the most task-informative summary of the patient's multimodal data.
+
+**Step 2 — Loading representations**
+
+Source files per task (keyed by best model):
+
+| Task | Model | Source `results_raw.npy` |
+|------|-------|-------------------------|
+| ACR cls | `set_mil_mt_no_sab` | `set_mil_mt_interp/all_splits_cls/results_raw.npy` (single file, all 5 splits) |
+| CLAD surv | `set_mil_mt` | `set_mil_mt_interp/all_splits_clad_surv/results_raw.npy` |
+| ACR surv | `longitudinal_mk_no_alibi` | `longitudinal_mk_interp/longitudinal_mk_no_alibi_split{0-4}_fold0_acr_surv/results_raw.npy` (5 separate files, merged) |
+| Death surv | `longitudinal_mk_no_alibi` | `longitudinal_mk_interp/longitudinal_mk_no_alibi_split{0-4}_fold0_death_surv/results_raw.npy` |
+
+SetMIL npy structure: list of dicts with keys `final_reps` (dict by internal task name), `logits`, `label`, `present_mods`, `_split`.  
+Longitudinal npy structure: slim dicts with `rep_full` (dict by internal task name), `logits`, `patient_id`, `_split` — but **no patient-level outcome fields** (event, TTE are `None` because biopsy-level records don't carry them).
+
+**Step 3 — Patient outcome enrichment (longitudinal models)**
+
+Because `longitudinal_mk_no_alibi` npy records have `event_*` and `tte_*` as `None`, outcomes are joined from the splits CSV (`multimodal_splits_nested_cv.csv`) by `patient_id`:  
+```
+lookup[patient_id] = {
+    event_acr, tte_acr, event_clad, tte_clad, event_death, tte_death,
+    present_mods (derived from has_HE / has_BAL / has_CT / has_Clinical columns)
+}
+```
+For each record, `_get(key)` first checks the npy dict, then falls back to the lookup. This ensures all panels have valid outcome data even for longitudinal patients.
+
+**Internal representation key mapping** (critical — must match `TASK_GROUPS` in `builders.py`):  
+- `clad_surv` → `rep_key = "clad"` (SetMIL head registered as "clad" not "clad_surv")  
+- `death_surv` → `rep_key = "death"` (longitudinal head registered as "death")  
+- `acr_surv` → `rep_key = "acr_surv"` (default TASK_GROUP key)  
+- `acr_cls` → `rep_key = "acr_cls"`
+
+**Step 4 — UMAP embedding**
+
+Representations are StandardScaler-normalised (zero mean, unit variance per dimension) before embedding.  
+UMAP parameters: `n_neighbors=min(15, N-1)`, `min_dist=0.1`, `metric="cosine"`, `random_state=42`.  
+Cosine metric is used because the representations are attention-weighted sums of L2-normalised seed vectors, so direction matters more than magnitude.
+
+**Step 5 — Risk score computation**
+
+- Classification (ACR cls): score = sigmoid(logit) → P(ACR+) in [0, 1].  
+- Survival (ACR surv, CLAD, Death): score = percentile rank of logit across all test patients → [0, 1]. Percentile rank is used so the colour scale is uniform regardless of logit magnitude.
+
+**Step 6 — Seven panels (2×4 layout, last cell empty)**
+
+| Panel | What is shown | Colourmap |
+|-------|--------------|-----------|
+| ① Risk score | Sigmoid(logit) for cls; percentile rank of logit for surv | RdBu_r (blue=low, red=high) |
+| ② Event / label | **For survival:** event indicator (1=event red, 0=censored blue). **For classification:** true class label (1=ACR+ red, 0=ACR- blue) | RdBu_r |
+| ③ Time to event | Continuous TTE in years (clipped at 95th percentile). **Survival:** `×` markers = events, `○` = censored overlaid. **Classification:** event/censored colour only | plasma_r (bright=short TTE = urgent) |
+| ④ Patient density | Hexbin density (gridsize=30) | YlOrRd |
+| ⑤ Modality combination | Each unique combination of present modalities (HE+BAL+CT, HE+Clinical, etc.) colour-coded; combos with <5 patients → "Other" (grey) | tab20 |
+| ⑥ KM top vs bottom tertile | Kaplan-Meier curves: top tertile (score ≥ 67th percentile) in red vs bottom tertile (score ≤ 33rd percentile) in blue | — |
+| ⑦ CV split annotation | Which of the 5 outer CV splits each patient came from | 5 fixed colours |
+
+The combined 4-panel overview (`agg/unified_rep_umap_all_tasks.png`) shows only panel ① (risk score) for all 4 tasks side by side in a 2×2 grid.
 
 ---
 
@@ -148,11 +211,47 @@ CT cluster names = CT morphology-based labels.
 | 3d | `benchmark/benchmark_multimodal_death_surv.png` | All models vs Death | ✅ |
 | 3e | `benchmark/benchmark_multimodal_all.png` | 4-panel combined | ✅ |
 
-**How made:** `analysis/plot_benchmark_multimodal.py` (CPU, <5 min).  
-- Reads per-split CSVs from `results/predictions/comparison_{task}.csv` (rebuilt by `analysis/rebuild_benchmark_csvs.py` which parses raw JSON metric files `metrics_split{s}_fold0_{variant}_{task}.json`).  
-- Longi model metrics needed nested JSON lookup: `d["test"]["acr_surv"]["c_index"]` not flat `d["test"]["c_index"]`.  
-- Horizontal bar chart: mean ± std, hollow per-split dots, amber border on best model.  
-- Models grouped: P1 unimodal, P1 ensemble, P2 non-temporal fusions (early/middle/late), P2 SetMIL variants, P2 longitudinal_mk variants.
+---
+
+#### How made — benchmark figures
+
+**Step 1 — Raw metric extraction** (`analysis/rebuild_benchmark_csvs.py`)
+
+Every training run writes a metrics JSON at `results/mm_abmil_v8/metrics_split{s}_fold0_{variant}_{task}.json`.  
+The script iterates over all 9 P2 variants × 4 tasks × 5 splits = 180 JSON files and reads the test metric:
+
+- Most models use a **flat structure**: `d["test"]["c_index"]` or `d["test"]["bacc"]`  
+- Longitudinal multi-task models use a **nested structure**: `d["test"]["acr_surv"]["c_index"]` (because the model outputs multiple task heads simultaneously, each stored under its internal task name).  
+  Internal nested keys: `acr_cls` → `"acr_cls"`, `acr_surv` → `"acr_surv"`, `clad_surv` → `"clad"`, `death_surv` → `"death"`.
+
+Per-split values are assembled into 4 CSVs (`results/predictions/comparison_{task}.csv`) with columns `model, s0, s1, s2, s3, s4, mean, std`.  
+P1 unimodal baseline rows (pre-existing) are kept as-is at the top.
+
+**Step 2 — Bar+strip plots** (`analysis/plot_benchmark_multimodal.py`)
+
+One horizontal bar chart per task, plus a 4-panel combined figure.
+
+Layout per panel:  
+- **Bar** = mean metric across 5 splits. Bar colour encodes model family:  
+  - Blue `#1A5C8A` = Phase-1 unimodal (HE / BAL / CT / Clinical individually)  
+  - Dark plum `#2D1548` = Phase-1 weighted ensemble  
+  - Teal `#17685A` = Phase-2 non-temporal fusions (early, middle, late)  
+  - Plum `#452870` = SetMIL family (SetMIL, SetMIL-MT, SetMIL-MT-no-SAB)  
+  - Crimson `#952030` = Longitudinal family (LongMK-MT, LongMK-MT-no-ALiBi, LongMK-no-ALiBi)  
+- **Error bars** = ± std across 5 splits.  
+- **Hollow per-split dots** (white fill, coloured edge) = individual split values overlaid on bar, showing cross-split variability.  
+- **Amber border** `#BF7320` = best model (highest mean).  
+- **Dashed vertical line** at 0.5 = chance level.  
+- Y-axis is inverted so best model appears at top.
+
+Metric per task: BACC for ACR cls, C-index for all survival tasks.  
+Models ordered by their position in the CSV (P1 first, then P2 by family).
+
+P2 variant display names:  
+`early` → "Early fusion", `middle` → "Middle fusion", `late` → "Late fusion",  
+`set_mil_no_sab` → "SetMIL", `set_mil_mt` → "SetMIL-MT", `set_mil_mt_no_sab` → "SetMIL-MT (no SAB)",  
+`longitudinal_mk_mt` → "LongMK-MT", `longitudinal_mk_mt_no_alibi` → "LongMK-MT (no ALiBi)",  
+`longitudinal_mk_no_alibi` → "LongMK (no ALiBi) ★"
 
 ---
 
@@ -166,12 +265,30 @@ CT cluster names = CT morphology-based labels.
 | 4d | `km_curves/km_death_surv.png` | Death surv KM | ✅ |
 | 4e | `km_curves/km_all_tasks.png` | 4-panel combined | ✅ |
 
-**How made:** `analysis/plot_km_from_model.py` via `analysis/submit_km_from_model.sh` (cpu_p, 350G, 1h).  
-- Loads model logit scores from `results_raw.npy` (best model per task; SetMIL npy is 40GB, hence 350G mem).  
-- Joins patient-level outcomes (event indicator, TTE) from splits CSV `/home/aih/dinesh.haridoss/chicago/plots/multimodal_splits_nested_cv.csv` by `patient_id`.  
-- Stratifies into top-vs-bottom risk tertile by predicted logit.  
-- KM curves with 95% CI; log-rank p-value (lifelines; scipy chi2 fallback).  
-- Output: per-task PNG/PDF + 4-panel combined figure.
+---
+
+#### How made — KM curves
+
+Script: `analysis/plot_km_from_model.py` via `analysis/submit_km_from_model.sh` (cpu_p, 350G, 1h).  
+350G required because SetMIL `results_raw.npy` is ~40GB.
+
+**Step 1 — Load predicted logits**  
+Same `results_raw.npy` source as the UMAP script (best model per task). For each record, `logits[rep_key]` is extracted as the model's raw output before any sigmoid or softmax. Higher logit = higher predicted risk.
+
+**Step 2 — Join outcomes**  
+Patient-level event indicator and TTE joined from the splits CSV by `patient_id` (same enrichment logic as the UMAP script). For longitudinal models, the npy doesn't store outcomes — they come from the CSV lookup.
+
+**Step 3 — Risk stratification**  
+Patients ranked by predicted logit → split into tertiles (33rd and 67th percentile cutoffs).  
+- Top tertile (logit ≥ 67th pct) = high-risk group  
+- Bottom tertile (logit ≤ 33rd pct) = low-risk group  
+Middle tertile excluded to maximise separation between the curves.
+
+**Step 4 — KM curves**  
+Kaplan-Meier step function computed manually (no external library needed for basic KM).  
+Log-rank test p-value computed via `lifelines.statistics.logrank_test`; falls back to scipy chi-squared if lifelines is unavailable.  
+Plot: high-risk in red, low-risk in blue, p-value annotated on the figure.  
+TTE converted from days to years for display.
 
 ---
 
@@ -183,11 +300,27 @@ CT cluster names = CT morphology-based labels.
 | 5b | `interpretability/clad_surv/L_global_weight_heatmap.png` | CLAD | ✅ |
 | 5c | `interpretability/death_surv/L_global_weight_heatmap.png` | Death | ✅ |
 
-**How made:** `interpretability/interpret_longitudinal_mk.py` — GPU job.  
-- Reads the learned `L_global` temporal weight matrix from `longitudinal_mk_no_alibi` checkpoint (split 0, fold 0).  
-- `L_global` is a T×T matrix where `L[i,j]` = weight applied to biopsy j when predicting at time i.  
-- Plotted as heatmap: rows = current biopsy date (post-Tx), cols = previous biopsy; colour = weight magnitude.  
-- Diagonal = self-weight (recency=0); off-diagonal = how much history is integrated.
+---
+
+#### How made — time weighting heatmaps
+
+Script: `interpretability/interpret_longitudinal_mk.py` — GPU job.
+
+**What `L_global` is**  
+`longitudinal_mk_no_alibi` is a transformer-like model that processes a patient's ordered biopsy sequence. At each biopsy visit *i*, it attends to all previous visits *j ≤ i* using a learned temporal attention bias `L_global[i, j]`. Unlike ALiBi (Attention with Linear Biases, which fixes the bias as a function of distance), `L_global` is **fully learned** — the model discovers which temporal transitions matter most for each task, without assuming recency should always dominate.
+
+`L_global` is a shared T×T matrix (same for all patients, all splits of the same model) where T = max number of biopsy visits. `L_global[i, j]` = the additive bias added to the raw attention score between biopsy *i* (query) and biopsy *j* (key) before softmax. High values → model attends more to that (i, j) transition.
+
+**Heatmap layout**  
+- Rows = current biopsy position *i* (increasing = later in post-transplant time)  
+- Columns = previous biopsy position *j*  
+- Colour = `L_global[i, j]` value; bright = strong temporal weight  
+- Diagonal = self-attention (current biopsy attending to itself)  
+- Off-diagonal entries show how far back the model looks: a bright off-diagonal means the model found early biopsies informative for predicting at later time points  
+
+**Biological read-out**  
+- ACR surv: early diagonal dominance → current biopsy most predictive of next rejection  
+- Death surv: broader off-diagonal weight → full history integrated to predict long-term survival
 
 ---
 
@@ -199,10 +332,39 @@ CT cluster names = CT morphology-based labels.
 | 6b | `interpretability/unimodal_ablation/unimodal_ablation_heatmap.png` | Heatmap: model×task rows, modality cols | ✅ |
 | 6c | `interpretability/unimodal_ablation/unimodal_ablation_summary.csv` | Mean ± std across 5 splits | ✅ |
 
-**How made:** `interpretability/unimodal_ablation_summary.py` — CPU.  
-- Reads ablation results from `results_raw.npy` files where only one modality was active (others zeroed at the feature level).  
-- Groups by `variant × task × modality`, aggregates across 5 splits.  
-- Coverage: early, late, middle, set_mil_mt, set_mil_mt_no_sab, set_mil_no_sab. Longitudinal models not yet included.
+---
+
+#### How made — unimodal ablation figures
+
+Script: `interpretability/unimodal_ablation_summary.py`
+
+**What "unimodal ablation" means**  
+During training and evaluation, each model is also evaluated with only one modality active at a time. The other modalities are **zeroed at the feature level** (embedding vectors set to zero before PMA/fusion), not simply dropped. This means the model architecture is identical — the same trained weights — but it can only use signal from one modality. The resulting metric shows how much each modality alone contributes when the model has been trained on all four.
+
+**Data source**  
+Every training run writes `results/mm_abmil_v8/phase2/split{s}_fold0/{variant}_{task}/metrics_{variant}_{task}_final.json`.  
+This JSON has a `unimodal_ablation` block structured as:  
+```json
+"unimodal_ablation": {
+  "HE": {"bacc": 0.58, "c_index": 0.61},
+  "BAL": {"bacc": 0.55, "c_index": 0.59},
+  ...
+}
+```
+The script reads this block for all variants × tasks × splits.
+
+**Aggregation**  
+Rows collected: `(split, variant, task, modality, metric_value)`.  
+Grouped by `variant × task × modality`, aggregated across 5 splits → mean ± std.  
+Saved to `unimodal_ablation_summary.csv` (one row per group) and `unimodal_ablation_raw.csv` (per-split).
+
+**Bar plot (6a)**  
+Grouped bar chart per task. X-axis = metric value. Each group = one model variant. Bars within a group = modalities (HE red, BAL blue, CT green, Clinical purple). Allows reading: "for SetMIL-MT on Death survival, which single modality performs best?"
+
+**Heatmap (6b)**  
+Rows = `(model variant × task)`, columns = modality. Colour = mean metric. Allows scanning which model × task combinations are most dependent on a single modality.
+
+Coverage: early, late, middle, set_mil_mt, set_mil_mt_no_sab, set_mil_no_sab. Longitudinal models not included (would require re-running inference with per-modality zeroing for each split).
 
 ---
 
