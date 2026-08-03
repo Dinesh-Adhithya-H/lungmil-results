@@ -16,6 +16,7 @@ Run via:  sbatch analysis/submit_unified_rep_umap.sh
 from pathlib import Path
 from collections import Counter
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -26,6 +27,33 @@ from sklearn.preprocessing import StandardScaler
 ROOT   = Path(__file__).resolve().parent.parent
 INTERP = ROOT / "interpretability"
 FIG_ROOT = ROOT / "figures" / "interpretability"
+
+SPLITS_CSV = Path("/home/aih/dinesh.haridoss/chicago/plots/multimodal_splits_nested_cv.csv")
+
+
+def _build_patient_lookup():
+    """Build per-patient outcome + modality lookup from the splits CSV."""
+    df = pd.read_csv(SPLITS_CSV)
+    MOD_MAP = {"HE": "has_HE", "BAL": "has_BAL", "CT": "has_CT", "Clinical": "has_Clinical"}
+    lookup = {}
+    for pid, grp in df.groupby("patient_id"):
+        mods = [m for m, col in MOD_MAP.items() if grp[col].any()]
+        r = grp.iloc[0]
+        lookup[pid] = {
+            "label":       float(r.get("label", float("nan"))),
+            "event_acr":   float(r.get("acr_status",   float("nan"))),
+            "tte_acr":     float(r.get("acr_days",     float("nan"))),
+            "event_clad":  float(r.get("clad_status",  float("nan"))),
+            "tte_clad":    float(r.get("clad_days",    float("nan"))),
+            "event_death": float(r.get("death_status", float("nan"))),
+            "tte_death":   float(r.get("death_days",   float("nan"))),
+            "present_mods": mods,
+        }
+    return lookup
+
+
+PATIENT_LOOKUP = _build_patient_lookup()
+print(f"[lookup] {len(PATIENT_LOOKUP)} patients from splits CSV")
 
 # ── palette (H&E slide deck) ──────────────────────────────────────────────────
 HI  = "#952030"   # red   = high risk / event
@@ -151,13 +179,23 @@ def load_records_v2(npy_paths, rep_key, ev_key, tte_key):
             logit_dict = item.get("logits", {})
             logit = float(logit_dict.get(rep_key, float("nan"))
                           if isinstance(logit_dict, dict) else float("nan"))
+
+            # Enrich outcome fields from splits CSV by patient_id
+            pid = item.get("patient_id")
+            lkp = PATIENT_LOOKUP.get(pid, {})
+            def _get(key):
+                v = item.get(key)
+                if v is None:
+                    v = lkp.get(key)
+                return v
+
             records.append({
                 "rep":         np.asarray(rep, dtype=np.float32),
                 "logit":       logit,
-                "label":       item.get("label"),
-                "ev":          item.get(ev_key),
-                "tte":         item.get(tte_key),
-                "present_mods":item.get("present_mods", []),
+                "label":       _get("label"),
+                "ev":          _get(ev_key),
+                "tte":         _get(tte_key),
+                "present_mods":item.get("present_mods") or lkp.get("present_mods", []),
                 "_split":      int(item.get("_split", -1)),
             })
     return records
