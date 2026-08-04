@@ -165,14 +165,22 @@ def plot_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
         ax.set_title("Event status (scatter)")
     ax.set_xlabel("UMAP 1"); ax.set_ylabel("UMAP 2")
 
-    # Panel 5: TTE hexbin (median TTE per bin)
+    # Panel 5: TTE hexbin — colormap centered at median TTE
     ax = axes[4]
+    from matplotlib.colors import TwoSlopeNorm
     mask_tte = ~np.isnan(tte)
-    hb = ax.hexbin(x[mask_tte], y[mask_tte], C=tte[mask_tte],
-                   gridsize=35, cmap="plasma", reduce_C_function=np.median,
-                   linewidths=0.2)
-    plt.colorbar(hb, ax=ax, fraction=0.04, label="Median TTE (days)")
-    ax.set_title("TTE hexbin (median)"); ax.set_xlabel("UMAP 1")
+    tte_v    = tte[mask_tte]
+    med_tte  = float(np.nanmedian(tte_v))
+    vmin_tte = float(np.nanmin(tte_v))
+    vmax_tte = float(np.nanmax(tte_v))
+    norm_tte = TwoSlopeNorm(vcenter=med_tte, vmin=vmin_tte, vmax=vmax_tte)
+    hb = ax.hexbin(x[mask_tte], y[mask_tte], C=tte_v,
+                   gridsize=35, cmap="RdBu", norm=norm_tte,
+                   reduce_C_function=np.median, linewidths=0.2)
+    cb = plt.colorbar(hb, ax=ax, fraction=0.04, label="Median TTE (days)")
+    cb.ax.axhline(med_tte, color="k", lw=1.0, linestyle="--")
+    ax.set_title(f"TTE hexbin (median-centered, med={med_tte:.0f}d)")
+    ax.set_xlabel("UMAP 1")
 
     # Panel 6: ACR label hexbin (fraction ACR+ per bin)
     ax = axes[5]

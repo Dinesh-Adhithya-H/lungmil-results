@@ -2383,6 +2383,64 @@ def plot_population_seed_attribution(all_extractions: List[dict],
         }, indent=2))
         print(f"  [pop_K] saved {caff_path.name}")
 
+        # ── Clinical feature importance (separate JSON per task) ───────────────
+        if "Clinical" in present_mods:
+            clin_names = cluster_names_pool.get("Clinical", [])
+            hi_extrs_clin = [e for e, m in zip(valid_extrs, hi_m) if m]
+            lo_extrs_clin = [e for e, m in zip(valid_extrs, hi_m) if not m]
+
+            def _clin_group_mean(extrs_g):
+                """Mean ABMIL-weighted PMA attention over Clinical features for a group."""
+                pat_means = []
+                for extr in extrs_g:
+                    pat_alpha = extr["alpha_per_task"].get(task)
+                    if pat_alpha is None:
+                        continue
+                    tok_mod_name_e = extr["tok_mod_name"]
+                    seed_sum = np.zeros(K, dtype=np.float64)
+                    seed_cnt = 0
+                    i = 0
+                    n_t = len(pat_alpha)
+                    while i < n_t:
+                        if tok_mod_name_e[i] == "Clinical" and i + K <= n_t:
+                            seed_sum += pat_alpha[i:i + K]
+                            seed_cnt += 1
+                        i += K
+                    if seed_cnt == 0:
+                        continue
+                    seed_w = seed_sum / seed_cnt  # (K,)
+                    feat_acc = None
+                    feat_cnt = 0
+                    for t_idx in range(extr["n_biopsies"]):
+                        pa = extr["pma_attn"].get((t_idx, "Clinical"))
+                        if pa is None:
+                            continue
+                        # pa: (K, n_features) — directly weighted by seed alpha
+                        weighted = (seed_w[:, None] * pa).sum(0)  # (n_features,)
+                        if feat_acc is None:
+                            feat_acc = np.zeros(len(weighted), dtype=np.float64)
+                        feat_acc += weighted
+                        feat_cnt += 1
+                    if feat_acc is not None and feat_cnt > 0:
+                        pat_means.append(feat_acc / feat_cnt)
+                return np.stack(pat_means).mean(0) if pat_means else None
+
+            hi_clin = _clin_group_mean(hi_extrs_clin)
+            lo_clin = _clin_group_mean(lo_extrs_clin)
+            if (hi_clin is not None and lo_clin is not None
+                    and hi_clin.shape == lo_clin.shape):
+                delta_clin = hi_clin - lo_clin
+                clin_imp_path = out_dir / f"clinical_feature_imp_data_{task}.json"
+                clin_imp_path.write_text(_json.dumps({
+                    "delta": delta_clin.tolist(),
+                    "hi":    hi_clin.tolist(),
+                    "lo":    lo_clin.tolist(),
+                    "names": list(clin_names),
+                    "n_hi":  int(hi_m.sum()),
+                    "n_lo":  int(lo_m.sum()),
+                }, indent=2))
+                print(f"  [clin_imp] {task} → {clin_imp_path.name}")
+
 
 # ── Lpop_K_agg: Cross-split mean±std seed attribution ────────────────────────
 
