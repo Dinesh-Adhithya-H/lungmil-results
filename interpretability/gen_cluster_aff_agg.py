@@ -106,10 +106,10 @@ def load_set_mil(cfg, n_splits=5):
         task_data = d.get("tasks", {}).get(task_key, {})
         ca = task_data.get("cluster_affinity", {})
         for mod, mdata in ca.items():
-            if mod == "Clinical":
-                continue
             delta = np.array(mdata.get("delta", []))
             names = mdata.get("cluster_names", [])
+            if len(delta) == 0:
+                continue
             if mod not in result:
                 result[mod] = {"names": names, "deltas": []}
             result[mod]["deltas"].append(delta)
@@ -127,16 +127,19 @@ def load_longitudinal(cfg, n_splits=5):
         d = json.loads(dpath.read_text())
         caff = d.get("cluster_aff", {})
         for mod, mdata in caff.items():
-            if mod == "Clinical":
-                continue
-            hi = mdata.get("hi")
-            lo = mdata.get("lo")
+            hi    = mdata.get("hi")
+            lo    = mdata.get("lo")
             names = mdata.get("names", [])
-            if hi is None or lo is None:
+            # Clinical delta may be stored directly (no hi/lo if extracted differently)
+            delta_direct = mdata.get("delta")
+            if delta_direct is not None:
+                delta = np.array(delta_direct)
+            elif hi is not None and lo is not None:
+                hi_arr = np.array(hi)
+                lo_arr = np.array(lo)
+                delta = hi_arr.mean(0) - lo_arr.mean(0)
+            else:
                 continue
-            hi_arr = np.array(hi)
-            lo_arr = np.array(lo)
-            delta = hi_arr.mean(0) - lo_arr.mean(0)
             if mod not in result:
                 result[mod] = {"names": names, "deltas": []}
             result[mod]["deltas"].append(delta)
@@ -163,8 +166,10 @@ def aggregate(data_by_mod):
 
 
 def bio_label(name, mod):
+    """Return 'Full biological category (cluster_id)' for HE; raw name otherwise."""
     if mod == "HE":
-        return HE_BIO_MAP.get(name, "Unknown")
+        cat = HE_BIO_MAP.get(name, "Unknown")
+        return f"{cat} ({name})"
     return name
 
 
@@ -178,14 +183,13 @@ def _fmt_sci(v):
 
 
 def plot_task(agg, cfg, task_key, top_n=14):
-    mods = [m for m in ["HE", "BAL", "CT"] if m in agg]
+    mods = [m for m in ["HE", "BAL", "CT", "Clinical"] if m in agg]
     if not mods:
         print(f"  [plot] {task_key}: no modality data")
         return
 
     n_cols = len(mods)
-    # Taller panels give labels more room; wider for BAL with long cell-type names
-    panel_w = {"HE": 7.5, "BAL": 8.5, "CT": 6.5}
+    panel_w = {"HE": 8.5, "BAL": 8.5, "CT": 6.5, "Clinical": 8.0}
     total_w = sum(panel_w.get(m, 7.5) for m in mods)
     fig, axes = plt.subplots(1, n_cols, figsize=(total_w, 10))
     if n_cols == 1:

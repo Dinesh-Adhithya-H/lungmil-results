@@ -151,11 +151,16 @@ def plot_task_bars(task_key, cfg):
                    color=col, alpha=0.85, zorder=2)
             if d["std"] > 0:
                 ax.errorbar(x[mi2] + offset, d["mean"], yerr=d["std"],
-                            fmt="none", ecolor="#222", elinewidth=0.7, capsize=2, zorder=3)
+                            fmt="none", ecolor="#333", elinewidth=1.2, capsize=3, capthick=1.0, zorder=3)
             for sv in d["splits"]:
                 if not np.isnan(sv):
-                    ax.scatter(x[mi2] + offset, sv, s=6, color="white",
-                               edgecolors=col, linewidths=0.5, zorder=4, alpha=0.85)
+                    ax.scatter(x[mi2] + offset, sv, s=8, color="white",
+                               edgecolors=col, linewidths=0.6, zorder=4, alpha=0.9)
+            # Mean±std text annotation above each bar
+            txt = f"{d['mean']:.2f}±{d['std']:.2f}"
+            ax.text(x[mi2] + offset, d["mean"] + d["std"] + 0.004, txt,
+                    ha="center", va="bottom", fontsize=4.0, color="#333",
+                    rotation=90, zorder=5)
 
     ax.axhline(0.5, color="#999", linewidth=0.7, linestyle=":", alpha=0.5)
     ax.set_xticks(x)

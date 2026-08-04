@@ -2278,14 +2278,25 @@ def plot_population_seed_attribution(all_extractions: List[dict],
                     seed_w = seed_sum / seed_cnt  # (K,) mean alpha for this mod
 
                     # Bin raw pma_attn (K, N_patches) into cluster affinities (K, n_clus)
-                    # using pre-computed per-patch cluster IDs from the .pt files.
+                    # Clinical: each of the 106 tokens IS one feature — no binning needed.
                     aff_sum = None; aff_n = 0
                     clus_ids_biopsy = extr.get("cluster_ids_per_biopsy", {})
                     n_clus_mod = len(cnames) if cnames else None
                     for t_idx in range(extr["n_biopsies"]):
                         pa = extr["pma_attn"].get((t_idx, mo))
+                        if pa is None:
+                            continue
+                        if mo == "Clinical":
+                            # pa shape: (K, n_features) — use directly as affinity
+                            aff = pa  # already (K, n_features)
+                            if aff_sum is None:
+                                aff_sum = np.zeros_like(aff)
+                            if aff.shape == aff_sum.shape:
+                                aff_sum += aff
+                                aff_n   += 1
+                            continue
                         c_ids = clus_ids_biopsy.get((t_idx, mo))
-                        if pa is None or c_ids is None:
+                        if c_ids is None:
                             continue
                         if len(c_ids) != pa.shape[1]:
                             continue
@@ -2792,6 +2803,20 @@ def main():
             for mo, nms in cluster_names.items():
                 if mo not in cluster_names_pool and nms:
                     cluster_names_pool[mo] = nms
+            # Clinical feature names (loaded from .pt file)
+            if "Clinical" not in cluster_names_pool:
+                for stem in patient["stems"]:
+                    pt_path = Path(SAMPLES_DIR) / f"{stem}.pt"
+                    if not pt_path.exists():
+                        continue
+                    try:
+                        _d = torch.load(pt_path, map_location="cpu", weights_only=False)
+                        cfn = _d.get("clinical_feature_names")
+                        if cfn is not None:
+                            cluster_names_pool["Clinical"] = list(cfn)
+                            break
+                    except Exception:
+                        pass
 
             extr = extract_patient_longitudinal(model, patient, bags_list, device, tasks,
                                                 cluster_ids_per_biopsy=cluster_ids_per_biopsy)
