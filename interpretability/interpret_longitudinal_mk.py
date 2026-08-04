@@ -207,8 +207,10 @@ def load_patient_bags(patient: dict, device: torch.device):
         inp = data.get("inputs", data)
         bags = {}
         for mod in MOD_ORDER:
-            key = f"{mod}_cells"
-            feat = inp.get(key)
+            if mod == "Clinical":
+                feat = inp.get("clinical_onehot")
+            else:
+                feat = inp.get(f"{mod}_cells")
             if feat is not None and feat.numel() > 0:
                 bags[mod] = feat.float()
             else:
