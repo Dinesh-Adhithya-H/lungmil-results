@@ -111,65 +111,82 @@ def compute_umap(reps: torch.Tensor, n_neighbors: int = 15, seed: int = 42):
 
 
 def plot_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
-    """4-panel UMAP: risk | biopsy_day | split | label."""
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    """6-panel UMAP (2×3): risk | day | split | event | TTE hexbin | ACR label hexbin."""
+    from matplotlib.patches import Patch
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     fig.suptitle(f"Biopsy-Level Representations — {TASK_LABELS_SHORT[task_key]}",
                  fontsize=13, y=1.01)
+    axes = axes.flatten()
 
-    risk  = data["risk"].numpy()
-    bdays = data["biopsy_days"].numpy()
+    risk   = data["risk"].numpy()
+    bdays  = data["biopsy_days"].numpy()
     splits = data["split_idx"]
+    tte    = data["tte"].numpy()
+    label  = data["label"].numpy()
+    event  = data["event"].numpy()
+    x, y   = emb[:, 0], emb[:, 1]
 
     # Panel 1: risk score
     ax = axes[0]
-    sc = ax.scatter(emb[:, 0], emb[:, 1], c=risk, cmap=RISK_CMAP, s=6, alpha=0.6,
-                    rasterized=True)
+    sc = ax.scatter(x, y, c=risk, cmap=RISK_CMAP, s=5, alpha=0.6, rasterized=True)
     plt.colorbar(sc, ax=ax, fraction=0.04, label="Risk score")
-    ax.set_title("Risk score")
-    ax.set_xlabel("UMAP 1")
-    ax.set_ylabel("UMAP 2")
+    ax.set_title("Risk score"); ax.set_xlabel("UMAP 1"); ax.set_ylabel("UMAP 2")
 
     # Panel 2: biopsy day
     ax = axes[1]
-    sc = ax.scatter(emb[:, 0], emb[:, 1], c=bdays, cmap=DAY_CMAP, s=6, alpha=0.6,
-                    rasterized=True)
+    sc = ax.scatter(x, y, c=bdays, cmap=DAY_CMAP, s=5, alpha=0.6, rasterized=True)
     plt.colorbar(sc, ax=ax, fraction=0.04, label="Days post-Tx")
-    ax.set_title("Days post-transplant")
-    ax.set_xlabel("UMAP 1")
+    ax.set_title("Days post-transplant"); ax.set_xlabel("UMAP 1")
 
-    # Panel 3: split (out-of-sample fold)
+    # Panel 3: split
     ax = axes[2]
-    cmap5 = plt.cm.tab10
-    sc = ax.scatter(emb[:, 0], emb[:, 1], c=splits, cmap=cmap5, vmin=0, vmax=4,
-                    s=6, alpha=0.6, rasterized=True)
+    sc = ax.scatter(x, y, c=splits, cmap=plt.cm.tab10, vmin=0, vmax=4,
+                    s=5, alpha=0.6, rasterized=True)
     plt.colorbar(sc, ax=ax, fraction=0.04, label="Split", ticks=[0,1,2,3,4])
-    ax.set_title("Outer split")
-    ax.set_xlabel("UMAP 1")
+    ax.set_title("Outer split"); ax.set_xlabel("UMAP 1")
 
-    # Panel 4: label / event
+    # Panel 4: event / ACR label (scatter)
     ax = axes[3]
     if task_key == "acr_cls":
-        label = data["label"].numpy()
-        mask_valid = ~np.isnan(label)
+        mask_v = ~np.isnan(label)
         colors = np.where(label == 1, "#d32f2f", "#1976d2")
-        ax.scatter(emb[~mask_valid, 0], emb[~mask_valid, 1],
-                   c="#cccccc", s=4, alpha=0.3, label="Unlabeled", rasterized=True)
-        ax.scatter(emb[mask_valid, 0], emb[mask_valid, 1],
-                   c=colors[mask_valid], s=6, alpha=0.7, rasterized=True)
-        from matplotlib.patches import Patch
+        ax.scatter(x[~mask_v], y[~mask_v], c="#cccccc", s=3, alpha=0.3, rasterized=True)
+        ax.scatter(x[mask_v],  y[mask_v],  c=colors[mask_v], s=5, alpha=0.7, rasterized=True)
         ax.legend(handles=[Patch(color="#d32f2f", label="ACR+"),
                             Patch(color="#1976d2", label="ACR−")], fontsize=8)
-        ax.set_title("ACR label")
+        ax.set_title("ACR label (scatter)")
     else:
-        event = data["event"].numpy()
         mask_e = event == 1
         mask_c = (event == 0) & ~np.isnan(event)
-        ax.scatter(emb[mask_c, 0], emb[mask_c, 1], c="#1976d2",
-                   s=4, alpha=0.4, label="Censored", rasterized=True)
-        ax.scatter(emb[mask_e, 0], emb[mask_e, 1], c="#d32f2f",
-                   s=8, alpha=0.8, label="Event", rasterized=True)
+        ax.scatter(x[mask_c], y[mask_c], c="#1976d2", s=3, alpha=0.4, label="Censored", rasterized=True)
+        ax.scatter(x[mask_e], y[mask_e], c="#d32f2f", s=7, alpha=0.8, label="Event",    rasterized=True)
         ax.legend(fontsize=8)
-        ax.set_title("Event status")
+        ax.set_title("Event status (scatter)")
+    ax.set_xlabel("UMAP 1"); ax.set_ylabel("UMAP 2")
+
+    # Panel 5: TTE hexbin (median TTE per bin)
+    ax = axes[4]
+    mask_tte = ~np.isnan(tte)
+    hb = ax.hexbin(x[mask_tte], y[mask_tte], C=tte[mask_tte],
+                   gridsize=35, cmap="plasma", reduce_C_function=np.median,
+                   linewidths=0.2)
+    plt.colorbar(hb, ax=ax, fraction=0.04, label="Median TTE (days)")
+    ax.set_title("TTE hexbin (median)"); ax.set_xlabel("UMAP 1")
+
+    # Panel 6: ACR label hexbin (fraction ACR+ per bin)
+    ax = axes[5]
+    mask_lbl = ~np.isnan(label)
+    if mask_lbl.sum() > 10:
+        hb = ax.hexbin(x[mask_lbl], y[mask_lbl], C=label[mask_lbl],
+                       gridsize=35, cmap="RdBu_r", vmin=0, vmax=1,
+                       reduce_C_function=np.mean, linewidths=0.2)
+        plt.colorbar(hb, ax=ax, fraction=0.04, label="Fraction ACR+")
+        ax.set_title("ACR label hexbin (frac +)")
+    else:
+        ax.text(0.5, 0.5, "No ACR labels", transform=ax.transAxes,
+                ha="center", va="center", fontsize=11, color="#888")
+        ax.set_title("ACR label hexbin")
     ax.set_xlabel("UMAP 1")
 
     for ax in axes:
