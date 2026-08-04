@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=extract_biopsy_reps
-#SBATCH --output=logs/extract_biopsy_reps_%A_%a.out
-#SBATCH --error=logs/extract_biopsy_reps_%A_%a.err
+#SBATCH --output=/home/aih/dinesh.haridoss/chicago_mil/logs/extract_biopsy_reps_%A_%a.out
+#SBATCH --error=/home/aih/dinesh.haridoss/chicago_mil/logs/extract_biopsy_reps_%A_%a.err
 #SBATCH --partition=gpu_p
 #SBATCH --qos=gpu_normal
 #SBATCH --gres=gpu:1
@@ -10,14 +10,11 @@
 #SBATCH --time=02:00:00
 #SBATCH --array=0-4
 
-set -euo pipefail
-cd "$(dirname "$0")/.."
-mkdir -p logs
+source ~/.bashrc
+conda activate chicago_mil
+cd /home/aih/dinesh.haridoss/chicago_mil
 
 SPLIT=${SLURM_ARRAY_TASK_ID}
-
-source /home/aih/dinesh.haridoss/miniconda3/etc/profile.d/conda.sh
-conda activate chicago_mil
 
 echo "=== extract_biopsy_reps split=${SPLIT} ==="
 python interpretability/extract_biopsy_reps.py \

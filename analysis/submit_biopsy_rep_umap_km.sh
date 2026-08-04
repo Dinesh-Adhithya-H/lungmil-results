@@ -1,19 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=biopsy_rep_umap_km
-#SBATCH --output=logs/biopsy_rep_umap_km_%j.out
-#SBATCH --error=logs/biopsy_rep_umap_km_%j.err
+#SBATCH --output=/home/aih/dinesh.haridoss/chicago_mil/logs/biopsy_rep_umap_km_%j.out
+#SBATCH --error=/home/aih/dinesh.haridoss/chicago_mil/logs/biopsy_rep_umap_km_%j.err
 #SBATCH --partition=cpu_p
 #SBATCH --qos=cpu_normal
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=00:30:00
 
-set -euo pipefail
-cd "$(dirname "$0")/.."
-mkdir -p logs
-
-source /home/aih/dinesh.haridoss/miniconda3/etc/profile.d/conda.sh
+source ~/.bashrc
 conda activate chicago_mil
+cd /home/aih/dinesh.haridoss/chicago_mil
 
 echo "=== biopsy_rep_umap_km ==="
 python analysis/plot_biopsy_rep_umap_km.py \
