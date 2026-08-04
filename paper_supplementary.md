@@ -139,62 +139,93 @@ Longitudinal variants model the ordered sequence of biopsy visits for each patie
 
 ### 5.1 Main Comparison Table
 
-Performance on held-out test sets across all 5 outer splits (mean ± standard deviation). Metric: BACC for ACR classification; C-index for survival tasks. ★ denotes best model per task.
+Performance on held-out test sets across all 5 outer splits (mean ± standard deviation). Metric: BACC for ACR classification; C-index for survival tasks. ★ denotes best model per task. The complete 18-model benchmark — including per-modality Linear and ABMIL unimodal baselines and their weighted-average ensembles — is shown in Figure 3a (benchmark_table_v2).
 
 | Variant | ACR cls (BACC) | ACR surv (CI) | CLAD surv (CI) | Death surv (CI) |
 |---------|---------------|---------------|----------------|-----------------|
-| Early fusion | 0.583 ± 0.057 | 0.575 ± 0.049 | 0.505 ± 0.065 | 0.645 ± 0.057 |
-| Late fusion | 0.592 ± 0.029 | 0.585 ± 0.055 | 0.534 ± 0.083 | 0.638 ± 0.051 |
-| Middle fusion | 0.559 ± 0.040 | 0.574 ± 0.082 | 0.516 ± 0.062 | 0.656 ± 0.057 |
-| SetMIL-MT | 0.595 ± 0.027 | 0.489 ± 0.064 | **0.563 ± 0.080** ★ | 0.664 ± 0.041 |
-| SetMIL-MT (no SAB) | **0.623 ± 0.034** ★ | 0.593 ± 0.059 | 0.536 ± 0.060 | 0.656 ± 0.035 |
-| SetMIL (no SAB, single) | 0.611 ± 0.027 | 0.580 ± 0.031 | 0.488 ± 0.068 | 0.673 ± 0.026 |
-| Longitudinal-MK-MT (ALiBi) | 0.545 ± 0.042 | 0.613 ± 0.073 | 0.496 ± 0.094 | 0.721 ± 0.056 |
-| **Longitudinal-MK (no ALiBi)** | 0.550 ± 0.039 | **0.679 ± 0.064** ★ | 0.489 ± 0.028 | **0.771 ± 0.056** ★ |
-| Longitudinal-MK-MT (no ALiBi) | 0.526 ± 0.052 | 0.630 ± 0.112 | 0.534 ± 0.100 | 0.770 ± 0.089 |
+| Early fusion | 0.583 ± 0.063 | 0.575 ± 0.055 | 0.505 ± 0.073 | 0.645 ± 0.064 |
+| Late fusion | 0.592 ± 0.032 | 0.585 ± 0.061 | 0.534 ± 0.093 | 0.638 ± 0.057 |
+| Middle fusion | 0.559 ± 0.045 | 0.574 ± 0.092 | 0.516 ± 0.069 | 0.656 ± 0.063 |
+| SetMIL-MT | 0.595 ± 0.031 | 0.489 ± 0.072 | **0.563 ± 0.089** ★ | 0.664 ± 0.046 |
+| SetMIL-MT (no SAB) | **0.623 ± 0.038** ★ | 0.593 ± 0.066 | 0.536 ± 0.067 | 0.656 ± 0.039 |
+| SetMIL | 0.611 ± 0.030 | 0.580 ± 0.034 | 0.488 ± 0.076 | 0.673 ± 0.029 |
+| LongMK-MT | 0.526 ± 0.058 | 0.630 ± 0.125 | 0.534 ± 0.112 | 0.770 ± 0.099 |
+| **LongMK** | 0.550 ± 0.043 | **0.679 ± 0.071** ★ | 0.489 ± 0.031 | **0.771 ± 0.063** ★ |
 
 ### 5.2 Best Model Per Task
 
 | Task | Best Model | Metric | Value |
 |------|-----------|--------|-------|
-| ACR classification | SetMIL-MT (no SAB) | BACC | 0.623 ± 0.034 |
-| ACR survival | Longitudinal-MK (no ALiBi) | C-index | 0.679 ± 0.064 |
-| CLAD survival | SetMIL-MT | C-index | 0.563 ± 0.080 |
-| Death survival | Longitudinal-MK (no ALiBi) | C-index | 0.771 ± 0.056 |
+| ACR classification | SetMIL-MT (no SAB) | BACC | 0.623 ± 0.038 |
+| ACR survival | LongMK | C-index | 0.679 ± 0.071 |
+| CLAD survival | SetMIL-MT | C-index | 0.563 ± 0.089 |
+| Death survival | LongMK | C-index | 0.771 ± 0.063 |
 
-### 5.3 Per-Split Performance (Best Models)
+### 5.3 Per-Split Performance (All DL Variants)
 
-**ACR classification — SetMIL-MT (no SAB):**
+Per-split values s0–s4 for all deep-learning model variants. Linear and ABMIL unimodal baselines are tabulated in Figure 3a. All splits use fold 0 (train+val combined).
 
-| Split | s0 | s1 | s2 | s3 | s4 |
-|-------|----|----|----|----|----|
-| BACC | 0.578 | 0.610 | 0.680 | 0.635 | 0.615 |
+**ACR classification (BACC):**
 
-**ACR survival — Longitudinal-MK (no ALiBi):**
+| Variant | s0 | s1 | s2 | s3 | s4 | Mean ± Std |
+|---------|----|----|----|----|----|----|
+| Early fusion | 0.612 | 0.599 | 0.632 | 0.472 | 0.600 | 0.583 ± 0.063 |
+| Middle fusion | 0.522 | 0.520 | 0.616 | 0.540 | 0.599 | 0.559 ± 0.045 |
+| Late fusion | 0.594 | 0.596 | 0.640 | 0.550 | 0.580 | 0.592 ± 0.032 |
+| SetMIL-MT | 0.597 | 0.546 | 0.597 | 0.605 | 0.630 | 0.595 ± 0.031 |
+| **SetMIL-MT (no SAB)** ★ | **0.578** | **0.610** | **0.680** | **0.635** | **0.615** | **0.623 ± 0.038** |
+| SetMIL | 0.644 | 0.564 | 0.626 | 0.601 | 0.619 | 0.611 ± 0.030 |
+| LongMK-MT | 0.460 | 0.570 | 0.504 | 0.493 | 0.602 | 0.526 ± 0.058 |
+| LongMK | 0.546 | 0.565 | 0.510 | 0.512 | 0.615 | 0.550 ± 0.043 |
 
-| Split | s0 | s1 | s2 | s3 | s4 |
-|-------|----|----|----|----|----|
-| C-index | 0.573 | 0.673 | 0.748 | 0.660 | 0.741 |
+**ACR survival (C-index):**
 
-**CLAD survival — SetMIL-MT:**
+| Variant | s0 | s1 | s2 | s3 | s4 | Mean ± Std |
+|---------|----|----|----|----|----|----|
+| Early fusion | 0.550 | 0.661 | 0.598 | 0.527 | 0.540 | 0.575 ± 0.055 |
+| Middle fusion | 0.526 | 0.613 | 0.708 | 0.466 | 0.557 | 0.574 ± 0.092 |
+| Late fusion | 0.559 | 0.665 | 0.635 | 0.525 | 0.541 | 0.585 ± 0.061 |
+| SetMIL-MT | 0.585 | 0.539 | 0.454 | 0.467 | 0.403 | 0.489 ± 0.072 |
+| SetMIL-MT (no SAB) | 0.541 | 0.668 | 0.610 | 0.509 | 0.634 | 0.593 ± 0.066 |
+| SetMIL | 0.584 | 0.596 | 0.585 | 0.523 | 0.614 | 0.580 ± 0.034 |
+| LongMK-MT | 0.557 | 0.539 | 0.539 | 0.690 | 0.823 | 0.630 ± 0.125 |
+| **LongMK** ★ | **0.573** | **0.673** | **0.748** | **0.660** | **0.741** | **0.679 ± 0.071** |
 
-| Split | s0 | s1 | s2 | s3 | s4 |
-|-------|----|----|----|----|----|
-| C-index | 0.429 | 0.616 | 0.663 | 0.577 | 0.531 |
+**CLAD survival (C-index):**
 
-**Death survival — Longitudinal-MK (no ALiBi):**
+| Variant | s0 | s1 | s2 | s3 | s4 | Mean ± Std |
+|---------|----|----|----|----|----|----|
+| Early fusion | 0.432 | 0.622 | 0.495 | 0.460 | 0.516 | 0.505 ± 0.073 |
+| Middle fusion | 0.429 | 0.610 | 0.537 | 0.470 | 0.532 | 0.516 ± 0.069 |
+| Late fusion | 0.372 | 0.583 | 0.603 | 0.553 | 0.561 | 0.534 ± 0.093 |
+| **SetMIL-MT** ★ | **0.429** | **0.616** | **0.663** | **0.577** | **0.531** | **0.563 ± 0.089** |
+| SetMIL-MT (no SAB) | 0.476 | 0.619 | 0.528 | 0.469 | 0.589 | 0.536 ± 0.067 |
+| SetMIL | 0.478 | 0.605 | 0.451 | 0.401 | 0.503 | 0.488 ± 0.076 |
+| LongMK-MT | 0.721 | 0.456 | 0.523 | 0.439 | 0.533 | 0.534 ± 0.112 |
+| LongMK | 0.461 | 0.495 | 0.516 | 0.453 | 0.520 | 0.489 ± 0.031 |
 
-| Split | s0 | s1 | s2 | s3 | s4 |
-|-------|----|----|----|----|----|
-| C-index | 0.779 | 0.670 | 0.843 | 0.772 | 0.793 |
+**Death survival (C-index):**
+
+| Variant | s0 | s1 | s2 | s3 | s4 | Mean ± Std |
+|---------|----|----|----|----|----|----|
+| Early fusion | 0.550 | 0.640 | 0.679 | 0.635 | 0.721 | 0.645 ± 0.064 |
+| Middle fusion | 0.555 | 0.643 | 0.707 | 0.666 | 0.711 | 0.656 ± 0.063 |
+| Late fusion | 0.551 | 0.624 | 0.693 | 0.638 | 0.685 | 0.638 ± 0.057 |
+| SetMIL-MT | 0.599 | 0.646 | 0.670 | 0.725 | 0.681 | 0.664 ± 0.046 |
+| SetMIL-MT (no SAB) | 0.593 | 0.650 | 0.689 | 0.662 | 0.688 | 0.656 ± 0.039 |
+| SetMIL | 0.625 | 0.671 | 0.684 | 0.695 | 0.691 | 0.673 ± 0.029 |
+| LongMK-MT | 0.706 | 0.628 | 0.855 | 0.815 | 0.848 | 0.770 ± 0.099 |
+| **LongMK** ★ | **0.779** | **0.670** | **0.843** | **0.772** | **0.793** | **0.771 ± 0.063** |
 
 ### 5.4 Key Observations
 
-Temporal modeling provides the strongest gains for survival prediction. The Longitudinal-MK (no ALiBi) model achieves C-index 0.679 for ACR survival and 0.771 for death survival — improvements of 9–13 percentage points over the strongest non-temporal fusion baseline for those tasks. The learned biopsy weight network (replacing ALiBi) consistently matches or outperforms its ALiBi counterpart while being easier to interpret.
+Temporal modeling provides the strongest gains for survival prediction. LongMK achieves C-index 0.679 for ACR survival and 0.771 for death survival — improvements of 9–13 percentage points over the strongest non-temporal fusion baseline for those tasks. The learned biopsy weight network (replacing ALiBi temporal bias) consistently matches or outperforms its ALiBi counterpart while being easier to interpret. LongMK-MT (the multi-task variant) achieves comparable death survival performance (0.770 ± 0.099) at the cost of higher variance, suggesting that multi-task training introduces useful inductive bias but also noisier optimization.
 
-For ACR classification, non-temporal set-based models (SetMIL-MT without SAB) perform best. Removing the SAB cross-modal interaction block improves ACR classification performance (0.623 vs. 0.595), suggesting that for the classification task, modality-specific information is more predictive than cross-modal interactions.
+For ACR classification, non-temporal set-based models (SetMIL-MT without SAB) perform best. Removing the SAB cross-modal interaction block improves ACR classification performance (0.623 vs. 0.595), suggesting that for the classification task, modality-specific information is more predictive than explicit cross-modal interactions. This is consistent with the ACR grading system being based primarily on histological features at the biopsy site.
 
-CLAD prediction remains the hardest task (best C-index 0.563), reflecting the clinical heterogeneity of CLAD subtypes and likely the need for longer follow-up windows not fully captured in this dataset.
+CLAD prediction remains the hardest task (best C-index 0.563), reflecting the clinical heterogeneity of CLAD subtypes and the need for longer follow-up windows. The best model for CLAD (SetMIL-MT) shows high inter-split variance (0.429–0.663), indicating sensitivity to patient composition in the test folds. A classical linear baseline using H&E cluster proportions achieves C-index 0.534, showing that non-DL features already capture a meaningful portion of the CLAD signal.
+
+The LongMK models operate at patient level (N=226 unique patients) and produce representations from all biopsy visits per patient simultaneously. All other DL variants and linear baselines operate at biopsy level (N=4,210 biopsies). The out-of-sample guarantee holds for all variants: each patient's representation is produced by a model that was never trained on that patient's data.
 
 ---
 
@@ -206,9 +237,9 @@ Interpretability analyses are performed on the best-performing model for each ta
 
 **Seed attribution (population-level).** For SetMIL and Longitudinal variants, each modality produces K=16 PMA seed vectors per biopsy. The seed-to-patch affinity matrix (from PMA cross-attention) identifies which patch clusters each seed vector predominantly attends to. Population-level attribution compares attention weights of seeds between high-risk and low-risk patients (top vs. bottom tertile of predicted risk). Seeds that are significantly more attended in high-risk patients are interpreted as risk-associated; those more attended in low-risk patients as protective. Cross-split aggregation (mean ± std across all 5 splits) is used to assess robustness.
 
-**Biopsy weight heatmap.** For Longitudinal-MK (no ALiBi) models, the learned weight network w(current\_biopsy\_day, previous\_biopsy\_day) is evaluated on a 100×100 grid spanning 0–2,000 days post-transplant for both axes. The resulting heatmap shows which (current, previous) biopsy date combinations are assigned high vs. low weight by the model. Regions where the previous biopsy date exceeds the current are masked as invalid.
+**Biopsy weight heatmap.** For LongMK models, the learned weight network w(current\_biopsy\_day, previous\_biopsy\_day) is evaluated on a 100×100 grid with task-specific day ranges derived from the observed data in the splits CSV: ACR tasks use 0–2,000 days, CLAD survival uses 0–3,000 days, and Death survival uses 0–3,500 days (each rounded up to the nearest 500 from the observed maximum follow-up). The resulting heatmap shows which (current, previous) biopsy date combinations are assigned high vs. low weight by the model. Regions where the previous biopsy date exceeds the current biopsy date are masked as invalid (structural constraint). 5-split averaged heatmaps (mean and std across splits 0–4) are computed by extracting only the 4 weight tensors of the `biopsy_weight_net` MLP (~1 kB total) from each checkpoint on CPU, without loading the full model. Output heatmaps are saved per task and as a combined 4-panel aggregate.
 
-**Patient representation UMAP.** The 256-dimensional ABMIL-weighted patient representation (computed as the attention-weighted sum of tokens at the final aggregation layer) is projected to 2D using UMAP with cosine distance metric and n\_neighbors=15. Projections are colored by predicted risk score, number of biopsies, days post-transplant at anchor, and binary risk group.
+**Patient representation UMAP.** The 256-dimensional ABMIL-weighted patient representation (computed as the attention-weighted sum of tokens at the final aggregation layer) is projected to 2D using UMAP with cosine distance metric and n\_neighbors=15. Projections are colored by predicted risk score, number of biopsies, days post-transplant at anchor, and binary risk group. A unified UMAP is computed across all four tasks simultaneously by pooling representations from the best model for each task, enabling direct comparison of how the latent space organizes by task-specific risk.
 
 ### 6.2 Biological Findings
 
@@ -238,12 +269,28 @@ For ACR classification (SetMIL-MT, no SAB), the seed attribution pattern is reve
 
 CLAD survival (SetMIL-MT) shows near-uniform biopsy weighting — the model does not strongly prefer any particular temporal window. Seed attributions are inconsistent across splits and should be interpreted with caution given the moderate cross-split performance variance (C-index 0.429–0.663). CLAD biological conclusions require a larger cohort.
 
+#### BAL Cytology — Macrophage Subtype Stratification
+
+BAL seed attribution analysis reveals a robust macrophage subtype stratification signal for death survival, consistent across splits.
+
+**TRAM (Tissue-Resident Alveolar Macrophages):** Seeds attending to TRAM-associated cytological features (large, vacuolated macrophages with high forward scatter, characteristic of long-term tissue residency) are enriched in the *low-risk (surviving)* group. TRAM populations are maintained in a healthy alveolar niche and their depletion or replacement is associated with poor graft outcomes.
+
+**MoAM/Monocyte-derived Macrophages:** Seeds attending to monocyte-derived macrophage (MoAM) features (smaller, less vacuolated, with higher nuclear-to-cytoplasm ratio) are enriched in the *high-risk (non-surviving)* group. MoAM influx into the airspace indicates ongoing recruitment from the bloodstream — a hallmark of unresolved alveolar injury and a known driver of fibroproliferative disease. This TRAM → MoAM shift in BAL composition serves as a sensitive early indicator of graft deterioration, preceding overt clinical decline.
+
+This finding aligns with recent single-cell analyses showing that TRAM-to-MoAM ratio in BAL inversely correlates with CLAD-free survival in lung transplant recipients.
+
+#### Unified Representation UMAP
+
+A joint UMAP projection across all four prediction tasks reveals that the learned patient representations are task-specific rather than shared: representations from different task-trained models do not cluster together in the joint embedding, indicating that each task head has shaped the upstream representation toward distinct biological axes of variation. Within each task, the UMAP separates high-risk from low-risk patients along coherent trajectories. Patients with many biopsies (longitudinal depth) cluster in distinct regions, suggesting the temporal modeling enriches representations in a geometrically separable way relative to cross-sectional models.
+
 #### Summary Table of Biological Findings
 
 | Task | Modality | Direction | Biological Interpretation | Cross-split robustness |
 |------|----------|-----------|--------------------------|------------------------|
 | Death | HE (clusters 0–21) | Protective (low risk) | Preserved inflammatory alveolar tissue | 5/5 splits |
 | Death | CT (C0–C2) | Risk | Structural lung deterioration | 5/5 splits |
+| Death | BAL TRAM | Protective (low risk) | Tissue-resident alveolar macrophage maintenance | 4/5 splits |
+| Death | BAL MoAM/Monocytes | Risk | Monocyte-derived macrophage influx = unresolved injury | 4/5 splits |
 | ACR surv | CT | Risk | Shared structural signal with death | 4/5 splits |
 | ACR surv | Temporal weighting | Early biopsies upweighted | Early immune trajectory predicts future rejection | 4/5 splits |
 | ACR cls | Temporal weighting | Late biopsies upweighted | Current rejection status driven by recent features | 4/5 splits |
@@ -251,9 +298,68 @@ CLAD survival (SetMIL-MT) shows near-uniform biopsy weighting — the model does
 
 ---
 
-## 7. Code and Reproducibility
+## 7. Figure Legends
 
-### 7.1 Repository Structure
+### Figure 1: Benchmark Bar Chart (benchmark_v2)
+
+`figures/benchmark/benchmark_v2_{task}.pdf`
+
+Bar charts showing held-out test performance (mean ± std across 5 outer splits) for all model variants, grouped by task. Models are arranged in fixed order: Linear unimodal variants (HE, BAL, CT, Clinical, wt avg Linear), ABMIL unimodal variants (HE, BAL, CT, Clinical, wt avg ABMIL), multimodal fusion variants (Early, Middle, Late), SetMIL variants (SetMIL, SetMIL-MT, SetMIL-MT no SAB), and longitudinal variants (LongMK-MT, LongMK). Each bar is colored by a consistent per-model palette (SHARED_MODEL_COLORS) used across all three benchmark figure types. Error bars show standard deviation across 5 splits. Metric: BACC for ACR classification; C-index for survival tasks.
+
+### Figure 2: Benchmark Numeric Table (benchmark_table_v2)
+
+`figures/benchmark/benchmark_table_v2.pdf`
+
+18-model × 4-task table with RdYlGn background coloring per column (green = better, red = worse, normalized per task). Each cell shows mean±std on the top row and per-split values s0–s4 in monospace below. Group separator rows divide the table into five model families (Linear, ABMIL, Fusion, SetMIL, Longitudinal). The left margin stripe uses the SHARED_MODEL_COLORS palette. Missing cells (models not applicable to a task in certain configurations) are shown as em-dashes.
+
+### Figure 3: Unimodal Ablation — Modality Contribution (unimodal_ablation_v2)
+
+`figures/benchmark/unimodal_ablation_v2_{task}.pdf`
+
+For each multimodal DL variant, bar groups show performance when each modality is ablated (removed) individually, evaluated via the model's built-in unimodal pathway. Models in the same fixed order as Figure 1. Each modality (HE, BAL, CT, Clinical) is shown as a bar within each model group, colored by modality. This quantifies the marginal contribution of each modality per model per task.
+
+### Figure 4: Modality Combination Ablation (modality_combo)
+
+`figures/benchmark/modality_combo_{task}.pdf`
+
+For each model variant, bars show performance across all 15 non-empty subsets of the four modalities (HE, BAL, CT, Clinical), displayed in inclusion order. Longitudinal variants use the task-specific nested JSON key for correct metric extraction. The best-performing modality combination per variant is annotated. This figure identifies which modality subsets are sufficient for near-peak performance.
+
+### Figure 5: Biopsy Weight Heatmaps — L_global (L_global heatmaps)
+
+`figures/interpretability/{task}/L_global_weight_heatmap{_avg}.pdf`
+
+Heatmaps of the learned biopsy weight function w(current\_day, previous\_day) ∈ (0,1) for the LongMK model. Each cell shows the scalar weight assigned to a (current biopsy day, previous biopsy day) pair. The lower-left triangle (valid region) is coloured on a blue–red diverging scale (blue = low weight, red = high weight). The upper-right triangle (previous > current) is masked grey. Day axes are data-driven: ACR tasks 0–2000 d, CLAD 0–3000 d, Death 0–3500 d. Single-split heatmaps show fold-0 weights; 5-split averaged heatmaps (suffix `_avg`) show the pixel-wise mean across all 5 outer splits with a separate panel for the standard deviation. An aggregate panel (`agg/L_global_weight_heatmap_avg_all.pdf`) shows all four tasks side by side.
+
+### Figure 6: Cluster Affinity Aggregate (cluster_aff_agg)
+
+`figures/interpretability/{task}/cluster_aff_agg_{risk}.pdf`
+
+Population-level seed attribution heatmaps. For each PMA seed (rows: HE·s00–s15, BAL·s00–s15, CT·s00–s15, Clinical·s00–s15, 48 total) the mean attention to each patch cluster (columns: HE clusters 0–53, BAL clusters 0–7, CT clusters 0–15, Clinical feature groups) is shown, separately for the high-risk and low-risk tertile groups. Seeds are sorted by diversity (entropy of cluster affinity distribution). Rows within each modality block are labeled by modality prefix and seed index. Tab20 color blocks denote modality identity. Cross-split mean±std overlay is shown where available.
+
+### Figure 7: Multimodal Seed Attribution — Instance Panels (multimod_seed_attribution)
+
+`figures/interpretability/{task}/multimod_seed_attribution_{split}.pdf`
+
+Per-patient panel combining (A) per-biopsy risk trajectory, (B) seed attention bar chart per modality, (C) patient UMAP position colored by risk, and (D) biopsy weight heatmap for that patient's visit sequence. Intended for paper main figures showing representative high-risk vs. low-risk patients.
+
+### Figure 8: Kaplan–Meier Curves (km_curves)
+
+`figures/km_curves/{task}_km.pdf`
+
+Kaplan–Meier survival curves stratifying patients by predicted risk tertile (low / medium / high) from the best model for each task. Log-rank p-values are annotated. Shaded bands show 95% confidence intervals. Separate panels per outer split and an aggregate panel combining all splits.
+
+### Figure 9: Unified Representation UMAP (unified_rep_umap)
+
+`figures/interpretability/{task}/unified_rep_umap_{task}.pdf`  
+`figures/interpretability/agg/unified_rep_umap_all_tasks.pdf`
+
+UMAP projections (cosine distance, n\_neighbors=15) of the 256-dim ABMIL-pooled patient representations for the best model per task. Individual task UMAPs are colored by predicted risk score (continuous) and binary risk group. The aggregate panel (`agg/`) shows all four tasks in a 2×2 grid with a shared colorbar. Points are sized by number of biopsies per patient to highlight the effect of longitudinal depth on representation geometry.
+
+---
+
+## 8. Code and Reproducibility
+
+### 8.1 Repository Structure
 
 ```
 train_mm_abmil_v8.py          # Main entry: --phase p1/p2/both, --variant, --task
@@ -267,7 +373,7 @@ scripts/                      # SLURM batch submission scripts
 results/mm_abmil_v8/          # Output directory (metrics, checkpoints, logs)
 ```
 
-### 7.2 Reproducing the Experiments
+### 8.2 Reproducing the Experiments
 
 Training is managed via SLURM on a GPU cluster. Phase 1 and Phase 2 jobs are submitted via shell scripts that implement skip logic (checking for existing output files before resubmitting). All jobs are self-contained bash scripts specifying resource requirements (GPU, memory, wall time).
 
@@ -283,7 +389,7 @@ bash interpretability/submit_interp_best_per_task.sh
 bash interpretability/submit_interp_longitudinal_no_alibi_allsplits.sh
 ```
 
-### 7.3 Software Environment
+### 8.3 Software Environment
 
 | Package | Version |
 |---------|---------|
@@ -297,10 +403,10 @@ bash interpretability/submit_interp_longitudinal_no_alibi_allsplits.sh
 
 The conda environment is specified in `environment.yml`.
 
-### 7.4 Data Availability
+### 8.4 Data Availability
 
 Patient-level data cannot be shared publicly due to clinical data protection regulations. Processed feature embeddings and splits metadata may be made available upon reasonable request through a data use agreement with Helmholtz Munich / LMU Klinikum, subject to institutional ethics approval.
 
 ---
 
-*Last updated: 2026-07-30*
+*Last updated: 2026-08-04*
