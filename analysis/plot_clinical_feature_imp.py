@@ -36,12 +36,13 @@ for task in TASKS:
     n_hi_list, n_lo_list = [], []
 
     for s in range(N_SPLITS):
-        task_short = task.replace("_surv", "")
-        jpath = (INTERP_ROOT
-                 / f"{VARIANT}_split{s}_fold0_{task}"
-                 / f"clinical_feature_imp_data_{task_short}.json")
+        base = INTERP_ROOT / f"{VARIANT}_split{s}_fold0_{task}"
+        jpath = base / f"clinical_feature_imp_data_{task}.json"
         if not jpath.exists():
-            print(f"  [skip] {jpath.name} not found for split {s}")
+            task_short = task.replace("_surv", "")
+            jpath = base / f"clinical_feature_imp_data_{task_short}.json"
+        if not jpath.exists():
+            print(f"  [skip] clinical_feature_imp_data for {task} not found for split {s}")
             continue
         d = json.loads(jpath.read_text())
         split_deltas.append(np.array(d["delta"], dtype=np.float64))
