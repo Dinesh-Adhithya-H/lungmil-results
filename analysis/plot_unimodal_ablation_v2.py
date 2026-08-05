@@ -15,10 +15,11 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.patches import Patch
 
-ROOT    = Path(__file__).resolve().parent.parent
-METRICS = ROOT / "results" / "mm_abmil_v8"
-LIN_CSV = ROOT / "results" / "linear_models" / "metrics_summary.csv"
-OUT_DIR = ROOT / "figures" / "interpretability" / "unimodal_ablation"
+ROOT      = Path(__file__).resolve().parent.parent
+METRICS   = ROOT / "results" / "mm_abmil_v8"
+LIN_CSV   = ROOT / "results" / "linear_models" / "metrics_summary.csv"
+ABL_CSV   = ROOT / "interpretability" / "unimodal_ablation" / "unimodal_ablation_summary.csv"
+OUT_DIR   = ROOT / "figures" / "interpretability" / "unimodal_ablation"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 BG = "#FAF6F2"
@@ -99,9 +100,11 @@ def load_linear_unimodal(lin_task, lin_metric):
 
 
 def load_dl_unimodal(suffix, metric):
+    csv_df = pd.read_csv(ABL_CSV) if ABL_CSV.exists() else pd.DataFrame()
     data = {}
     for variant, disp in VARIANT_LABELS.items():
         per_split = {mod: [] for mod in MOD_ORDER}
+        has_ua = False
         for split in range(5):
             path = METRICS / f"metrics_split{split}_fold0_{variant}_{suffix}.json"
             if not path.exists():
@@ -109,18 +112,34 @@ def load_dl_unimodal(suffix, metric):
             try:
                 d = json.loads(path.read_text())
                 ua = d.get("unimodal_ablation", {})
+                if ua:
+                    has_ua = True
                 for mod in MOD_ORDER:
                     v = ua.get(mod, {}).get(metric, np.nan)
                     per_split[mod].append(float(v) if v is not None else np.nan)
             except Exception:
                 continue
-        for mod in MOD_ORDER:
-            vals = per_split[mod]
-            valid = [v for v in vals if not np.isnan(v)]
-            if valid:
+
+        if not has_ua and not csv_df.empty:
+            # JSON has no unimodal_ablation key (LongMK variants) — fall back to summary CSV
+            rows = csv_df[(csv_df["variant"] == variant) &
+                          (csv_df["task"] == suffix) &
+                          (csv_df["metric"] == metric)]
+            for _, r in rows.iterrows():
+                mod = r["modality"]
+                if mod not in MOD_ORDER:
+                    continue
                 if disp not in data:
                     data[disp] = {}
-                data[disp][mod] = {"mean": np.nanmean(vals), "std": np.nanstd(vals), "splits": vals}
+                data[disp][mod] = {"mean": float(r["mean"]), "std": float(r["std"]), "splits": []}
+        else:
+            for mod in MOD_ORDER:
+                vals = per_split[mod]
+                valid = [v for v in vals if not np.isnan(v)]
+                if valid:
+                    if disp not in data:
+                        data[disp] = {}
+                    data[disp][mod] = {"mean": np.nanmean(vals), "std": np.nanstd(vals), "splits": vals}
     return data
 
 
