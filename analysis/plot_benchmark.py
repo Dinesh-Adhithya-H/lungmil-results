@@ -239,9 +239,9 @@ for task_key in TASKS:
               ncol=2, framealpha=0.9, edgecolor="#ccc")
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(OUT_DIR / f"benchmark_v2_{task_key}.{ext}", dpi=180, bbox_inches="tight", facecolor=BG)
+        fig.savefig(OUT_DIR / f"benchmark_{task_key}.{ext}", dpi=180, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"Saved benchmark_v2_{task_key}")
+    print(f"Saved benchmark_{task_key}")
 
 # ── 4-panel combined ──────────────────────────────────────────────────────────
 fig, axes = plt.subplots(1, 4, figsize=(30, 11), facecolor=BG)
@@ -254,7 +254,7 @@ fig.legend(handles=make_legend(), loc="lower center", ncol=6, fontsize=7,
            bbox_to_anchor=(0.5, -0.02), frameon=False)
 fig.tight_layout()
 for ext in ("png", "pdf"):
-    fig.savefig(OUT_DIR / f"benchmark_v2_all.{ext}", dpi=150, bbox_inches="tight", facecolor=BG)
+    fig.savefig(OUT_DIR / f"benchmark_all.{ext}", dpi=150, bbox_inches="tight", facecolor=BG)
 plt.close(fig)
-print("Saved benchmark_v2_all")
+print("Saved benchmark_all")
 print("Done.")
