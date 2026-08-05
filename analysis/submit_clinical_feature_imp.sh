@@ -10,7 +10,7 @@
 #SBATCH --mail-user=dinesh.haridoss@helmholtz-munich.de
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate chicago_mil
+conda activate chicago
 
 cd /home/aih/dinesh.haridoss/chicago_mil
 

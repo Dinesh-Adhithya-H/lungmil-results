@@ -36,9 +36,10 @@ for task in TASKS:
     n_hi_list, n_lo_list = [], []
 
     for s in range(N_SPLITS):
+        task_short = task.replace("_surv", "")
         jpath = (INTERP_ROOT
                  / f"{VARIANT}_split{s}_fold0_{task}"
-                 / f"clinical_feature_imp_data_{task}.json")
+                 / f"clinical_feature_imp_data_{task_short}.json")
         if not jpath.exists():
             print(f"  [skip] {jpath.name} not found for split {s}")
             continue
