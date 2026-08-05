@@ -220,10 +220,12 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
     ax.set_facecolor(BG)
     ax.invert_yaxis()
 
-    # x-range: start from a bit below lowest bar
-    xmin = max(0.0, np.nanmin(means) - np.nanmax(stds) - 0.06)
-    xmax = min(1.0, np.nanmax(means) + np.nanmax(stds) + 0.06)
-    ax.set_xlim(xmin, xmax)
+    ax.set_xlim(0.0, 1.0)
+
+    # Star on best model bar
+    best_i = int(np.nanargmax(means))
+    ax.text(means[best_i] + 0.01, best_i, "★", va="center", ha="left",
+            fontsize=9, color="#BF7320", zorder=6)
 
 
 def make_legend():

@@ -22,11 +22,28 @@ PRED    = ROOT / "results" / "predictions"
 OUT_DIR = ROOT / "figures" / "benchmark"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── palette matches H&E slide deck ──────────────────────────────────────────
-P1_COL  = "#1A5C8A"   # lo-blue  (Phase-1 unimodal)
-P2_COL  = "#17685A"   # teal     (Phase-2 non-temporal)
-LK_COL  = "#952030"   # crimson  (Longitudinal)
-BEST_EDGE = "#BF7320" # amber border on best model bar
+BEST_EDGE = "#BF7320"
+
+SHARED_MODEL_COLORS = {
+    "Linear HE":          "#BDBDBD",
+    "Linear BAL":         "#9E9E9E",
+    "Linear CT":          "#757575",
+    "Linear Clinical":    "#616161",
+    "wt avg Linear":      "#424242",
+    "ABMIL HE":           "#90CAF9",
+    "ABMIL BAL":          "#42A5F5",
+    "ABMIL CT":           "#1976D2",
+    "ABMIL Clinical":     "#1565C0",
+    "wt avg ABMIL":       "#0D47A1",
+    "Early fusion":       "#80CBC4",
+    "Middle fusion":      "#26A69A",
+    "Late fusion":        "#00796B",
+    "SetMIL":             "#CE93D8",
+    "SetMIL-MT":          "#9C27B0",
+    "SetMIL-MT (no SAB)": "#6A1B9A",
+    "LongMK-MT":          "#EF9A9A",
+    "LongMK":             "#C62828",
+}
 
 TASKS = {
     "acr_cls":   {"file": "comparison_acr_cls.csv",   "metric": "BACC",    "label": "ACR classification (BACC)"},
@@ -36,11 +53,15 @@ TASKS = {
 }
 
 MODEL_COLORS = {
-    "P1 HE": P1_COL, "P1 BAL": P1_COL, "P1 CT": P1_COL, "P1 Clinical": P1_COL,
-    "P1 wtd ensemble": "#2D1548",
-    "P2 early": P2_COL, "P2 late": P2_COL, "P2 middle": P2_COL,
-    "P2 mario_kempes": P2_COL,
-    "P2 longitudinal_mk": LK_COL,
+    "P1 HE":             SHARED_MODEL_COLORS["ABMIL HE"],
+    "P1 BAL":            SHARED_MODEL_COLORS["ABMIL BAL"],
+    "P1 CT":             SHARED_MODEL_COLORS["ABMIL CT"],
+    "P1 Clinical":       SHARED_MODEL_COLORS["ABMIL Clinical"],
+    "P1 wtd ensemble":   SHARED_MODEL_COLORS["wt avg ABMIL"],
+    "P2 early":          SHARED_MODEL_COLORS["Early fusion"],
+    "P2 late":           SHARED_MODEL_COLORS["Late fusion"],
+    "P2 middle":         SHARED_MODEL_COLORS["Middle fusion"],
+    "P2 longitudinal_mk":SHARED_MODEL_COLORS["LongMK"],
 }
 
 MODEL_LABELS = {
@@ -52,8 +73,7 @@ MODEL_LABELS = {
     "P2 early":          "Early fusion",
     "P2 late":           "Late fusion",
     "P2 middle":         "Middle fusion",
-    "P2 mario_kempes":   "MarioKempes",
-    "P2 longitudinal_mk":"LongitudinalMK ★",
+    "P2 longitudinal_mk":"LongMK ★",
 }
 
 SPLIT_COLS = ["s0", "s1", "s2", "s3", "s4"]
@@ -115,14 +135,20 @@ def plot_task(ax, df, title, metric, show_legend=False):
     ax.tick_params(axis="both", labelsize=7.5)
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlim(left=max(0, df["mean"].min() - df["std"].max() - 0.08))
+    ax.set_xlim(0.0, 1.0)
+
+    # Star on best bar
+    best_i = int(df["mean"].idxmax() - df.index[0])
+    ax.text(df["mean"].max() + 0.01, best_i, "★", va="center", ha="left",
+            fontsize=9, color=BEST_EDGE, zorder=6)
     ax.invert_yaxis()
 
     if show_legend:
+        from matplotlib.patches import Patch
         handles = [
-            Line2D([0],[0], color=P1_COL, lw=6, alpha=.82, label="Unimodal (P1)"),
-            Line2D([0],[0], color=P2_COL, lw=6, alpha=.82, label="Multimodal non-temporal (P2)"),
-            Line2D([0],[0], color=LK_COL, lw=6, alpha=.82, label="Longitudinal (P2)"),
+            Patch(facecolor=SHARED_MODEL_COLORS["ABMIL HE"],    label="Unimodal ABMIL (P1)"),
+            Patch(facecolor=SHARED_MODEL_COLORS["Early fusion"], label="Fusion (P2)"),
+            Patch(facecolor=SHARED_MODEL_COLORS["LongMK"],       label="LongMK (P2)"),
         ]
         ax.legend(handles=handles, fontsize=7, loc="lower right", framealpha=0.8)
 
@@ -159,10 +185,11 @@ for ax, tk, df in zip(axes, task_keys, dfs):
         ax.set_visible(False)
 
 # Shared legend above
+from matplotlib.patches import Patch
 handles = [
-    Line2D([0],[0], color=P1_COL, lw=8, alpha=.82, label="Unimodal (P1)"),
-    Line2D([0],[0], color=P2_COL, lw=8, alpha=.82, label="Multimodal non-temporal (P2)"),
-    Line2D([0],[0], color=LK_COL, lw=8, alpha=.82, label="Longitudinal (P2) ★ best"),
+    Patch(facecolor=SHARED_MODEL_COLORS["ABMIL HE"],    label="Unimodal ABMIL (P1)"),
+    Patch(facecolor=SHARED_MODEL_COLORS["Early fusion"], label="Fusion (P2)"),
+    Patch(facecolor=SHARED_MODEL_COLORS["LongMK"],       label="LongMK (P2) ★"),
 ]
 fig.legend(handles=handles, loc="upper center", ncol=3, fontsize=9,
            bbox_to_anchor=(0.5, 1.02), framealpha=0.85)

@@ -166,7 +166,7 @@ ax.set_facecolor(BG)
 # Colour map: green = significant, fade to white/yellow at p=1
 cmap = mcolors.LinearSegmentedColormap.from_list(
     "sig", ["#2e7d32", "#a5d6a7", "#fff9c4", "#ef9a9a"], N=256)
-norm = mcolors.Normalize(vmin=0, vmax=0.5)
+norm = mcolors.LogNorm(vmin=0.001, vmax=1.0)
 
 im = ax.imshow(p_matrix, aspect="auto", cmap=cmap, norm=norm,
                interpolation="nearest")

@@ -133,18 +133,24 @@ def load_scores(cfg):
 
 
 def _km(ev, tte):
+    """KM estimator with Greenwood 95% CI. Returns ts, ss, lo, hi."""
     order = np.argsort(tte)
     ev_o, tte_o = ev[order], tte[order]
     n = len(ev_o)
-    at_risk, surv = n, 1.0
-    ts, ss = [0.0], [1.0]
+    at_risk, surv, var_sum = n, 1.0, 0.0
+    ts, ss, los, his = [0.0], [1.0], [1.0], [1.0]
     for i in range(n):
         if ev_o[i] == 1:
             surv *= (at_risk - 1) / at_risk
+            if at_risk > 1:
+                var_sum += 1.0 / (at_risk * (at_risk - 1))
         at_risk -= 1
+        se = surv * np.sqrt(var_sum)
         ts.append(float(tte_o[i]))
         ss.append(surv)
-    return np.array(ts), np.array(ss)
+        los.append(max(0.0, surv - 1.96 * se))
+        his.append(min(1.0, surv + 1.96 * se))
+    return np.array(ts), np.array(ss), np.array(los), np.array(his)
 
 
 def logrank_p(ev1, tte1, ev2, tte2):
@@ -197,19 +203,20 @@ def plot_km(ax, df, cfg, show_legend=False):
     hi = (scores >= q67)
     lo = (scores <= q33)
 
-    t_hi, s_hi = _km(ev[hi], tte[hi])
-    t_lo, s_lo = _km(ev[lo], tte[lo])
+    t_hi, s_hi, lo_hi, hi_hi = _km(ev[hi], tte[hi])
+    t_lo, s_lo, lo_lo, hi_lo = _km(ev[lo], tte[lo])
 
     ax.step(t_hi, s_hi, where="post", color=HI, lw=2.2, label=f"High risk (n={hi.sum()})")
+    ax.fill_between(t_hi, lo_hi, hi_hi, step="post", color=HI, alpha=0.15)
     ax.step(t_lo, s_lo, where="post", color=LO, lw=2.2, label=f"Low risk  (n={lo.sum()})")
+    ax.fill_between(t_lo, lo_lo, hi_lo, step="post", color=LO, alpha=0.15)
 
     # Censor ticks
-    for mask, col in [(hi, HI), (lo, LO)]:
+    for mask, col, t_arr, s_arr in [(hi, HI, t_hi, s_hi), (lo, LO, t_lo, s_lo)]:
         cen = valid[mask & (ev == 0)]
         ax.scatter(cen["tte"].values / 365.25,
-                   np.interp(cen["tte"].values / 365.25, t_hi if (col == HI) else t_lo,
-                             s_hi if (col == HI) else s_lo),
-                   marker="|", color=col, s=30, alpha=0.6, linewidths=1.0)
+                   np.interp(cen["tte"].values / 365.25, t_arr, s_arr),
+                   marker="|", color=col, s=30, alpha=0.6, linewidths=1.0, zorder=5)
 
     p = logrank_p(ev[hi], tte[hi] * 365.25, ev[lo], tte[lo] * 365.25)
     p_str = f"p={p:.3f}" if p >= 0.001 else f"p<0.001"

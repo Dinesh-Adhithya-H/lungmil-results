@@ -93,7 +93,8 @@ for task in TASKS:
 
     out_dir = FIGS_ROOT / task
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"clinical_feature_imp_{task}.png"
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    for ext, dpi in [("png", 200), ("pdf", 150)]:
+        out_path = out_dir / f"clinical_feature_imp_{task}.{ext}"
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
-    print(f"[{task}] saved {out_path.relative_to(REPO)}")
+    print(f"[{task}] saved figures/interpretability/{task}/clinical_feature_imp_{task}.png/pdf")
