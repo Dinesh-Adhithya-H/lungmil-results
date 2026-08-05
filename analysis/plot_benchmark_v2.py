@@ -56,7 +56,7 @@ MODEL_DEFS = [
     ("ABMIL BAL",             SHARED_MODEL_COLORS["ABMIL BAL"],          "p1"),
     ("ABMIL CT",              SHARED_MODEL_COLORS["ABMIL CT"],           "p1"),
     ("ABMIL Clinical",        SHARED_MODEL_COLORS["ABMIL Clinical"],     "p1"),
-    ("ABMIL All",             SHARED_MODEL_COLORS["ABMIL All"],          "p1"),
+    ("wt avg ABMIL",          SHARED_MODEL_COLORS["wt avg ABMIL"],       "p1"),
     # separator
     ("Early fusion",          SHARED_MODEL_COLORS["Early fusion"],       "fusion"),
     ("Middle fusion",         SHARED_MODEL_COLORS["Middle fusion"],      "fusion"),
