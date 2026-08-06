@@ -8,8 +8,8 @@
 #SBATCH --mem=16G
 #SBATCH --time=00:30:00
 
-source ~/.bashrc
-conda activate chicago_mil
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate chicago
 cd /home/aih/dinesh.haridoss/chicago_mil
 
 echo "=== biopsy_rep_umap_km ==="

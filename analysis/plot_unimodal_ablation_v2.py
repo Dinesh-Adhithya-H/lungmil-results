@@ -125,13 +125,22 @@ def load_dl_unimodal(suffix, metric):
             rows = csv_df[(csv_df["variant"] == variant) &
                           (csv_df["task"] == suffix) &
                           (csv_df["metric"] == metric)]
-            for _, r in rows.iterrows():
-                mod = r["modality"]
+            for mod, grp in rows.groupby("modality"):
                 if mod not in MOD_ORDER:
+                    continue
+                # Support both pre-aggregated (mean/std cols) and per-split (split/value cols)
+                if "value" in grp.columns and grp["value"].notna().any():
+                    vals = grp["value"].dropna().tolist()
+                    mn, sd = float(np.nanmean(vals)), float(np.nanstd(vals))
+                elif "mean" in grp.columns and grp["mean"].notna().any():
+                    r = grp.iloc[0]
+                    mn, sd = float(r["mean"]), float(r.get("std", 0.0) or 0.0)
+                    vals = []
+                else:
                     continue
                 if disp not in data:
                     data[disp] = {}
-                data[disp][mod] = {"mean": float(r["mean"]), "std": float(r["std"]), "splits": []}
+                data[disp][mod] = {"mean": mn, "std": sd, "splits": vals}
         else:
             for mod in MOD_ORDER:
                 vals = per_split[mod]
