@@ -73,10 +73,9 @@ def run_ablation(model, tasks, patients, device, ablate_mod):
                 continue
 
             with torch.no_grad():
-                # Build token sequence (reuse extract logic inline)
                 from interpretability.interpret_longitudinal_mk import extract_patient_longitudinal
                 extr = extract_patient_longitudinal(
-                    model, masked, transplant_days, device, tasks)
+                    model, patient, masked, device, tasks)
 
             for t in tasks:
                 logit = extr["logits"].get(t)
@@ -176,9 +175,13 @@ def main():
         # Drop per-split rows (old format had mean/std aggregated — keep those)
         # If the CSV has a "split" column, remove matching rows and append
         if "split" in old_df.columns:
-            mask = ~((old_df["variant"].isin(VARIANTS)) &
-                     (old_df["split"] == args.split))
-            old_df = old_df[mask]
+            is_longmk = old_df["variant"].isin(VARIANTS)
+            # Drop rows for this split OR LongMK rows with NaN values (bad prior runs)
+            drop = is_longmk & (
+                (old_df["split"] == args.split) |
+                (old_df["split"].notna() & old_df["value"].isna())
+            )
+            old_df = old_df[~drop]
         combined = pd.concat([old_df, new_df], ignore_index=True)
     else:
         combined = new_df
