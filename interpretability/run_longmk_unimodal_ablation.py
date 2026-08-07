@@ -30,10 +30,10 @@ SPLITS_CSV  = "/home/aih/dinesh.haridoss/chicago/plots/multimodal_splits_nested_
 OUT_CSV     = ROOT / "interpretability" / "unimodal_ablation" / "unimodal_ablation_summary.csv"
 
 TASK_CFG = {
-    "cls":       {"metric": "bacc",    "surv": False},
-    "acr_surv":  {"metric": "c_index", "surv": True,  "ev_col": "acr_event",  "tte_col": "acr_tte"},
-    "clad_surv": {"metric": "c_index", "surv": True,  "ev_col": "clad_event", "tte_col": "clad_tte"},
-    "death_surv":{"metric": "c_index", "surv": True,  "ev_col": "death_event","tte_col": "death_tte"},
+    "cls":       {"metric": "bacc",    "surv": False, "lbl_col": "label"},
+    "acr_surv":  {"metric": "c_index", "surv": True,  "ev_col": "acr_status",  "tte_col": "acr_days"},
+    "clad_surv": {"metric": "c_index", "surv": True,  "ev_col": "clad_status", "tte_col": "clad_days"},
+    "death_surv":{"metric": "c_index", "surv": True,  "ev_col": "death_status","tte_col": "death_days"},
 }
 
 VARIANTS = {
@@ -102,7 +102,7 @@ def compute_metric(scores, task_key, splits_df):
                 continue
             results.append((score, ev, tte))
         else:
-            lbl = float(row.get("acr_label", np.nan))
+            lbl = float(row.get(cfg.get("lbl_col", "label"), np.nan))
             if np.isnan(lbl):
                 continue
             results.append((score, lbl))
@@ -149,10 +149,12 @@ def main():
             test_patients = split_data.get("test", [])
             print(f"  {len(test_patients)} test patients")
 
+            # `tasks` are internal model keys (e.g. "acr_cls" for task_key="cls")
+            model_task = tasks[0]
             for mod in MOD_ORDER:
                 print(f"  ablating mod={mod} ...")
-                scores = run_ablation(model, [task_key], test_patients, device, mod)
-                val = compute_metric(scores[task_key], task_key, splits_df)
+                scores = run_ablation(model, tasks, test_patients, device, mod)
+                val = compute_metric(scores[model_task], task_key, splits_df)
                 print(f"    {mod}: {val:.4f}" if not np.isnan(val) else f"    {mod}: nan")
                 rows.append({
                     "variant": variant,

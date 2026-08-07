@@ -122,23 +122,23 @@ def _km_step(ev, tte, color, ax, label=""):
     ax.step(t_pts, s_pts, where="post", color=color, lw=1.8, label=label)
 
 
-def patient_risk(data: dict):
-    """Aggregate biopsy-level risk to patient-level (max risk per patient)."""
-    pid_arr = np.array(data["patient_ids"])
-    risk    = data["risk"].numpy()
-    tte     = data["tte"].numpy()
-    event   = data["event"].numpy()
-    pids    = sorted(set(pid_arr))
-    p_risk, p_tte, p_ev = [], [], []
-    for pid in pids:
-        mask = pid_arr == pid
-        r = float(np.nanmax(risk[mask]))
-        t = float(np.nanmean(tte[mask]))
-        e = float(np.nanmax(event[mask]))
-        if np.isnan(r) or np.isnan(t) or np.isnan(e):
-            continue
-        p_risk.append(r); p_tte.append(t); p_ev.append(e)
-    return np.array(p_risk), np.array(p_tte), np.array(p_ev)
+def biopsy_km_data(data: dict):
+    """
+    Build biopsy-level KM inputs.
+
+    tte[i] = event_date - biopsy_date (days):
+      > 0 : biopsy before event → valid prospective observation
+      < 0 : biopsy after event  → exclude (event already occurred)
+      nan : no outcome data
+
+    For censored patients (event==0), tte > 0 is time to last follow-up.
+    """
+    risk  = data["risk"].numpy()
+    tte   = data["tte"].numpy()
+    event = data["event"].numpy()
+    # Keep only biopsies with a valid positive TTE (prospective biopsies)
+    valid = (~np.isnan(risk)) & (~np.isnan(tte)) & (~np.isnan(event)) & (tte > 0)
+    return risk[valid], tte[valid], event[valid]
 
 
 # ── Main plot: 2×4 matching patient rep ────────────────────────────────────────
@@ -210,39 +210,58 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
     # ① Risk score
     _sc(ax_score, scores, "RdBu_r", f"① Risk score\n({score_lbl})", vmin=0, vmax=1)
 
-    # ② Event indicator / label
+    # ② Biopsy timing relative to event (pre/post for survival; label for cls)
     if is_surv:
-        _sc(ax_ev, event, "RdBu_r",
-            "② Event indicator\n(event=red, censored=blue)", vmin=0, vmax=1)
+        # pre-event biopsy (tte>0) vs post-event (tte<0) vs censored (ev=0)
+        pre_ev  = (~np.isnan(tte)) & (tte > 0) & (event == 1)   # before event, event happened
+        post_ev = (~np.isnan(tte)) & (tte < 0) & (event == 1)   # after event already occurred
+        cens    = (~np.isnan(tte)) & (event == 0)                # censored
+        no_data = np.isnan(tte) | np.isnan(event)
+        ax_ev.scatter(x[no_data],  y[no_data],  c="lightgrey", s=MS*0.5, alpha=0.25, linewidths=0)
+        ax_ev.scatter(x[cens],     y[cens],     c=LO,          s=MS,     alpha=0.6,  linewidths=0, label="censored")
+        ax_ev.scatter(x[pre_ev],   y[pre_ev],   c=HI,          s=MS,     alpha=0.85, linewidths=0, label="pre-event")
+        ax_ev.scatter(x[post_ev],  y[post_ev],  c="#FF8A00",   s=MS,     alpha=0.85, linewidths=0, label="post-event")
+        ax_ev.legend(fontsize=6.5, framealpha=0.8, markerscale=1.3)
+        ax_ev.set_title("② Biopsy timing vs event\n(red=pre-event, orange=post, blue=censored)",
+                        fontsize=9, fontweight="bold", pad=4)
     else:
-        valid_lbl = ~np.isnan(label)
         _sc(ax_ev, label, "RdBu_r",
             "② True label\n(positive=red, negative=blue)", vmin=0, vmax=1)
+    ax_ev.set_xlabel("UMAP-1", fontsize=8); ax_ev.set_ylabel("UMAP-2", fontsize=8)
+    ax_ev.tick_params(labelsize=7); ax_ev.set_facecolor(BG)
+    ax_ev.spines[["top","right"]].set_visible(False)
 
-    # ③ TTE scatter + event markers
-    valid_t = ~np.isnan(tte_yrs)
-    if is_surv:
-        tte_clip = np.clip(tte_yrs, 0, np.nanpercentile(tte_yrs[valid_t], 95))
+    # ③ Biopsy-level TTE scatter (only prospective biopsies, tte>0)
+    valid_t = ~np.isnan(tte_yrs) & (tte > 0)   # prospective only
+    if is_surv and valid_t.sum() > 5:
+        tte_pos = tte_yrs[valid_t]
+        tte_clip = np.clip(tte_pos, 0, np.nanpercentile(tte_pos, 95))
         sc_tte = ax_tte.scatter(
             x[valid_t], y[valid_t],
-            c=tte_clip[valid_t], cmap="plasma_r",
+            c=tte_clip, cmap="plasma_r",
             s=MS, alpha=0.80, linewidths=0,
-            vmin=0, vmax=float(np.nanpercentile(tte_clip[valid_t], 95)))
+            vmin=0, vmax=float(np.nanpercentile(tte_clip, 95)))
         cb_tte = fig.colorbar(sc_tte, ax=ax_tte, pad=0.02, fraction=0.046, shrink=0.85)
         cb_tte.ax.tick_params(labelsize=7); cb_tte.set_label("TTE (years)", fontsize=7)
-        ev_mask  = valid_t & (event == 1)
-        cen_mask = valid_t & (event == 0)
-        ax_tte.scatter(x[ev_mask],  y[ev_mask],  marker="x", s=18,
+        ev_pre  = valid_t & (event == 1)
+        cen_pre = valid_t & (event == 0)
+        ax_tte.scatter(x[ev_pre],  y[ev_pre],  marker="x", s=18,
                        color=HI, linewidths=0.9, alpha=0.9, label="event", zorder=3)
-        ax_tte.scatter(x[cen_mask], y[cen_mask], marker="o", s=6,
+        ax_tte.scatter(x[cen_pre], y[cen_pre], marker="o", s=6,
                        color="none", edgecolors=LO, linewidths=0.5, alpha=0.5,
                        label="censored", zorder=2)
         ax_tte.legend(fontsize=6.5, framealpha=0.75, loc="lower right", markerscale=1.2)
-        ax_tte.set_title("③ Time to event\n(short=bright, ×=event, ○=censored)",
+        ax_tte.set_title("③ Biopsy-level TTE (prospective only)\n(short=bright, ×=event, ○=censored)",
                          fontsize=9, fontweight="bold", pad=4)
+        # Grey out post-event biopsies
+        post_e = (~np.isnan(tte_yrs)) & (tte < 0)
+        if post_e.sum() > 0:
+            ax_tte.scatter(x[post_e], y[post_e], c="#cccccc", s=MS*0.5, alpha=0.3,
+                           linewidths=0, label="post-event", zorder=1)
     else:
         ev_cols = np.where(event == 1, HI, LO)
-        ax_tte.scatter(x[valid_t], y[valid_t], c=ev_cols[valid_t],
+        valid_all = ~np.isnan(event)
+        ax_tte.scatter(x[valid_all], y[valid_all], c=ev_cols[valid_all],
                        s=MS, alpha=0.75, linewidths=0)
         ax_tte.set_title("③ TTE / event\n(red=event, blue=censored)",
                          fontsize=9, fontweight="bold", pad=4)
@@ -250,8 +269,8 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
     ax_tte.tick_params(labelsize=7); ax_tte.set_facecolor(BG)
     ax_tte.spines[["top","right"]].set_visible(False)
 
-    # ④ Event density hexbin (median-centred)
-    valid_ev = ~np.isnan(event)
+    # ④ Event density hexbin — prospective biopsies only (tte>0) for survival
+    valid_ev = ~np.isnan(event) & (tte > 0 if is_surv else np.ones(N, bool))
     if valid_ev.sum() > 10:
         hx_ev = ax_ev_hex.hexbin(
             x[valid_ev], y[valid_ev], C=event[valid_ev],
@@ -289,36 +308,34 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
         ax_days.set_facecolor(BG)
         ax_days.spines[["top","right"]].set_visible(False)
 
-    # ⑥ KM: top vs bottom risk tertile (patient-level dedup)
+    # ⑥ KM: top vs bottom risk tertile — biopsy-level (prospective biopsies only, tte>0)
     ax_km.set_facecolor(BG)
     ax_km.spines[["top","right"]].set_visible(False)
     if is_surv:
-        p_risk, p_tte, p_ev = patient_risk(data)
-        valid_km = (~np.isnan(p_risk)) & (~np.isnan(p_tte)) & (~np.isnan(p_ev))
-        if valid_km.sum() >= 20:
-            q33, q67 = np.nanpercentile(p_risk[valid_km], [33, 67])
-            hi_m = valid_km & (p_risk >= q67)
-            lo_m = valid_km & (p_risk <= q33)
+        b_risk, b_tte, b_ev = biopsy_km_data(data)
+        if len(b_risk) >= 20:
+            q33, q67 = np.nanpercentile(b_risk, [33, 67])
+            hi_m = b_risk >= q67
+            lo_m = b_risk <= q33
             if hi_m.sum() > 5 and lo_m.sum() > 5:
-                _km_step(p_ev[hi_m], p_tte[hi_m] / 365.25, HI, ax_km,
+                _km_step(b_ev[hi_m], b_tte[hi_m] / 365.25, HI, ax_km,
                          f"High risk (n={hi_m.sum()})")
-                _km_step(p_ev[lo_m], p_tte[lo_m] / 365.25, LO, ax_km,
+                _km_step(b_ev[lo_m], b_tte[lo_m] / 365.25, LO, ax_km,
                          f"Low risk (n={lo_m.sum()})")
-                # Log-rank p
                 if hi_m.sum() >= 3 and lo_m.sum() >= 3:
-                    lr = logrank_test(p_tte[hi_m], p_tte[lo_m],
-                                      event_observed_A=p_ev[hi_m],
-                                      event_observed_B=p_ev[lo_m])
+                    lr = logrank_test(b_tte[hi_m], b_tte[lo_m],
+                                      event_observed_A=b_ev[hi_m],
+                                      event_observed_B=b_ev[lo_m])
                     ax_km.text(0.98, 0.98, f"log-rank p={lr.p_value:.3g}",
                                transform=ax_km.transAxes, ha="right", va="top", fontsize=8)
-                ax_km.set_xlabel("Time (years)", fontsize=8)
+                ax_km.set_xlabel("Time from biopsy (years)", fontsize=8)
                 ax_km.set_ylabel("Event-free probability", fontsize=8)
                 ax_km.legend(fontsize=7, framealpha=0.8)
                 ax_km.set_ylim(-0.05, 1.05)
     else:
         ax_km.text(0.5, 0.5, "KM not applicable\n(classification task)",
                    ha="center", va="center", transform=ax_km.transAxes, fontsize=9)
-    ax_km.set_title("⑥ KM: top vs bottom risk tertile\n(patient-level, max biopsy risk)",
+    ax_km.set_title("⑥ KM: top vs bottom risk tertile\n(biopsy-level, tte>0 prospective only)",
                     fontsize=9, fontweight="bold", pad=4)
     ax_km.tick_params(labelsize=7)
 
