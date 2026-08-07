@@ -231,51 +231,54 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
     ax_ev.tick_params(labelsize=7); ax_ev.set_facecolor(BG)
     ax_ev.spines[["top","right"]].set_visible(False)
 
-    # ③ Biopsy-level TTE scatter (only prospective biopsies, tte>0)
-    valid_t = ~np.isnan(tte_yrs) & (tte > 0)   # prospective only
-    if is_surv and valid_t.sum() > 5:
-        tte_pos = tte_yrs[valid_t]
-        tte_clip = np.clip(tte_pos, 0, np.nanpercentile(tte_pos, 95))
-        sc_tte = ax_tte.scatter(
-            x[valid_t], y[valid_t],
-            c=tte_clip, cmap="plasma_r",
-            s=MS, alpha=0.80, linewidths=0,
-            vmin=0, vmax=float(np.nanpercentile(tte_clip, 95)))
-        cb_tte = fig.colorbar(sc_tte, ax=ax_tte, pad=0.02, fraction=0.046, shrink=0.85)
-        cb_tte.ax.tick_params(labelsize=7); cb_tte.set_label("TTE (years)", fontsize=7)
-        ev_pre  = valid_t & (event == 1)
-        cen_pre = valid_t & (event == 0)
-        ax_tte.scatter(x[ev_pre],  y[ev_pre],  marker="x", s=18,
-                       color=HI, linewidths=0.9, alpha=0.9, label="event", zorder=3)
-        ax_tte.scatter(x[cen_pre], y[cen_pre], marker="o", s=6,
-                       color="none", edgecolors=LO, linewidths=0.5, alpha=0.5,
-                       label="censored", zorder=2)
+    # ③ TTE scatter — ALL biopsies; prospective (tte>0) get colormap, rest get markers
+    has_tte = ~np.isnan(tte)
+    if is_surv:
+        # Show all biopsies; layer: grey (no outcome) → orange (post-event) → colormap (prospective)
+        no_outcome = np.isnan(tte) | np.isnan(event)
+        post_ev3   = has_tte & (tte < 0)
+        prosp      = has_tte & (tte > 0)
+        ax_tte.scatter(x[no_outcome], y[no_outcome], c="lightgrey", s=MS*0.6,
+                       alpha=0.25, linewidths=0, zorder=1)
+        ax_tte.scatter(x[post_ev3],  y[post_ev3],   c="#FF8A00",  s=MS,
+                       alpha=0.6,  linewidths=0, label="post-event", zorder=2)
+        if prosp.sum() > 0:
+            tte_pos  = tte_yrs[prosp]
+            tte_clip = np.clip(tte_pos, 0, np.nanpercentile(tte_pos, 95) if prosp.sum() > 2 else tte_pos.max())
+            sc_tte = ax_tte.scatter(x[prosp], y[prosp], c=tte_clip, cmap="plasma_r",
+                                    s=MS, alpha=0.85, linewidths=0, vmin=0,
+                                    vmax=float(tte_clip.max() or 1), zorder=3)
+            cb_tte = fig.colorbar(sc_tte, ax=ax_tte, pad=0.02, fraction=0.046, shrink=0.85)
+            cb_tte.ax.tick_params(labelsize=7); cb_tte.set_label("TTE to event (yrs)", fontsize=7)
+            ev_m  = prosp & (event == 1)
+            cen_m = prosp & (event == 0)
+            ax_tte.scatter(x[ev_m],  y[ev_m],  marker="x", s=18, color=HI,
+                           linewidths=0.9, alpha=0.9, label="event", zorder=4)
+            ax_tte.scatter(x[cen_m], y[cen_m], marker="o", s=6, color="none",
+                           edgecolors=LO, linewidths=0.5, alpha=0.5, label="censored", zorder=3)
         ax_tte.legend(fontsize=6.5, framealpha=0.75, loc="lower right", markerscale=1.2)
-        ax_tte.set_title("③ Biopsy-level TTE (prospective only)\n(short=bright, ×=event, ○=censored)",
+        n_pro = int(prosp.sum()); n_post = int(post_ev3.sum()); n_nan = int(no_outcome.sum())
+        ax_tte.set_title(f"③ Biopsy TTE (prospective=bright, post-event=orange)\n"
+                         f"pro={n_pro} post={n_post} no-data={n_nan}",
                          fontsize=9, fontweight="bold", pad=4)
-        # Grey out post-event biopsies
-        post_e = (~np.isnan(tte_yrs)) & (tte < 0)
-        if post_e.sum() > 0:
-            ax_tte.scatter(x[post_e], y[post_e], c="#cccccc", s=MS*0.5, alpha=0.3,
-                           linewidths=0, label="post-event", zorder=1)
     else:
         ev_cols = np.where(event == 1, HI, LO)
         valid_all = ~np.isnan(event)
-        ax_tte.scatter(x[valid_all], y[valid_all], c=ev_cols[valid_all],
-                       s=MS, alpha=0.75, linewidths=0)
-        ax_tte.set_title("③ TTE / event\n(red=event, blue=censored)",
-                         fontsize=9, fontweight="bold", pad=4)
+        ax_tte.scatter(x[~valid_all], y[~valid_all], c="lightgrey", s=MS*0.6, alpha=0.25, linewidths=0)
+        ax_tte.scatter(x[valid_all],  y[valid_all],  c=ev_cols[valid_all], s=MS, alpha=0.75, linewidths=0)
+        ax_tte.set_title("③ TTE / event\n(red=event, blue=censored)", fontsize=9, fontweight="bold", pad=4)
     ax_tte.set_xlabel("UMAP-1", fontsize=8); ax_tte.set_ylabel("UMAP-2", fontsize=8)
     ax_tte.tick_params(labelsize=7); ax_tte.set_facecolor(BG)
     ax_tte.spines[["top","right"]].set_visible(False)
 
-    # ④ Event density hexbin — prospective biopsies only (tte>0) for survival
-    valid_ev = ~np.isnan(event) & (tte > 0 if is_surv else np.ones(N, bool))
+    # ④ Event density hexbin — all biopsies with event data, adaptive gridsize
+    valid_ev = ~np.isnan(event)
+    gs4 = max(10, min(30, int(np.sqrt(valid_ev.sum()) // 2)))   # adaptive gridsize
     if valid_ev.sum() > 10:
         hx_ev = ax_ev_hex.hexbin(
             x[valid_ev], y[valid_ev], C=event[valid_ev],
             reduce_C_function=np.mean,
-            gridsize=30, cmap="RdBu_r", linewidths=0.2)
+            gridsize=gs4, cmap="RdBu_r", linewidths=0.2)
         hex_vals = hx_ev.get_array()
         med_ev   = float(np.nanmedian(hex_vals))
         half_ev  = max(abs(float(hex_vals.max()) - med_ev),
@@ -285,7 +288,7 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
         cb_ev.set_label(f"Event rate (med={med_ev:.2f})", fontsize=7)
         cb_ev.ax.tick_params(labelsize=7)
         label_iv = "④ Event density" if is_surv else "④ Positive label density"
-        ax_ev_hex.set_title(f"{label_iv}\n(median-centred, red=above median)",
+        ax_ev_hex.set_title(f"{label_iv}\n(all biopsies w/ outcome, red=high)",
                             fontsize=9, fontweight="bold", pad=4)
     else:
         ax_ev_hex.text(0.5, 0.5, "no event data", ha="center", va="center",
@@ -352,15 +355,20 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
     ax_split.spines[["top","right"]].set_visible(False)
     ax_split.legend(fontsize=6.5, framealpha=0.8, ncol=2, markerscale=1.2)
 
-    # ⑧ Avg TTE hexbin (median-centred)
-    valid_th = ~np.isnan(tte_yrs)
+    # ⑧ Avg TTE hexbin (median-centred) — prospective biopsies (tte>0) where available,
+    #    else all valid tte
+    valid_th = ~np.isnan(tte_yrs) & (tte > 0)
+    if valid_th.sum() < 10:
+        valid_th = ~np.isnan(tte_yrs)   # fall back to all if too few prospective
     if valid_th.sum() > 10:
-        tte_clip_hex = np.clip(tte_yrs, 0, np.nanpercentile(tte_yrs[valid_th], 95))
+        gs8 = max(10, min(30, int(np.sqrt(valid_th.sum()) // 2)))
+        tte_clip_hex = np.clip(tte_yrs[valid_th], 0,
+                               np.nanpercentile(tte_yrs[valid_th], 95))
         hx_tte = ax_tte_hex.hexbin(
             x[valid_th], y[valid_th],
-            C=tte_clip_hex[valid_th],
+            C=tte_clip_hex,
             reduce_C_function=np.mean,
-            gridsize=30, cmap="RdBu", linewidths=0.2)
+            gridsize=gs8, cmap="RdBu", linewidths=0.2)
         tte_hex_v = hx_tte.get_array()
         med_th    = float(np.nanmedian(tte_hex_v))
         half_th   = max(abs(float(tte_hex_v.max()) - med_th),
