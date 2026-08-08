@@ -194,6 +194,7 @@ def plot_task_bars(task_key, cfg):
     ax.set_xticks(x)
     ax.set_xticklabels(MOD_ORDER, fontsize=11, fontweight="bold")
     ax.set_ylabel(cfg["metric"].upper(), fontsize=9)
+    ax.set_ylim(0, 1)
     ax.set_title(f"Unimodal ablation — {cfg['label']}", fontsize=11, fontweight="bold")
     ax.spines[["top", "right"]].set_visible(False)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
@@ -229,7 +230,7 @@ def plot_heatmap(task_key, cfg):
     mat = np.array(rows)
     fig, ax = plt.subplots(figsize=(6, 7), facecolor=BG)
     fig.patch.set_facecolor(BG)
-    im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0.4, vmax=0.8)
+    im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0.0, vmax=1.0)
     for i in range(mat.shape[0]):
         for j in range(mat.shape[1]):
             v = mat[i, j]
@@ -277,6 +278,7 @@ def plot_combined():
         ax.axhline(0.5, color="#999", linewidth=0.7, linestyle=":", alpha=0.5)
         ax.set_xticks(x)
         ax.set_xticklabels(MOD_ORDER, fontsize=9, fontweight="bold")
+        ax.set_ylim(0, 1)
         ax.set_title(cfg["label"], fontsize=9, fontweight="bold")
         ax.spines[["top", "right"]].set_visible(False)
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
