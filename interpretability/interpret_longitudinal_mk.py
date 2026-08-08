@@ -432,6 +432,7 @@ def extract_patient_longitudinal(
     temporal_attn:   Dict[str, dict]        = {}
     alpha_per_task:  Dict[str, np.ndarray]  = {}
     hazard_traj:     Dict[str, List[float]] = {t: [] for t in tasks}
+    per_biopsy_reps: Dict[str, list]        = {}
     logits_out:      Dict[str, float]       = {}
     rep_full_per_task: Dict[str, np.ndarray] = {}
 
@@ -491,8 +492,10 @@ def extract_patient_longitudinal(
         biopsy_weights[task] = bw_vals  # (T,) or None
 
         # --- Per-biopsy hazard trajectory (causal: use tokens up to end_idx) ---
+        per_biopsy_reps[task] = []
         for t_idx, end_idx in enumerate(biopsy_ends):
             if end_idx == 0:
+                per_biopsy_reps[task].append(None)
                 continue
             tok_t  = tokens_t[:end_idx]
             days_t = days_tok[:end_idx]
@@ -513,6 +516,7 @@ def extract_patient_longitudinal(
                 rep2   = (alp2.unsqueeze(1) * tok_t).sum(0)
             haz    = m.heads[task](rep2).squeeze().item()
             hazard_traj[task].append(haz)
+            per_biopsy_reps[task].append(rep2.detach().cpu())
 
         # Final logit from full sequence
         rep_full   = (alpha.unsqueeze(1) * tokens_t).sum(0)
@@ -532,6 +536,7 @@ def extract_patient_longitudinal(
         "biopsy_weights":  biopsy_weights,       # {task: (T,) ndarray} or None per task
         "alpha_per_task":  alpha_per_task,       # {task: (N,)}
         "hazard_traj":     hazard_traj,          # {task: [float×T]}
+        "per_biopsy_reps": per_biopsy_reps,      # {task: [Tensor(H,) or None, ×T]}
         "seeds_norms_grid":seeds_norms_grid,     # (T, n_mods, K) nan=absent
         "logits":          logits_out,           # {task: float}
         "rep_full":        rep_full_per_task,    # {task: (H,) ndarray}

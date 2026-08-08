@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
 from shared import SPLITS_CSV, SAMPLES_DIR, RESULTS_ROOT, MOD_ORDER
-from interpret_longitudinal_mk import load_model, load_patient_bags
+from interpret_longitudinal_mk import load_model, load_patient_bags, extract_patient_longitudinal
 from mil.data.splits import build_splits_longitudinal
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -67,145 +67,68 @@ TASK_CFG = {
 OUT_DIR = RESULTS_ROOT.parent / "biopsy_reps"
 
 
-# ── Monkey-patch helpers ────────────────────────────────────────────────────────
-
-def _install_rep_hook(model):
-    """Patch model._abmil_rep to record (task, anchor_day, rep) per call."""
-    call_log = []
-    orig_abmil = model._abmil_rep  # bound method
-
-    def patched_abmil(task, tokens, days, anchor_day):
-        rep = orig_abmil(task, tokens, days, anchor_day)
-        call_log.append({
-            "task":       task,
-            "anchor_day": float(anchor_day),
-            "rep":        rep.detach().cpu(),
-        })
-        return rep
-
-    model._abmil_rep = patched_abmil
-    return call_log, orig_abmil
-
-
-def _install_sab_hook(model):
-    """Patch model._sab_forward to capture contextual tokens."""
-    tokens_captured = [None]
-    orig_sab = model._sab_forward  # bound method
-
-    def patched_sab(tokens, days):
-        result = orig_sab(tokens, days)
-        tokens_captured[0] = result.detach()
-        return result
-
-    model._sab_forward = patched_sab
-    return tokens_captured, orig_sab
-
-
-def _restore(model, orig_abmil, orig_sab):
-    model._abmil_rep  = orig_abmil
-    model._sab_forward = orig_sab
-
-
 # ── Per-patient extraction ──────────────────────────────────────────────────────
 
 def extract_patient(model, patient, device, task_cfg):
     """
     Run model on a patient and return per-biopsy reps + risk scores.
 
-    Returns:
-      records: list of dicts, one per biopsy position (length = T for survival,
-               only labeled biopsies for acr_cls).
-        {
-          "stem": str,
-          "biopsy_day": float,
-          "rep": Tensor (256,),
-          "risk": float,
-          "tte": float or nan,
-          "event": float or nan,
-          "label": float or nan,
-        }
-    """
-    bags_list, transplant_days = load_patient_bags(patient, device)
-    patient_days = patient["days"]      # days from t0
-    records      = patient["records"]
+    Uses extract_patient_longitudinal which computes reps causally at each biopsy
+    position — guaranteed to produce T records per patient regardless of whether
+    the model's forward() calls _abmil_rep internally.
 
+    Returns list of dicts, one per biopsy position:
+      { "stem", "biopsy_day", "rep": Tensor(256,), "risk", "tte", "event", "label" }
+    """
+    bags_list, _ = load_patient_bags(patient, device)
     bags_ok = [b for b in bags_list if any(v is not None for v in b.values())]
     if not bags_ok:
         return []
-
-    patient_data = {
-        "bags_list": bags_list,
-        "days":      patient_days,
-        "records":   records,
-    }
-
-    call_log, orig_abmil = _install_rep_hook(model)
-    tokens_captured, orig_sab = _install_sab_hook(model)
-
-    with torch.no_grad():
-        out = model.forward(patient_data, device)
-
-    _restore(model, orig_abmil, orig_sab)
 
     longi_key = task_cfg["longi_key"]
     tte_key   = task_cfg["tte_key"]
     evt_key   = task_cfg["event_key"]
     lbl_key   = task_cfg["label_key"]
+    records   = patient["records"]
+    days      = patient["days"]
 
-    # Build anchor_day → record lookup from patient records
-    anchor_to_rec = {}
-    for i, (rec, day) in enumerate(zip(records, patient_days)):
-        anchor_to_rec[float(day)] = (i, rec)
+    with torch.no_grad():
+        extr = extract_patient_longitudinal(
+            model, patient, bags_list, device, tasks=[longi_key]
+        )
+    if extr is None:
+        return []
 
-    # Match call_log entries for this task
-    task_calls = [c for c in call_log if c["task"] == longi_key]
+    haz_traj  = extr["hazard_traj"].get(longi_key, [])
+    rep_list  = extr["per_biopsy_reps"].get(longi_key, [])
+    T         = extr["n_biopsies"]
 
     result = []
-    for c in task_calls:
-        anchor_day = c["anchor_day"]
-        rep        = c["rep"]
-        idx_match  = min(anchor_to_rec.keys(), key=lambda d: abs(d - anchor_day))
-        i, rec     = anchor_to_rec[idx_match]
-        stem       = patient["stems"][i]
+    for t_idx in range(T):
+        if t_idx >= len(haz_traj):
+            break
+        rep = rep_list[t_idx] if t_idx < len(rep_list) and rep_list[t_idx] is not None else None
+        if rep is None:
+            continue
 
-        tte   = float(rec.get(tte_key, float("nan"))) if tte_key else float("nan")
-        event = float(rec.get(evt_key, float("nan"))) if evt_key else float("nan")
-        label = float(rec.get(lbl_key, float("nan"))) if lbl_key else float("nan")
+        rec  = records[t_idx]
+        stem = patient["stems"][t_idx]
+        day  = float(days[t_idx])
+
+        tte   = float(rec.get(tte_key,  float("nan"))) if tte_key  else float("nan")
+        event = float(rec.get(evt_key,  float("nan"))) if evt_key  else float("nan")
+        label = float(rec.get(lbl_key,  float("nan"))) if lbl_key  else float("nan")
         if label is None:
             label = float("nan")
 
-        # Risk: extract from model output
-        risk = float("nan")
-        task_out = out.get(longi_key, out.get("acr_surv"))
-        if isinstance(task_out, (list, tuple)) and len(task_out) > 0:
-            if isinstance(task_out[0], tuple):
-                # list of (hazard/logit, ...)
-                if i < len(task_out):
-                    h = task_out[i][0]
-                    if isinstance(h, torch.Tensor):
-                        risk = float(h.item())
-                    else:
-                        risk = float(h)
-            else:
-                # single patient-level output: (hazard, rep, ...)
-                h = task_out[0]
-                if isinstance(h, torch.Tensor):
-                    risk = float(h.item())
-                else:
-                    risk = float(h)
-        elif isinstance(task_out, tuple) and len(task_out) >= 1:
-            h = task_out[0]
-            if isinstance(h, torch.Tensor):
-                risk = float(h.item())
-
         result.append({
-            "stem":        stem,
-            "biopsy_day":  float(patient_days[i]),
-            "rep":         rep,
-            "risk":        risk,
-            "tte":         tte,
-            "event":       event,
-            "label":       label,
+            "stem":       stem,
+            "biopsy_day": day,
+            "rep":        rep,
+            "risk":       float(haz_traj[t_idx]),
+            "tte":        tte,
+            "event":      event,
+            "label":      label,
         })
 
     return result

@@ -11,7 +11,7 @@
 #SBATCH --array=0-4
 
 source ~/.bashrc
-conda activate chicago_mil
+conda activate chicago
 cd /home/aih/dinesh.haridoss/chicago_mil
 
 SPLIT=${SLURM_ARRAY_TASK_ID}
@@ -20,7 +20,7 @@ echo "=== extract_biopsy_reps split=${SPLIT} ==="
 python interpretability/extract_biopsy_reps.py \
     --split  ${SPLIT} \
     --fold   0 \
-    --tasks  acr_cls acr_surv clad_surv death_surv \
+    --tasks  acr_surv \
     --device cuda
 
 echo "=== Done split=${SPLIT} ==="

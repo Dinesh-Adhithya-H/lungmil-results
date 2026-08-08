@@ -222,10 +222,14 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
 
     ax.set_xlim(0.0, 1.0)
 
-    # Star on best model bar
-    best_i = int(np.nanargmax(means))
-    ax.text(means[best_i] + 0.01, best_i, "★", va="center", ha="left",
-            fontsize=9, color="#BF7320", zorder=6)
+    # Star on best multimodal model bar
+    MULTIMODAL_GROUPS = {"fusion", "setmil", "longi"}
+    mm_mask = np.array([MODEL_GROUPS[lbl] in MULTIMODAL_GROUPS for lbl in MODEL_LABELS])
+    mm_means = np.where(mm_mask, means, np.nan)
+    if not np.all(np.isnan(mm_means)):
+        best_i = int(np.nanargmax(mm_means))
+        ax.text(means[best_i] + 0.01, best_i, "★", va="center", ha="left",
+                fontsize=9, color="#BF7320", zorder=6)
 
 
 def make_legend():
