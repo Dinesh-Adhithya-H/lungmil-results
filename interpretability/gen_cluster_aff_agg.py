@@ -251,7 +251,7 @@ def plot_task(agg, cfg, task_key, top_n=14):
             fontsize=FONT, fontweight="bold",
             color=MOD_COLORS.get(mod, "#333"), pad=8)
         ax.text(0.98, 0.01, f"n={n_sp} splits", transform=ax.transAxes,
-                ha="right", va="bottom", fontsize=FONT - 4, color="#888")
+                ha="right", va="bottom", fontsize=FONT - 2, color="#555")
         ax.set_xlim(-shared_xlim, shared_xlim)
         ax.spines[["top", "right"]].set_visible(False)
         ax.spines["left"].set_linewidth(0.7)
@@ -262,14 +262,15 @@ def plot_task(agg, cfg, task_key, top_n=14):
         Patch(facecolor="#C62828", alpha=0.88, label=f"Enriched in {cfg['hi_lbl']}"),
         Patch(facecolor="#1565C0", alpha=0.88, label=f"Enriched in {cfg['lo_lbl']}"),
     ]
-    axes[0].legend(handles=legend_elems, fontsize=FONT - 3, loc="lower right",
-                   framealpha=0.85, edgecolor="#ccc")
+    for ax in axes:
+        ax.legend(handles=legend_elems, fontsize=FONT - 3, loc="lower right",
+                  framealpha=0.85, edgecolor="#ccc")
 
     fig.suptitle(
         f"{cfg['label']}\n"
         f"Model: {cfg['variant']}  [{cfg['performance']}]  |  "
         f"Cluster attribution Δ affinity (mean ± s.d., {agg[mods[0]]['n_splits']} splits)",
-        fontsize=FONT + 1, fontweight="bold", y=1.01)
+        fontsize=FONT + 2, fontweight="bold", y=1.01)
     fig.tight_layout(rect=[0, 0, 1, 1])
 
     stem = OUT_FIGURES / f"{task_key}_cluster_aff_agg"

@@ -30,12 +30,12 @@ SHARED_MODEL_COLORS = {
     "Linear BAL":         "#9E9E9E",
     "Linear CT":          "#757575",
     "Linear Clinical":    "#616161",
-    "wt avg Linear":     "#424242",
+    "Wtd. avg. Linear":  "#424242",
     "ABMIL HE":           "#90CAF9",
     "ABMIL BAL":          "#42A5F5",
     "ABMIL CT":           "#1976D2",
     "ABMIL Clinical":     "#1565C0",
-    "wt avg ABMIL":      "#0D47A1",
+    "Wtd. avg. ABMIL":   "#0D47A1",
     "Early fusion":       "#80CBC4",
     "Middle fusion":      "#26A69A",
     "Late fusion":        "#00796B",
@@ -69,14 +69,16 @@ VARIANT_LABELS = {
 MOD_ORDER  = ["HE", "BAL", "CT", "Clinical"]
 MOD_COLORS = {"HE": "#E64A19", "BAL": "#1565C0", "CT": "#2E7D32", "Clinical": "#9b59b6"}
 
+METRIC_LABELS = {"bacc": "BACC", "c_index": "C-index"}
+
 TASK_CFG = {
-    "acr_cls":   {"suffix": "cls",       "metric": "bacc",    "label": "ACR cls (BACC)",
+    "acr_cls":   {"suffix": "cls",       "metric": "bacc",    "label": "ACR Classification (BACC)",
                   "lin_task": "ACR",    "lin_metric": "bacc"},
-    "acr_surv":  {"suffix": "acr_surv",  "metric": "c_index", "label": "ACR surv (C-index)",
+    "acr_surv":  {"suffix": "acr_surv",  "metric": "c_index", "label": "ACR Survival (C-index)",
                   "lin_task": "ACR_TTE","lin_metric": "cindex"},
-    "clad_surv": {"suffix": "clad_surv", "metric": "c_index", "label": "CLAD (C-index)",
+    "clad_surv": {"suffix": "clad_surv", "metric": "c_index", "label": "CLAD Survival (C-index)",
                   "lin_task": "CLAD",   "lin_metric": "cindex"},
-    "death_surv":{"suffix": "death_surv","metric": "c_index", "label": "Death (C-index)",
+    "death_surv":{"suffix": "death_surv","metric": "c_index", "label": "Death Survival (C-index)",
                   "lin_task": "Death",  "lin_metric": "cindex"},
 }
 
@@ -184,16 +186,11 @@ def plot_task_bars(task_key, cfg):
                 if not np.isnan(sv):
                     ax.scatter(x[mi2] + offset, sv, s=8, color="white",
                                edgecolors=col, linewidths=0.6, zorder=4, alpha=0.9)
-            # Mean±std text annotation above each bar
-            txt = f"{d['mean']:.2f}±{d['std']:.2f}"
-            ax.text(x[mi2] + offset, d["mean"] + d["std"] + 0.004, txt,
-                    ha="center", va="bottom", fontsize=4.0, color="#333",
-                    rotation=90, zorder=5)
 
     ax.axhline(0.5, color="#999", linewidth=0.7, linestyle=":", alpha=0.5)
     ax.set_xticks(x)
     ax.set_xticklabels(MOD_ORDER, fontsize=11, fontweight="bold")
-    ax.set_ylabel(cfg["metric"].upper(), fontsize=9)
+    ax.set_ylabel(METRIC_LABELS.get(cfg["metric"], cfg["metric"].upper()), fontsize=9)
     ax.set_ylim(0, 1)
     ax.set_title(f"Unimodal ablation — {cfg['label']}", fontsize=11, fontweight="bold")
     ax.spines[["top", "right"]].set_visible(False)
@@ -201,7 +198,7 @@ def plot_task_bars(task_key, cfg):
     ax.tick_params(labelsize=8)
 
     legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(m, "#888"), label=m) for m in MODEL_ORDER]
-    ax.legend(handles=legend_handles, fontsize=6.5, ncol=2, framealpha=0.85,
+    ax.legend(handles=legend_handles, fontsize=8, ncol=2, framealpha=0.85,
               loc="lower right", edgecolor="#ccc")
 
     fig.tight_layout()
@@ -241,7 +238,7 @@ def plot_heatmap(task_key, cfg):
     ax.set_xticklabels(MOD_ORDER, fontsize=9, fontweight="bold")
     ax.set_yticks(range(len(row_labels)))
     ax.set_yticklabels(row_labels, fontsize=8)
-    plt.colorbar(im, ax=ax, shrink=0.6, label=cfg["metric"].upper())
+    plt.colorbar(im, ax=ax, shrink=0.6, label=METRIC_LABELS.get(cfg["metric"], cfg["metric"].upper()))
     ax.set_title(f"Unimodal ablation heatmap — {cfg['label']}", fontsize=10, fontweight="bold")
     fig.tight_layout()
     for ext in ("png", "pdf"):
@@ -285,7 +282,7 @@ def plot_combined():
         ax.tick_params(labelsize=7)
 
     legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(m, "#888"), label=m) for m in MODEL_ORDER]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=5, fontsize=7,
+    fig.legend(handles=legend_handles, loc="lower center", ncol=5, fontsize=8,
                bbox_to_anchor=(0.5, -0.06), frameon=False)
     fig.tight_layout()
     for ext in ("png", "pdf"):

@@ -27,12 +27,12 @@ SHARED_MODEL_COLORS = {
     "Linear BAL":         "#9E9E9E",
     "Linear CT":          "#757575",
     "Linear Clinical":    "#616161",
-    "wt avg Linear":     "#424242",
+    "Wtd. avg. Linear":  "#424242",
     "ABMIL HE":           "#90CAF9",
     "ABMIL BAL":          "#42A5F5",
     "ABMIL CT":           "#1976D2",
     "ABMIL Clinical":     "#1565C0",
-    "wt avg ABMIL":      "#0D47A1",
+    "Wtd. avg. ABMIL":   "#0D47A1",
     "Early fusion":       "#80CBC4",
     "Middle fusion":      "#26A69A",
     "Late fusion":        "#00796B",
@@ -50,13 +50,13 @@ MODEL_DEFS = [
     ("Linear BAL",            SHARED_MODEL_COLORS["Linear BAL"],         "linear"),
     ("Linear CT",             SHARED_MODEL_COLORS["Linear CT"],          "linear"),
     ("Linear Clinical",       SHARED_MODEL_COLORS["Linear Clinical"],    "linear"),
-    ("wt avg Linear",            SHARED_MODEL_COLORS["wt avg Linear"],         "linear"),
+    ("Wtd. avg. Linear",          SHARED_MODEL_COLORS["Wtd. avg. Linear"],      "linear"),
     # separator
     ("ABMIL HE",              SHARED_MODEL_COLORS["ABMIL HE"],           "p1"),
     ("ABMIL BAL",             SHARED_MODEL_COLORS["ABMIL BAL"],          "p1"),
     ("ABMIL CT",              SHARED_MODEL_COLORS["ABMIL CT"],           "p1"),
     ("ABMIL Clinical",        SHARED_MODEL_COLORS["ABMIL Clinical"],     "p1"),
-    ("wt avg ABMIL",          SHARED_MODEL_COLORS["wt avg ABMIL"],       "p1"),
+    ("Wtd. avg. ABMIL",       SHARED_MODEL_COLORS["Wtd. avg. ABMIL"],    "p1"),
     # separator
     ("Early fusion",          SHARED_MODEL_COLORS["Early fusion"],       "fusion"),
     ("Middle fusion",         SHARED_MODEL_COLORS["Middle fusion"],      "fusion"),
@@ -95,7 +95,7 @@ CSV_TO_DISPLAY = {
     "P1 BAL":          "ABMIL BAL",
     "P1 CT":           "ABMIL CT",
     "P1 Clinical":     "ABMIL Clinical",
-    "P1 wtd ensemble": "wt avg ABMIL",
+    "P1 wtd ensemble": "Wtd. avg. ABMIL",
     "Early fusion":    "Early fusion",
     "Middle fusion":   "Middle fusion",
     "Late fusion":     "Late fusion",
@@ -206,7 +206,7 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
                            linewidths=0.7, zorder=5, alpha=0.9)
 
     # Chance / 0.5 line
-    ax.axvline(0.5, color="#999", linewidth=0.7, linestyle=":", alpha=0.5)
+    ax.axvline(0.5, color="#999", linewidth=0.9, linestyle=":", alpha=0.7, label="Chance (0.5)")
 
     ax.set_yticks(y)
     ax.set_yticklabels(MODEL_LABELS, fontsize=7.5)
@@ -229,11 +229,15 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
     if not np.all(np.isnan(mm_means)):
         best_i = int(np.nanargmax(mm_means))
         ax.text(means[best_i] + 0.01, best_i, "★", va="center", ha="left",
-                fontsize=9, color="#BF7320", zorder=6)
+                fontsize=14, color="#BF7320", zorder=6)
 
 
 def make_legend():
-    return [Patch(facecolor=col, label=lbl) for lbl, col, _ in MODEL_DEFS]
+    import matplotlib.lines as mlines
+    handles = [Patch(facecolor=col, label=lbl) for lbl, col, _ in MODEL_DEFS]
+    handles.append(mlines.Line2D([], [], color="#999", linewidth=0.9,
+                                 linestyle=":", label="Chance (0.5)"))
+    return handles
 
 
 # ── Per-task figures ──────────────────────────────────────────────────────────
@@ -241,7 +245,7 @@ for task_key in TASKS:
     fig, ax = plt.subplots(figsize=(8, 10), facecolor=BG)
     fig.patch.set_facecolor(BG)
     plot_task(ax, task_key, fig)
-    ax.legend(handles=make_legend(), fontsize=6.5, loc="lower right",
+    ax.legend(handles=make_legend(), fontsize=8, loc="lower right",
               ncol=2, framealpha=0.9, edgecolor="#ccc")
     fig.tight_layout()
     for ext in ("png", "pdf"):
@@ -256,7 +260,7 @@ fig.suptitle("Benchmark — all models, all tasks (fixed model order, linear bas
              fontsize=12, fontweight="bold")
 for ax, task_key in zip(axes, TASKS):
     plot_task(ax, task_key, fig, show_ylabel=False)
-fig.legend(handles=make_legend(), loc="lower center", ncol=6, fontsize=7,
+fig.legend(handles=make_legend(), loc="lower center", ncol=5, fontsize=8,
            bbox_to_anchor=(0.5, -0.02), frameon=False)
 fig.tight_layout()
 for ext in ("png", "pdf"):

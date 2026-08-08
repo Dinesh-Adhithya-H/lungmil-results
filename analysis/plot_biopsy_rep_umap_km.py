@@ -329,7 +329,14 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
                     lr = logrank_test(b_tte[hi_m], b_tte[lo_m],
                                       event_observed_A=b_ev[hi_m],
                                       event_observed_B=b_ev[lo_m])
-                    ax_km.text(0.98, 0.98, f"log-rank p={lr.p_value:.3g}",
+                    pv = lr.p_value
+                    if pv < 0.001:
+                        pv_str = f"p < 0.001 (={pv:.2e})"
+                    elif pv < 0.05:
+                        pv_str = f"p = {pv:.3f}"
+                    else:
+                        pv_str = f"p = {pv:.3f} (n.s.)"
+                    ax_km.text(0.98, 0.98, f"log-rank {pv_str}",
                                transform=ax_km.transAxes, ha="right", va="top", fontsize=8)
                 ax_km.set_xlabel("Time from biopsy (years)", fontsize=8)
                 ax_km.set_ylabel("Event-free probability", fontsize=8)
