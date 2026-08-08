@@ -37,7 +37,7 @@ HE_BIO_COLORS = {
     "Cartilage":                                "#795548",
     "Unknown":                                  "#9E9E9E",
 }
-MOD_COLORS = {"HE": "#E64A19", "BAL": "#1565C0", "CT": "#2E7D32"}
+MOD_COLORS = {"HE": "#E64A19", "BAL": "#1565C0", "CT": "#2E7D32", "Clinical": "#9b59b6"}
 FONT = 12
 
 plt.rcParams.update({
@@ -195,6 +195,16 @@ def plot_task(agg, cfg, task_key, top_n=14):
     if n_cols == 1:
         axes = [axes]
 
+    # Shared x-axis limit across all modalities
+    global_abs_max = 0.0
+    for mod in mods:
+        d = agg[mod]
+        order = np.argsort(np.abs(d["delta_mean"]))[::-1][:top_n]
+        vals = d["delta_mean"][order]
+        errs = d["delta_std"][order]
+        global_abs_max = max(global_abs_max, np.max(np.abs(vals) + errs))
+    shared_xlim = global_abs_max * 1.15  # 15% padding
+
     for ax, mod in zip(axes, mods):
         d = agg[mod]
         delta = d["delta_mean"]
@@ -242,6 +252,7 @@ def plot_task(agg, cfg, task_key, top_n=14):
             color=MOD_COLORS.get(mod, "#333"), pad=8)
         ax.text(0.98, 0.01, f"n={n_sp} splits", transform=ax.transAxes,
                 ha="right", va="bottom", fontsize=FONT - 4, color="#888")
+        ax.set_xlim(-shared_xlim, shared_xlim)
         ax.spines[["top", "right"]].set_visible(False)
         ax.spines["left"].set_linewidth(0.7)
         ax.spines["bottom"].set_linewidth(0.7)
