@@ -177,6 +177,22 @@ def patient_episode(pid: str) -> Optional[pd.Series]:
     return rows.iloc[0] if len(rows) else None
 
 
+@st.cache_data(show_spinner=False)
+def load_biopsy_umap(task: str) -> pd.DataFrame:
+    """Load per-biopsy UMAP for a given task (acr_cls, acr_surv, clad_surv, death_surv)."""
+    p = DATA_DIR / f"biopsy_umap_{task}.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_csv(p)
+
+
+def patient_biopsy_umap(pid: str, task: str) -> pd.DataFrame:
+    df = load_biopsy_umap(task)
+    if df.empty:
+        return df
+    return df[df["patient_id"] == pid].copy()
+
+
 def patient_umap(pid: str) -> pd.DataFrame:
     df = load_umap()
     if df.empty:
