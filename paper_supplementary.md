@@ -146,8 +146,8 @@ Performance on held-out test sets across all 5 outer splits (mean ± standard de
 | Early fusion | 0.583 ± 0.063 | 0.575 ± 0.055 | 0.505 ± 0.073 | 0.645 ± 0.064 |
 | Late fusion | 0.592 ± 0.032 | 0.585 ± 0.061 | 0.534 ± 0.093 | 0.638 ± 0.057 |
 | Middle fusion | 0.559 ± 0.045 | 0.574 ± 0.092 | 0.516 ± 0.069 | 0.656 ± 0.063 |
-| SetMIL-MT | 0.595 ± 0.031 | 0.489 ± 0.072 | **0.563 ± 0.078** ★ | 0.664 ± 0.046 |
-| SetMIL-MT (no SAB) | **0.623 ± 0.031** ★ | 0.593 ± 0.066 | 0.536 ± 0.067 | 0.656 ± 0.039 |
+| SetMIL-MT | 0.595 ± 0.031 | 0.489 ± 0.072 | **0.563 ± 0.080** ★ | 0.664 ± 0.046 |
+| SetMIL-MT (no SAB) | **0.623 ± 0.034** ★ | 0.593 ± 0.066 | 0.536 ± 0.067 | 0.656 ± 0.039 |
 | SetMIL | 0.611 ± 0.030 | 0.580 ± 0.034 | 0.488 ± 0.076 | 0.673 ± 0.029 |
 | LongMK-MT | 0.526 ± 0.058 | 0.630 ± 0.125 | 0.534 ± 0.112 | 0.770 ± 0.099 |
 | **LongMK** | 0.550 ± 0.043 | **0.679 ± 0.071** ★ | 0.489 ± 0.031 | **0.771 ± 0.063** ★ |
@@ -156,9 +156,9 @@ Performance on held-out test sets across all 5 outer splits (mean ± standard de
 
 | Task | Best Model | Metric | Value |
 |------|-----------|--------|-------|
-| ACR classification | SetMIL-MT (no SAB) | BACC | 0.623 ± 0.031 |
+| ACR classification | SetMIL-MT (no SAB) | BACC | 0.623 ± 0.034 |
 | ACR survival | LongMK | C-index | 0.679 ± 0.064 |
-| CLAD survival | SetMIL-MT | C-index | 0.563 ± 0.078 |
+| CLAD survival | SetMIL-MT | C-index | 0.563 ± 0.080 |
 | Death survival | LongMK | C-index | 0.771 ± 0.056 |
 
 ### 5.3 Per-Split Performance (All DL Variants)
@@ -173,7 +173,7 @@ Per-split values s0–s4 for all deep-learning model variants. Linear and ABMIL 
 | Middle fusion | 0.522 | 0.520 | 0.616 | 0.540 | 0.599 | 0.559 ± 0.045 |
 | Late fusion | 0.594 | 0.596 | 0.640 | 0.550 | 0.580 | 0.592 ± 0.032 |
 | SetMIL-MT | 0.597 | 0.546 | 0.597 | 0.605 | 0.630 | 0.595 ± 0.031 |
-| **SetMIL-MT (no SAB)** ★ | **0.588** | **0.623** | **0.681** | **0.617** | **0.606** | **0.623 ± 0.031** |
+| **SetMIL-MT (no SAB)** ★ | **0.588** | **0.623** | **0.681** | **0.617** | **0.606** | **0.623 ± 0.034** |
 | SetMIL | 0.644 | 0.564 | 0.626 | 0.601 | 0.619 | 0.611 ± 0.030 |
 | LongMK-MT | 0.460 | 0.570 | 0.504 | 0.493 | 0.602 | 0.526 ± 0.058 |
 | LongMK | 0.546 | 0.565 | 0.510 | 0.512 | 0.615 | 0.550 ± 0.043 |
@@ -198,7 +198,7 @@ Per-split values s0–s4 for all deep-learning model variants. Linear and ABMIL 
 | Early fusion | 0.432 | 0.622 | 0.495 | 0.460 | 0.516 | 0.505 ± 0.073 |
 | Middle fusion | 0.429 | 0.610 | 0.537 | 0.470 | 0.532 | 0.516 ± 0.069 |
 | Late fusion | 0.372 | 0.583 | 0.603 | 0.553 | 0.561 | 0.534 ± 0.093 |
-| **SetMIL-MT** ★ | **0.528** | **0.626** | **0.669** | **0.547** | **0.446** | **0.563 ± 0.078** |
+| **SetMIL-MT** ★ | **0.528** | **0.626** | **0.669** | **0.547** | **0.446** | **0.563 ± 0.080** |
 | SetMIL-MT (no SAB) | 0.476 | 0.619 | 0.528 | 0.469 | 0.589 | 0.536 ± 0.067 |
 | SetMIL | 0.478 | 0.605 | 0.451 | 0.401 | 0.503 | 0.488 ± 0.076 |
 | LongMK-MT | 0.721 | 0.456 | 0.523 | 0.439 | 0.533 | 0.534 ± 0.112 |
@@ -293,10 +293,13 @@ A joint UMAP projection across all four prediction tasks reveals that the learne
 | Death | CT (C0–C2) | Risk | Structural lung deterioration | 5/5 splits |
 | Death | BAL TRAM | Protective (low risk) | Tissue-resident alveolar macrophage maintenance | 4/5 splits |
 | Death | BAL MoAM/Monocytes | Risk | Monocyte-derived macrophage influx = unresolved injury | 4/5 splits |
+| Death | Clinical FVC%/GFR/Albumin | Protective (low risk) | Preserved pulmonary reserve and systemic health | 4/5 splits |
+| Death | Clinical Donor risk/PGD/RDW | Risk | Early graft insult + systemic inflammatory burden | 4/5 splits |
 | ACR surv | CT | Risk | Shared structural signal with death | 4/5 splits |
 | ACR surv | Temporal weighting | Early biopsies upweighted | Early immune trajectory predicts future rejection | 4/5 splits |
 | ACR cls | Temporal weighting | Late biopsies upweighted | Current rejection status driven by recent features | 4/5 splits |
-| CLAD | All | Inconsistent | — | <3/5 splits |
+| CLAD | Clinical (FEV1/spirometry) | Risk | Spirometric decline precedes CLAD diagnosis | 3/5 splits |
+| CLAD | All other | Inconsistent | — | <3/5 splits |
 
 ---
 
@@ -411,4 +414,4 @@ Patient-level data cannot be shared publicly due to clinical data protection reg
 
 ---
 
-*Last updated: 2026-08-04*
+*Last updated: 2026-08-10*
