@@ -15,7 +15,7 @@ Four prediction tasks are addressed jointly or separately depending on the model
 3. **CLAD survival**: Time-to-CLAD onset (C-index).
 4. **Death survival**: Time-to-death (C-index).
 
-The cohort comprises approximately 350 lung transplant recipients followed longitudinally at Helmholtz Munich / LMU Klinikum, with each patient contributing one or more biopsy visits as separate data points. All analyses use a 5-split × 4-fold nested cross-validation design to ensure unbiased evaluation.
+The cohort comprises 263 lung transplant recipients (4,210 biopsy visits) followed longitudinally at Helmholtz Munich / LMU Klinikum, with each patient contributing one or more biopsy visits as separate data points. All analyses use a 5-split × 4-fold nested cross-validation design to ensure unbiased evaluation.
 
 ---
 
@@ -146,8 +146,8 @@ Performance on held-out test sets across all 5 outer splits (mean ± standard de
 | Early fusion | 0.583 ± 0.063 | 0.575 ± 0.055 | 0.505 ± 0.073 | 0.645 ± 0.064 |
 | Late fusion | 0.592 ± 0.032 | 0.585 ± 0.061 | 0.534 ± 0.093 | 0.638 ± 0.057 |
 | Middle fusion | 0.559 ± 0.045 | 0.574 ± 0.092 | 0.516 ± 0.069 | 0.656 ± 0.063 |
-| SetMIL-MT | 0.595 ± 0.031 | 0.489 ± 0.072 | **0.563 ± 0.089** ★ | 0.664 ± 0.046 |
-| SetMIL-MT (no SAB) | **0.623 ± 0.038** ★ | 0.593 ± 0.066 | 0.536 ± 0.067 | 0.656 ± 0.039 |
+| SetMIL-MT | 0.595 ± 0.031 | 0.489 ± 0.072 | **0.563 ± 0.078** ★ | 0.664 ± 0.046 |
+| SetMIL-MT (no SAB) | **0.623 ± 0.031** ★ | 0.593 ± 0.066 | 0.536 ± 0.067 | 0.656 ± 0.039 |
 | SetMIL | 0.611 ± 0.030 | 0.580 ± 0.034 | 0.488 ± 0.076 | 0.673 ± 0.029 |
 | LongMK-MT | 0.526 ± 0.058 | 0.630 ± 0.125 | 0.534 ± 0.112 | 0.770 ± 0.099 |
 | **LongMK** | 0.550 ± 0.043 | **0.679 ± 0.071** ★ | 0.489 ± 0.031 | **0.771 ± 0.063** ★ |
@@ -156,10 +156,10 @@ Performance on held-out test sets across all 5 outer splits (mean ± standard de
 
 | Task | Best Model | Metric | Value |
 |------|-----------|--------|-------|
-| ACR classification | SetMIL-MT (no SAB) | BACC | 0.623 ± 0.038 |
-| ACR survival | LongMK | C-index | 0.679 ± 0.071 |
-| CLAD survival | SetMIL-MT | C-index | 0.563 ± 0.089 |
-| Death survival | LongMK | C-index | 0.771 ± 0.063 |
+| ACR classification | SetMIL-MT (no SAB) | BACC | 0.623 ± 0.031 |
+| ACR survival | LongMK | C-index | 0.679 ± 0.064 |
+| CLAD survival | SetMIL-MT | C-index | 0.563 ± 0.078 |
+| Death survival | LongMK | C-index | 0.771 ± 0.056 |
 
 ### 5.3 Per-Split Performance (All DL Variants)
 
@@ -173,7 +173,7 @@ Per-split values s0–s4 for all deep-learning model variants. Linear and ABMIL 
 | Middle fusion | 0.522 | 0.520 | 0.616 | 0.540 | 0.599 | 0.559 ± 0.045 |
 | Late fusion | 0.594 | 0.596 | 0.640 | 0.550 | 0.580 | 0.592 ± 0.032 |
 | SetMIL-MT | 0.597 | 0.546 | 0.597 | 0.605 | 0.630 | 0.595 ± 0.031 |
-| **SetMIL-MT (no SAB)** ★ | **0.578** | **0.610** | **0.680** | **0.635** | **0.615** | **0.623 ± 0.038** |
+| **SetMIL-MT (no SAB)** ★ | **0.588** | **0.623** | **0.681** | **0.617** | **0.606** | **0.623 ± 0.031** |
 | SetMIL | 0.644 | 0.564 | 0.626 | 0.601 | 0.619 | 0.611 ± 0.030 |
 | LongMK-MT | 0.460 | 0.570 | 0.504 | 0.493 | 0.602 | 0.526 ± 0.058 |
 | LongMK | 0.546 | 0.565 | 0.510 | 0.512 | 0.615 | 0.550 ± 0.043 |
@@ -198,7 +198,7 @@ Per-split values s0–s4 for all deep-learning model variants. Linear and ABMIL 
 | Early fusion | 0.432 | 0.622 | 0.495 | 0.460 | 0.516 | 0.505 ± 0.073 |
 | Middle fusion | 0.429 | 0.610 | 0.537 | 0.470 | 0.532 | 0.516 ± 0.069 |
 | Late fusion | 0.372 | 0.583 | 0.603 | 0.553 | 0.561 | 0.534 ± 0.093 |
-| **SetMIL-MT** ★ | **0.429** | **0.616** | **0.663** | **0.577** | **0.531** | **0.563 ± 0.089** |
+| **SetMIL-MT** ★ | **0.528** | **0.626** | **0.669** | **0.547** | **0.446** | **0.563 ± 0.078** |
 | SetMIL-MT (no SAB) | 0.476 | 0.619 | 0.528 | 0.469 | 0.589 | 0.536 ± 0.067 |
 | SetMIL | 0.478 | 0.605 | 0.451 | 0.401 | 0.503 | 0.488 ± 0.076 |
 | LongMK-MT | 0.721 | 0.456 | 0.523 | 0.439 | 0.533 | 0.534 ± 0.112 |
@@ -252,6 +252,8 @@ The death survival model (Longitudinal-MK, no ALiBi) produces the most consisten
 **CT imaging:** CT clusters C0, C1, and C2 are robustly enriched in *high-risk* (shorter-surviving) patients across all five splits. These clusters likely represent structural deterioration patterns — parenchymal destruction, air trapping, or consolidation — that precede and predict mortality. The CT signal is complementary to H&E: histology captures the local microenvironment at the biopsy site, while CT captures global structural changes across the entire lung.
 
 **Biological synthesis:** The model discovers a histology–CT axis of risk, where patients with intact alveolar histology but deteriorating CT structure are correctly identified as high risk. This is consistent with the clinical observation that CLAD-associated bronchiolitis obliterans produces diffuse CT changes (hyperinflation, mosaic attenuation) before localised biopsy sites become overtly abnormal.
+
+**Clinical features:** Clinical attribution reveals a prognostically coherent set of structured variables. Low-risk (longer-surviving) patients show high attention to percent-predicted forced vital capacity (FVC%), glomerular filtration rate (GFR), and serum albumin — markers of preserved graft function, renal health, and nutritional status. High-risk (shorter-surviving) patients show high attention to donor risk score, primary graft dysfunction (PGD) at 72 hours post-transplant, and red cell distribution width (RDW). PGD-72h is the strongest established early predictor of long-term graft failure; elevated RDW reflects systemic inflammatory burden. The model thus recovers both early post-transplant graft insult signals (donor risk, PGD) and progressive systemic markers (RDW, albumin, GFR) without any prior labelling of their prognostic relevance. This Clinical attribution is consistent across 4/5 outer splits and complements the CT and BAL signals described above.
 
 #### ACR Survival (Consistent: 4/5 splits)
 

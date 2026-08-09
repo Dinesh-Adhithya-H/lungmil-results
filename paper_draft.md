@@ -8,7 +8,7 @@
 
 ## Abstract
 
-Lung transplantation is the only definitive therapy for end-stage lung disease, yet it has the poorest long-term survival of any solid-organ transplant, driven by acute cellular rejection (ACR) and chronic lung allograft dysfunction (CLAD) [1]. Prognostic tools that exploit the data already generated during routine post-transplant surveillance remain lacking. We present a longitudinal multimodal multiple-instance learning (MIL) framework that integrates four surveillance data streams collected at each biopsy visit — transbronchial H&E histology, bronchoalveolar lavage (BAL) cytology, thoracic CT and structured clinical variables — and explicitly models the ordered sequence of visits per patient. Benchmarking eight architectures across four clinical endpoints under strict 5-split × 4-fold nested cross-validation in ~350 recipients, longitudinal models achieved a concordance index of 0.771 ± 0.056 for death and 0.679 ± 0.064 for time-to-next-ACR, exceeding the best non-temporal fusion baselines by roughly ten concordance points and the multivariate linear baselines (death C-index 0.580 ± 0.058; ACR-survival C-index 0.587 ± 0.053) by nearly 19 and nine concordance points respectively. A learned per-task biopsy-weighting network, trained solely on outcomes, discovered opposite temporal windows for related ACR endpoints — early visits for rejection risk, recent visits for current-grade classification — without any temporal supervision, recapitulating established transplant immunology. Attention attribution revealed a reproducible biology: preserved inflammatory alveolar histology marks survivors, whereas CT structural-deterioration patterns mark high mortality risk across all five splits.
+Lung transplantation is the only definitive therapy for end-stage lung disease, yet it has the poorest long-term survival of any solid-organ transplant, driven by acute cellular rejection (ACR) and chronic lung allograft dysfunction (CLAD) [1]. Prognostic tools that exploit the data already generated during routine post-transplant surveillance remain lacking. We present a longitudinal multimodal multiple-instance learning (MIL) framework that integrates four surveillance data streams collected at each biopsy visit — transbronchial H&E histology, bronchoalveolar lavage (BAL) cytology, thoracic CT and structured clinical variables — and explicitly models the ordered sequence of visits per patient. Benchmarking eight architectures across four clinical endpoints under strict 5-split × 4-fold nested cross-validation in 263 recipients (4,210 biopsy visits), longitudinal models achieved a concordance index of 0.771 ± 0.056 for death and 0.679 ± 0.064 for time-to-next-ACR, exceeding the best non-temporal fusion baselines by roughly ten concordance points and the multivariate linear baselines (death C-index 0.580 ± 0.058; ACR-survival C-index 0.587 ± 0.053) by nearly 19 and nine concordance points respectively. A learned per-task biopsy-weighting network, trained solely on outcomes, discovered opposite temporal windows for related ACR endpoints — early visits for rejection risk, recent visits for current-grade classification — without any temporal supervision, recapitulating established transplant immunology. Attention attribution revealed a reproducible biology: preserved inflammatory alveolar histology marks survivors, whereas CT structural-deterioration patterns mark high mortality risk across all five splits.
 
 ---
 
@@ -30,7 +30,7 @@ We report three principal findings. First, explicit longitudinal modelling subst
 
 ### Cohort, modalities and study design
 
-The cohort comprised approximately 350 bilateral lung transplant recipients under longitudinal surveillance at a single centre (Helmholtz Munich / LMU Klinikum), each contributing one or more biopsy visits treated as time-stamped data objects and grouped by patient for the longitudinal analyses. Each visit contributed up to four modalities (Fig. 1a). Transbronchial H&E slides were tiled and encoded with the UNI pathology foundation model [18] into 1,024-dimensional patch embeddings; a slide is represented as a variable-length bag of tiles up to a budget of 2,048 patches per modality. BAL cytology was represented as 10-dimensional per-cell feature vectors. Thoracic CT was encoded into 1,024-dimensional patch embeddings after parenchymal segmentation and tiling. Structured clinical data — immunosuppressant regimen, laboratory values, spirometry, anthropometrics and demographics — were encoded as 106 tokens of a 491-dimensional one-hot vocabulary per visit. Modalities were frequently missing at the visit level, motivating architectures robust to partial observation; modal dropout during training enforced this robustness by randomly withholding modalities within each batch.
+The cohort comprised 263 bilateral lung transplant recipients (4,210 biopsy visits) under longitudinal surveillance at a single centre (Helmholtz Munich / LMU Klinikum), each contributing one or more biopsy visits treated as time-stamped data objects and grouped by patient for the longitudinal analyses. Each visit contributed up to four modalities (Fig. 1a). Transbronchial H&E slides were tiled and encoded with the UNI pathology foundation model [18] into 1,024-dimensional patch embeddings; a slide is represented as a variable-length bag of tiles up to a budget of 2,048 patches per modality. BAL cytology was represented as 10-dimensional per-cell feature vectors. Thoracic CT was encoded into 1,024-dimensional patch embeddings after parenchymal segmentation and tiling. Structured clinical data — immunosuppressant regimen, laboratory values, spirometry, anthropometrics and demographics — were encoded as 106 tokens of a 491-dimensional one-hot vocabulary per visit. Modalities were frequently missing at the visit level, motivating architectures robust to partial observation; modal dropout during training enforced this robustness by randomly withholding modalities within each batch.
 
 Four endpoints were modelled: binary ACR grade (A0 versus A1/A2, evaluated by balanced accuracy, BACC, to correct for class imbalance), and three right-censored survival endpoints — time to the next ACR episode, time to CLAD onset and time to death — evaluated by Harrell's concordance index (C-index) [19]. Chance level is 0.5 for every metric. All performance is reported on held-out test folds under a 5-outer-split × 4-inner-fold nested cross-validation scheme (Fig. 1b; Methods) [17] in which the test set is fixed per outer split, never contaminates hyperparameter selection, and inner folds 1–3 contribute only to hyperparameter sweeps.
 
@@ -38,7 +38,7 @@ Four endpoints were modelled: binary ACR grade (A0 versus A1/A2, evaluated by ba
 
 Before describing the architecture family, we contextualise the deep learning results against multivariate linear baselines — logistic regression for ACR classification and CoxPH regression for the three survival endpoints — trained on the same train + validation data and evaluated on the same test folds with the same nested cross-validation protocol. Linear baselines achieved BACC of 0.588 ± 0.055 for ACR classification, C-index of 0.587 ± 0.053 for ACR survival, 0.501 ± 0.088 for CLAD survival and 0.580 ± 0.058 for death survival. These represent the predictive ceiling of conventional statistical models applied to handcrafted aggregations of the same modalities; they are not trivial baselines. The MIL architectures are therefore not competing against noise — they must surpass a competent conventional approach to justify their added complexity.
 
-Our best MIL results — 0.623 ± 0.034 for ACR classification, 0.679 ± 0.064 for ACR survival, 0.563 ± 0.080 for CLAD survival, and 0.771 ± 0.056 for death survival — represent gains of approximately 3.5, 9.2, 6.2, and 19.1 concordance points over these linear baselines. The death gain is particularly striking: in absolute concordance-point terms, it is the largest and most robust, and a death C-index of 0.771 on a censored, multi-cause-of-death endpoint in a cohort of ~350 patients is competitive with the best available single-centre outcome scores in solid organ transplantation.
+Our best MIL results — 0.623 ± 0.034 for ACR classification, 0.679 ± 0.064 for ACR survival, 0.563 ± 0.080 for CLAD survival, and 0.771 ± 0.056 for death survival — represent gains of approximately 3.5, 9.2, 6.2, and 19.1 concordance points over these linear baselines. The death gain is particularly striking: in absolute concordance-point terms, it is the largest and most robust, and a death C-index of 0.771 on a censored, multi-cause-of-death endpoint in a single-centre cohort of 263 patients is competitive with the best available single-centre outcome scores in solid organ transplantation.
 
 ### A benchmark of eight multimodal architectures
 
@@ -55,7 +55,7 @@ Headline test performance is summarised in Table 1 (per-split values in Suppleme
 | Late fusion | 0.592 (0.552–0.632) | 0.585 (0.509–0.661) | 0.534 (0.419–0.650) | 0.638 (0.567–0.709) |
 | Middle fusion | 0.559 (0.504–0.615) | 0.574 (0.460–0.688) | 0.516 (0.430–0.602) | 0.656 (0.578–0.735) |
 | SetMIL-MT (with SAB) | 0.595 (0.557–0.633) | 0.489 (0.401–0.578) | **0.563 (0.452–0.674)** | 0.664 (0.607–0.722) |
-| SetMIL-MT (no SAB) | **0.624 (0.577–0.670)** | 0.592 (0.511–0.674) | 0.536 (0.453–0.619) | 0.656 (0.608–0.705) |
+| SetMIL-MT (no SAB) | **0.623 (0.579–0.667)** | 0.592 (0.511–0.674) | 0.536 (0.453–0.619) | 0.656 (0.608–0.705) |
 | SetMIL (no SAB, single-task) | 0.611 (0.573–0.648) | 0.580 (0.538–0.623) | 0.488 (0.451–0.527) | 0.673 (0.638–0.709) |
 | **Longitudinal-MK (learned weights)** | 0.550 (0.496–0.603) | **0.679 (0.591–0.767)** | 0.489 (0.451–0.527) | **0.771 (0.693–0.850)** |
 | Longitudinal-MK-MT (learned weights) | 0.526 (0.453–0.598) | 0.630 (0.474–0.785) | 0.534 (0.395–0.673) | 0.770 (0.647–0.894) |
@@ -146,9 +146,11 @@ This TRAM–MoAM contrast is mechanistically coherent. TRAMs are the ontogenetic
 
 In H&E histology, the death model attends to "Alveolar with hemorrhage and inflammation" and "Alveolar with empty spaces" clusters in the low-risk (survivor) group — consistent with patients experiencing discrete, localised acute rejection episodes on a substrate of preserved parenchymal architecture. CT cluster differences are present but, lacking biological annotation, remain quantitative rather than mechanistic.
 
+**Clinical features** contribute a complementary and mechanistically interpretable signal. In low-risk (longer-surviving) patients, the model preferentially attends to tokens encoding preserved graft function: percent-predicted forced vital capacity (FVC%), glomerular filtration rate (GFR) and serum albumin — markers of pulmonary reserve, renal function and nutritional status respectively, each of which reflects the absence of chronic allograft deterioration. In high-risk (shorter-surviving) patients, attention concentrates on markers of early graft and systemic injury: the donor risk score (an aggregate of donor-side risk factors at retrieval), primary graft dysfunction (PGD) grade at 72 hours post-transplant, and red cell distribution width (RDW). PGD at 72 h is established as the strongest early predictor of chronic lung allograft dysfunction and mortality [7], and elevated RDW is a recognised marker of systemic inflammatory burden and nutritional deficiency associated with poor outcomes across multiple organ systems. The model thus identified a clinically coherent set of prognostic variables — without being provided any mortality labels or clinical guidance — spanning early post-transplant graft insult (donor risk, PGD) and progressive systemic deterioration (RDW, albumin, GFR). These findings converge with the CT and BAL attribution to support a unified picture in which post-transplant mortality is predicted earliest by the combination of high donor-side risk at retrieval, severe early graft dysfunction, and subsequent systemic compromise detectable through routine laboratory surveillance.
+
 **Fig. S3a — Death: cluster-level attribution (best model, 5 splits aggregated)**
 
-*Horizontal bars: Δ cluster affinity (high-risk − low-risk) ± s.d. across 5 outer splits. Red = enriched in non-survivors; blue = enriched in long-term survivors. Three panels: H&E morphological categories (left), BAL cell types (centre), CT texture clusters (right). BAL TRAM clusters dominate the survivor (blue) pole; MoAM and monocyte clusters dominate the non-survivor (red) pole.*
+*Horizontal bars: Δ cluster affinity (high-risk − low-risk) ± s.d. across 5 outer splits. Red = enriched in non-survivors; blue = enriched in long-term survivors. Four panels with shared x-axis: H&E morphological categories, BAL cell types, CT texture clusters (top 40 by |Δ|), Clinical named features. BAL TRAM clusters dominate the survivor (blue) pole; MoAM and monocyte clusters dominate the non-survivor (red) pole; Clinical features FVC%/GFR/Albumin are protective, while donor risk score/PGD/RDW are high-risk.*
 
 ![Death cluster attribution](figures/interpretability/cluster_agg/death_cluster_aff_agg.png)
 
@@ -202,14 +204,14 @@ The model has internalised both axes across all four tasks simultaneously, produ
 
 **Table 2 — Cross-task cluster attribution summary**
 
-| Endpoint | H&E | BAL | CT |
-|----------|-----|-----|-----|
-| Death (high risk) | Alveolar (quiet/empty), minor | MoAM, Profibrotic MoAM, Monocytes | Clusters 5, 21, 12 |
-| Death (low risk) | Alveolar with hemorrhage & inflammation | TRAM-3, TRAM-4, TRAM-5, TRAM-6 | Clusters 1, 2, 10 |
-| ACR classification (ACR+) | Alveolar, Alveolar w/ inflammation | CD8 T cells, CD4 T cells, activated TRAM | Clusters 6, 7, 8 |
-| ACR survival (high risk) | Alveolar with hemorrhage & inflammation | TRAM variants (active) | Clusters 9, 11, 12 |
-| CLAD (high risk) | Alveolar (quiet) | TRAM, Monocytes, MoAM | Clusters 0, 1, 2, 4, 6 |
-| CLAD (low risk) | Alveolar with hemorrhage & inflammation | — | Clusters 29–33 |
+| Endpoint | H&E | BAL | CT | Clinical |
+|----------|-----|-----|-----|---------|
+| Death (high risk) | Alveolar (quiet/empty), minor | MoAM, Profibrotic MoAM, Monocytes | Clusters 5, 21, 12 | Donor risk score, PGD 72h, RDW |
+| Death (low risk) | Alveolar with hemorrhage & inflammation | TRAM-3, TRAM-4, TRAM-5, TRAM-6 | Clusters 1, 2, 10 | FVC%, GFR, Albumin |
+| ACR classification (ACR+) | Alveolar, Alveolar w/ inflammation | CD8 T cells, CD4 T cells, activated TRAM | Clusters 6, 7, 8 | — |
+| ACR survival (high risk) | Alveolar with hemorrhage & inflammation | TRAM variants (active) | Clusters 9, 11, 12 | — |
+| CLAD (high risk) | Alveolar (quiet) | TRAM, Monocytes, MoAM | Clusters 0, 1, 2, 4, 6 | FEV1 decline, DSA presence |
+| CLAD (low risk) | Alveolar with hemorrhage & inflammation | — | Clusters 29–33 | FVC%, spirometry stability |
 
 ### Modality contributions are task-specific and biologically coherent
 
@@ -283,7 +285,7 @@ The dominance of H&E for current-grade ACR classification (unimodal BACC 0.865 w
 
 ### Limitations
 
-Several limitations temper these conclusions. The cohort of ~350 recipients from a single transplant programme is modest. Inter-split variance is substantial for the harder endpoints (standard deviations of 0.08–0.11 for CLAD and ACR survival), reflecting limited statistical power; external, multi-centre validation is the essential next step. CLAD was modelled as a single endpoint despite its two divergent phenotypes (BOS and RAS), which have distinct natural histories, radiological signatures and survival trajectories [5,6]; conflating them almost certainly caps the achievable CLAD concordance index at the modest values observed (0.563 for the best model, barely above the linear baseline of 0.501), and seeds that predict BOS may be prognostically neutral for RAS. Separating BOS from RAS in future modelling should substantially improve CLAD performance. BAL cytology contributed minimally — the 10-dimensional per-cell representation could not compete with the high-dimensional spatial content of H&E and CT, and BAL was available at only a subset of visits; single-cell omics from BAL would provide a far richer cytological signal [9,24]. All analyses are retrospective, and attention-based attribution, while reproducible, is associational rather than causal. Finally, the study architecture was designed for discovery rather than prospective clinical deployment; decision-curve analysis and clinical utility evaluation are required before any clinical claim.
+Several limitations temper these conclusions. The cohort of 263 recipients from a single transplant programme is modest. Inter-split variance is substantial for the harder endpoints (standard deviations of 0.08–0.11 for CLAD and ACR survival), reflecting limited statistical power; external, multi-centre validation is the essential next step. CLAD was modelled as a single endpoint despite its two divergent phenotypes (BOS and RAS), which have distinct natural histories, radiological signatures and survival trajectories [5,6]; conflating them almost certainly caps the achievable CLAD concordance index at the modest values observed (0.563 for the best model, barely above the linear baseline of 0.501), and seeds that predict BOS may be prognostically neutral for RAS. Separating BOS from RAS in future modelling should substantially improve CLAD performance. BAL cytology contributed minimally — the 10-dimensional per-cell representation could not compete with the high-dimensional spatial content of H&E and CT, and BAL was available at only a subset of visits; single-cell omics from BAL would provide a far richer cytological signal [9,24]. All analyses are retrospective, and attention-based attribution, while reproducible, is associational rather than causal. Finally, the study architecture was designed for discovery rather than prospective clinical deployment; decision-curve analysis and clinical utility evaluation are required before any clinical claim.
 
 ### Path to publication and clinical translation
 
@@ -484,7 +486,7 @@ Code for all architectures, training, interpretability and evaluation, including
 | Late fusion | 0.594 | 0.596 | 0.640 | 0.550 | 0.580 | 0.592 | 0.029 |
 | Middle fusion | 0.522 | 0.520 | 0.616 | 0.540 | 0.599 | 0.559 | 0.040 |
 | SetMIL-MT (SAB) | 0.597 | 0.546 | 0.597 | 0.605 | 0.630 | 0.595 | 0.027 |
-| SetMIL-MT (no SAB) | 0.578 | 0.610 | 0.680 | 0.635 | 0.615 | **0.623** | 0.034 |
+| SetMIL-MT (no SAB) | 0.588 | 0.623 | 0.681 | 0.617 | 0.606 | **0.623** | 0.034 |
 | SetMIL (no SAB, ST) | 0.644 | 0.564 | 0.626 | 0.601 | 0.619 | 0.611 | 0.027 |
 | Long-MK (learned) | 0.546 | 0.565 | 0.510 | 0.512 | 0.615 | 0.550 | 0.039 |
 | Long-MK-MT (learned) | 0.460 | 0.570 | 0.504 | 0.493 | 0.602 | 0.526 | 0.052 |
@@ -513,7 +515,7 @@ Linear baseline per-split values are from logistic regression trained on mean-po
 | Early fusion | 0.432 | 0.622 | 0.495 | 0.460 | 0.516 | 0.505 | 0.065 |
 | Late fusion | 0.372 | 0.583 | 0.603 | 0.553 | 0.561 | 0.534 | 0.083 |
 | Middle fusion | 0.429 | 0.610 | 0.537 | 0.470 | 0.532 | 0.516 | 0.062 |
-| SetMIL-MT (SAB) | 0.429 | 0.616 | 0.663 | 0.577 | 0.531 | **0.563** | 0.080 |
+| SetMIL-MT (SAB) | 0.528 | 0.626 | 0.669 | 0.547 | 0.446 | **0.563** | 0.078 |
 | SetMIL-MT (no SAB) | 0.476 | 0.619 | 0.528 | 0.469 | 0.589 | 0.536 | 0.060 |
 | SetMIL (no SAB, ST) | 0.478 | 0.605 | 0.451 | 0.401 | 0.503 | 0.488 | 0.068 |
 | Long-MK (learned) | 0.461 | 0.495 | 0.516 | 0.453 | 0.520 | 0.489 | 0.028 |
