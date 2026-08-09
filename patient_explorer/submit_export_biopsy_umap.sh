@@ -8,11 +8,12 @@
 #SBATCH --partition=cpu_p
 #SBATCH --qos=cpu_normal
 
-set -euo pipefail
+set -eo pipefail
+
+source ~/.bashrc
+conda activate chicago
 
 REPO=/ictstr01/home/aih/dinesh.haridoss/chicago_mil
-conda activate chicago_mil_torch26
-
 cd "$REPO"
 mkdir -p logs
 

@@ -280,9 +280,9 @@ fig.suptitle("Benchmark — all models, all tasks  (n=350 patients, 5-fold CV, H
              fontsize=12, fontweight="bold")
 for ax, task_key in zip(axes, TASKS):
     plot_task(ax, task_key, fig, show_ylabel=False)
+fig.tight_layout(rect=[0, 0.10, 1, 0.97])
 fig.legend(handles=make_legend(), loc="lower center", ncol=5, fontsize=8,
-           bbox_to_anchor=(0.5, -0.02), frameon=False)
-fig.tight_layout()
+           bbox_to_anchor=(0.5, 0.01), frameon=False)
 for ext in ("png", "pdf"):
     fig.savefig(OUT_DIR / f"benchmark_all.{ext}", dpi=150, bbox_inches="tight", facecolor=BG)
 plt.close(fig)
