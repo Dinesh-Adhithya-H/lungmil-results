@@ -40,6 +40,29 @@ HE_BIO_COLORS = {
 MOD_COLORS = {"HE": "#E64A19", "BAL": "#1565C0", "CT": "#2E7D32", "Clinical": "#9b59b6"}
 FONT = 12
 
+# Plain-language display names for model variants
+MODEL_DISPLAY = {
+    "longitudinal_mk_no_alibi": "LongMK (longitudinal multimodal attention)",
+    "set_mil_mt_no_sab":        "SetMIL-MT (multimodal set-based MIL)",
+    "set_mil_mt":               "SetMIL-MT (multimodal set-based MIL)",
+}
+
+# Clinical variable name expansions
+CLINICAL_NAME_MAP = {
+    "fvc":        "FVC (forced vital capacity, L)",
+    "fvcp":       "FVC% (% predicted)",
+    "fev1":       "FEV₁ (L)",
+    "fev1p":      "FEV₁% (% predicted)",
+    "pgd_t72":    "PGD score at 72h",
+    "donor_risk": "Donor risk score",
+    "mpv":        "MPV (mean platelet volume)",
+    "rdw":        "RDW (red cell distribution width)",
+    "hct":        "HCT (haematocrit)",
+    "gfr":        "GFR (glomerular filtration rate)",
+    "albumin":    "Albumin (g/dL)",
+    "MVV":        "MVV",
+}
+
 plt.rcParams.update({
     "font.family":      "DejaVu Sans",
     "axes.labelsize":   FONT,
@@ -166,10 +189,12 @@ def aggregate(data_by_mod):
 
 
 def bio_label(name, mod):
-    """Return 'Full biological category (cluster_id)' for HE; raw name otherwise."""
+    """Return expanded label for HE (bio category) and Clinical (full name); raw otherwise."""
     if mod == "HE":
         cat = HE_BIO_MAP.get(name, "Unknown")
         return f"{cat} ({name})"
+    if mod == "Clinical":
+        return CLINICAL_NAME_MAP.get(name, CLINICAL_NAME_MAP.get(name.lower(), name.upper()))
     return name
 
 
@@ -244,7 +269,7 @@ def plot_task(agg, cfg, task_key, top_n=14):
         ax.set_yticklabels([_wrap(lb) for lb in labs_s], fontsize=FONT - 3)
         ax.tick_params(axis="y", pad=2)
 
-        ax.set_xlabel("Δ cluster affinity  (high-risk − low-risk)", fontsize=FONT - 1)
+        ax.set_xlabel("Attribution score  (positive = enriched in high-risk group)", fontsize=FONT - 1)
         ax.set_title(
             f"{mod}  [top {len(order)} clusters]\n"
             f"← {cfg['lo_lbl']}  |  {cfg['hi_lbl']} →",
@@ -266,10 +291,11 @@ def plot_task(agg, cfg, task_key, top_n=14):
         ax.legend(handles=legend_elems, fontsize=FONT - 3, loc="lower right",
                   framealpha=0.85, edgecolor="#ccc")
 
+    model_disp = MODEL_DISPLAY.get(cfg["variant"], cfg["variant"])
     fig.suptitle(
         f"{cfg['label']}\n"
-        f"Model: {cfg['variant']}  [{cfg['performance']}]  |  "
-        f"Cluster attribution Δ affinity (mean ± s.d., {agg[mods[0]]['n_splits']} splits)",
+        f"Model: {model_disp}  [{cfg['performance']}]  |  "
+        f"Mean ± s.d. across {agg[mods[0]]['n_splits']} cross-validation splits",
         fontsize=FONT + 2, fontweight="bold", y=1.01)
     fig.tight_layout(rect=[0, 0, 1, 1])
 

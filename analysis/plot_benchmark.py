@@ -208,11 +208,29 @@ def plot_task(ax, task_key, fig, show_legend=False, show_ylabel=True):
     # Chance / 0.5 line
     ax.axvline(0.5, color="#999", linewidth=0.9, linestyle=":", alpha=0.7, label="Chance (0.5)")
 
+    # Group band highlights
+    GROUP_COLORS = {"linear": "#F5F5F5", "p1": "#E3F2FD", "fusion": "#E8F5E9",
+                    "setmil": "#F3E5F5", "longi": "#FCE4EC"}
+    prev_grp, band_start = None, 0
+    for i, lbl in enumerate(MODEL_LABELS):
+        grp = MODEL_GROUPS[lbl]
+        if prev_grp is not None and prev_grp != grp:
+            ax.axhspan(band_start - 0.5, i - 0.5,
+                       facecolor=GROUP_COLORS.get(prev_grp, "#FAFAFA"), alpha=0.35, zorder=0)
+            band_start = i
+        prev_grp = grp
+    ax.axhspan(band_start - 0.5, len(MODEL_LABELS) - 0.5,
+               facecolor=GROUP_COLORS.get(prev_grp, "#FAFAFA"), alpha=0.35, zorder=0)
+
     ax.set_yticks(y)
     ax.set_yticklabels(MODEL_LABELS, fontsize=7.5)
     if show_ylabel:
         ax.set_ylabel("Model", fontsize=8)
-    ax.set_xlabel(meta["metric"], fontsize=9)
+    metric_xlab = {
+        "BACC":    "BACC — balanced accuracy (0.5 = random chance, 1.0 = perfect)",
+        "C-index": "C-index — concordance index (0.5 = random chance, 1.0 = perfect)",
+    }
+    ax.set_xlabel(metric_xlab.get(meta["metric"], meta["metric"]), fontsize=8)
     ax.set_title(meta["label"], fontsize=10, fontweight="bold", pad=6)
     ax.tick_params(axis="both", labelsize=7.5)
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
@@ -247,7 +265,9 @@ for task_key in TASKS:
     plot_task(ax, task_key, fig)
     ax.legend(handles=make_legend(), fontsize=8, loc="lower right",
               ncol=2, framealpha=0.9, edgecolor="#ccc")
-    fig.tight_layout()
+    fig.text(0.5, 0.01, "n = 350 patients · 5-fold cross-validation · Helmholtz Munich",
+             ha="center", fontsize=8, color="#666", style="italic")
+    fig.tight_layout(rect=[0, 0.03, 1, 1])
     for ext in ("png", "pdf"):
         fig.savefig(OUT_DIR / f"benchmark_{task_key}.{ext}", dpi=180, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
@@ -256,7 +276,7 @@ for task_key in TASKS:
 # ── 4-panel combined ──────────────────────────────────────────────────────────
 fig, axes = plt.subplots(1, 4, figsize=(30, 11), facecolor=BG)
 fig.patch.set_facecolor(BG)
-fig.suptitle("Benchmark — all models, all tasks (fixed model order, linear baselines included)",
+fig.suptitle("Benchmark — all models, all tasks  (n=350 patients, 5-fold CV, Helmholtz Munich)",
              fontsize=12, fontweight="bold")
 for ax, task_key in zip(axes, TASKS):
     plot_task(ax, task_key, fig, show_ylabel=False)

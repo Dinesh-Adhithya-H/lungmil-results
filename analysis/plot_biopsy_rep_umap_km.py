@@ -279,13 +279,9 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
             x[valid_ev], y[valid_ev], C=event[valid_ev],
             reduce_C_function=np.mean,
             gridsize=gs4, cmap="RdBu_r", linewidths=0.2)
-        hex_vals = hx_ev.get_array()
-        med_ev   = float(np.nanmedian(hex_vals))
-        half_ev  = max(abs(float(hex_vals.max()) - med_ev),
-                       abs(med_ev - float(hex_vals.min())), 1e-6)
-        hx_ev.set_clim(med_ev - half_ev, med_ev + half_ev)
+        hx_ev.set_clim(0, 1)
         cb_ev = fig.colorbar(hx_ev, ax=ax_ev_hex, pad=0.02, fraction=0.046, shrink=0.85)
-        cb_ev.set_label(f"Event rate (med={med_ev:.2f})", fontsize=7)
+        cb_ev.set_label("Event rate (0=none, 1=all)", fontsize=7)
         cb_ev.ax.tick_params(labelsize=7)
         label_iv = "④ Event density" if is_surv else "④ Positive label density"
         ax_ev_hex.set_title(f"{label_iv}\n(all biopsies w/ outcome, red=high)",
