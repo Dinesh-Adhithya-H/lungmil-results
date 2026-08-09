@@ -8,7 +8,7 @@ import streamlit as st
 st.set_page_config(page_title="Biopsy Space", page_icon="🔬", layout="wide")
 
 from utils.styles import card_css, metric_card, BG, BG2, TEXT, MUTED, ACCENT, BORDER, CARD, PLOTLY_THEME
-from utils.data_loader import load_biopsy_umap, patient_list, patient_biopsy_umap
+from utils.data_loader import load_biopsy_umap, patient_list
 
 st.markdown(card_css(), unsafe_allow_html=True)
 
@@ -68,7 +68,18 @@ if df_all.empty:
     )
     st.stop()
 
-# Filter by min_splits: keep biopsies seen in ≥ min_splits splits
+# ── Normalize risk: raw log-hazard → percentile rank [0, 1] ──────────────────
+from scipy.stats import rankdata
+if "risk" in df_all.columns:
+    r = df_all["risk"].values.astype(float)
+    valid = ~np.isnan(r)
+    pct = np.zeros_like(r)
+    if valid.sum() > 1:
+        pct[valid] = (rankdata(r[valid]) - 1) / (valid.sum() - 1)
+    df_all = df_all.copy()
+    df_all["risk"] = pct
+
+# Filter by min_splits
 if "split" in df_all.columns and min_splits > 1:
     counts = df_all.groupby(["patient_id", "stem"])["split"].nunique().reset_index(name="n_splits")
     df_all = df_all.merge(counts, on=["patient_id", "stem"])
@@ -76,9 +87,9 @@ if "split" in df_all.columns and min_splits > 1:
 else:
     df_all = df_all.drop_duplicates(subset=["patient_id", "stem"])
 
+# Re-extract patient subset AFTER normalization and dedup
 df_pt = df_all[df_all["patient_id"] == pid].copy()
 
-# Metric cards
 n_total    = len(df_all)
 n_pts      = df_all["patient_id"].nunique()
 n_pt_bio   = len(df_pt)
@@ -90,7 +101,6 @@ c4.markdown(metric_card("Task", task.replace("_", " ")), unsafe_allow_html=True)
 
 st.divider()
 
-# ── Main UMAP plot ────────────────────────────────────────────────────────────
 st.markdown(f"<p class='section-title'>Global Biopsy UMAP — {TASK_LABELS[task]}</p>",
             unsafe_allow_html=True)
 st.caption(TASK_METRIC[task])
@@ -100,7 +110,6 @@ df_bg = df_all[df_all["patient_id"] != pid].copy()
 fig = go.Figure()
 
 if color_by == "patient_highlighted":
-    # Background: all other patients in grey
     fig.add_trace(go.Scattergl(
         x=df_bg["umap_x"], y=df_bg["umap_y"],
         mode="markers",
@@ -109,51 +118,46 @@ if color_by == "patient_highlighted":
         hovertemplate="<b>Other patient</b><br>%{customdata}<extra></extra>",
         customdata=df_bg["patient_id"],
     ))
-    # Foreground: patient's biopsies, coloured by risk
     if not df_pt.empty:
-        risk_vals = df_pt["risk"].values.astype(float)
         fig.add_trace(go.Scattergl(
             x=df_pt["umap_x"], y=df_pt["umap_y"],
             mode="markers",
             marker=dict(
                 size=11,
-                color=risk_vals,
+                color=df_pt["risk"].values.astype(float),
                 colorscale="RdYlGn_r",
                 cmin=0, cmax=1,
-                colorbar=dict(title="Risk", thickness=12, len=0.5),
+                colorbar=dict(title="Risk %ile", thickness=12, len=0.5),
                 line=dict(width=1.5, color="white"),
             ),
             name=pid,
             hovertemplate=(
                 f"<b>{pid}</b><br>"
                 "Day %{customdata[0]:.0f}<br>"
-                "Risk: %{customdata[1]:.3f}<br>"
-                "Event: %{customdata[2]}<extra></extra>"
+                "Risk: %{customdata[1]:.2f}<extra></extra>"
             ),
             customdata=np.stack([
                 df_pt["biopsy_days"].values,
                 df_pt["risk"].values,
-                df_pt["event"].values,
             ], axis=1),
         ))
 
 elif color_by == "risk":
-    risk_vals = df_all["risk"].values.astype(float)
     fig.add_trace(go.Scattergl(
         x=df_all["umap_x"], y=df_all["umap_y"],
         mode="markers",
         marker=dict(
             size=4,
-            color=risk_vals,
+            color=df_all["risk"].values.astype(float),
             colorscale="RdYlGn_r",
             cmin=0, cmax=1,
-            colorbar=dict(title="Risk", thickness=12, len=0.5),
+            colorbar=dict(title="Risk %ile", thickness=12, len=0.5),
             opacity=0.7,
         ),
         name="All biopsies",
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
-            "Risk: %{customdata[1]:.3f}<br>"
+            "Risk: %{customdata[1]:.2f}<br>"
             "Day: %{customdata[2]:.0f}<extra></extra>"
         ),
         customdata=np.stack([
@@ -162,7 +166,6 @@ elif color_by == "risk":
             df_all["biopsy_days"].values,
         ], axis=1),
     ))
-    # Highlight selected patient
     if not df_pt.empty:
         fig.add_trace(go.Scattergl(
             x=df_pt["umap_x"], y=df_pt["umap_y"],
@@ -202,13 +205,12 @@ elif color_by == "event":
         ))
 
 else:  # biopsy_days
-    day_vals = df_all["biopsy_days"].values.astype(float)
     fig.add_trace(go.Scattergl(
         x=df_all["umap_x"], y=df_all["umap_y"],
         mode="markers",
         marker=dict(
             size=4,
-            color=day_vals,
+            color=df_all["biopsy_days"].values.astype(float),
             colorscale="Viridis",
             colorbar=dict(title="Days from Tx", thickness=12, len=0.5),
             opacity=0.65,
@@ -257,30 +259,29 @@ if not df_pt.empty:
             color=df_pt_sorted["risk"].values,
             colorscale="RdYlGn_r",
             cmin=0, cmax=1,
-            colorbar=dict(title="Risk", thickness=12, len=0.4),
+            colorbar=dict(title="Risk %ile", thickness=12, len=0.4),
             line=dict(width=1, color="white"),
         ),
         line=dict(color=ACCENT, width=2),
-        hovertemplate="Day %{x:.0f}<br>Risk: %{y:.3f}<extra></extra>",
+        hovertemplate="Day %{x:.0f}<br>Risk %ile: %{y:.2f}<extra></extra>",
     ))
     fig_tl.add_hline(y=0.5, line_dash="dot", line_color=MUTED, line_width=1,
-                     annotation_text="0.5", annotation_font_color=MUTED)
+                     annotation_text="median", annotation_font_color=MUTED)
     fig_tl.update_layout(
         **PLOTLY_THEME, height=280,
         xaxis_title="Days from transplant",
-        yaxis_title="Predicted risk (LongMK)",
+        yaxis_title="Risk percentile (LongMK)",
         yaxis=dict(range=[-0.05, 1.05]),
     )
     st.plotly_chart(fig_tl, use_container_width=True)
 
-    # Biopsy table
     with st.expander("Biopsy details table"):
         show_cols = [c for c in ["biopsy_days", "risk", "event", "tte", "label", "split"]
                      if c in df_pt_sorted.columns]
         st.dataframe(
             df_pt_sorted[show_cols].rename(columns={
                 "biopsy_days": "Days from Tx",
-                "risk": "Predicted risk",
+                "risk": "Risk %ile",
                 "event": "Event (0/1)",
                 "tte": "TTE (days)",
                 "label": "Label",
