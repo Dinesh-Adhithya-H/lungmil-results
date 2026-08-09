@@ -78,10 +78,14 @@ if task_sel == "all":
 else:
     bm = BEST_MODELS[task_sel]
     fig_path = FIG_DIR / f"benchmark_{task_sel}.png"
+    model_name  = bm["model"]
+    model_color = bm["model_color"]
+    metric_str  = f"{bm['metric']} {bm['value']:.3f} ± {bm['std']:.3f}"
+    task_label  = TASK_LABELS[task_sel]
     st.markdown(
-        f"<p class='section-title'>{TASK_LABELS[task_sel]} — "
-        f"<span style='color:{bm[\"model_color\"]}'>{bm[\"model\"]}</span> "
-        f"{bm[\"metric\"]} {bm[\"value\"]:.3f} ± {bm[\"std\"]:.3f}</p>",
+        f"<p class='section-title'>{task_label} — "
+        f"<span style='color:{model_color}'>{model_name}</span> "
+        f"{metric_str}</p>",
         unsafe_allow_html=True,
     )
     if fig_path.exists():
