@@ -111,7 +111,7 @@ def load_linear(lin_task, lin_metric):
     df = pd.read_csv(LIN_CSV)
     df = df[df["task"] == lin_task].copy()
     MOD_MAP = {"HE": "Linear HE", "BAL": "Linear BAL", "CT": "Linear CT",
-               "Clinical": "Linear Clinical", "All": "wt avg Linear",
+               "Clinical": "Linear Clinical", "All": "Wtd. avg. Linear",
                "H&E": "Linear HE"}
     out = {}
     for mod, disp in MOD_MAP.items():
