@@ -47,14 +47,14 @@ from mil.data.splits import build_splits_longitudinal
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-VARIANT_BASE = "longitudinal_mk_no_alibi"
+VARIANT_BASE = "longitudinal_mk_no_alibi_v2"
 
 TASK_CFG = {
     "acr_cls":   {"dir_suffix": "cls",       "longi_key": "acr_cls",
                   "tte_key": None,            "event_key": None,
                   "label_key": "label"},
     "acr_surv":  {"dir_suffix": "acr_surv",  "longi_key": "acr_surv",
-                  "tte_key": "acr_days",      "event_key": "acr_status",
+                  "tte_key": "tte_next_acr",  "event_key": "event_next_acr",
                   "label_key": None},
     "clad_surv": {"dir_suffix": "clad_surv", "longi_key": "clad",
                   "tte_key": "clad_time",     "event_key": "clad_event",

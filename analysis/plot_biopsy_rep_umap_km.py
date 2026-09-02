@@ -141,25 +141,35 @@ def biopsy_km_data(data: dict):
     return risk[valid], tte[valid], event[valid]
 
 
-# ── Main plot: 2×4 matching patient rep ────────────────────────────────────────
+# ── Main plot: 1×3 compact (risk | event-rate hexbin | avg-TTE hexbin) ──────────
+
+def _ax_style(ax, title, fig_ref, hexbin_obj=None, cbar_label="", bg=BG):
+    ax.set_title(title, fontsize=10, fontweight="bold", pad=6)
+    ax.set_xlabel("UMAP-1", fontsize=9)
+    ax.set_ylabel("UMAP-2", fontsize=9)
+    ax.tick_params(labelsize=8)
+    ax.set_facecolor(bg)
+    ax.spines[["top", "right"]].set_visible(False)
+    if hexbin_obj is not None:
+        cb = fig_ref.colorbar(hexbin_obj, ax=ax, pad=0.02, fraction=0.046, shrink=0.88)
+        cb.set_label(cbar_label, fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+        return cb
+
 
 def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
-    from matplotlib.patches import Patch
-
     is_surv = task_key != "acr_cls"
 
-    risk    = data["risk"].numpy()
-    bdays   = data["biopsy_days"].numpy()
-    splits  = data["split_idx"]
-    tte     = data["tte"].numpy()
-    label   = data["label"].numpy()
-    event   = data["event"].numpy()
-    pids    = np.array(data["patient_ids"])
-    N       = len(pids)
-    n_pts   = len(set(pids.tolist()))
-    x, y    = emb[:, 0], emb[:, 1]
+    risk   = data["risk"].numpy()
+    tte    = data["tte"].numpy()
+    label  = data["label"].numpy()
+    event  = data["event"].numpy()
+    pids   = np.array(data["patient_ids"])
+    N      = len(pids)
+    n_pts  = len(set(pids.tolist()))
+    x, y   = emb[:, 0], emb[:, 1]
 
-    # Risk score: rank-percentile for survival, sigmoid for cls
+    # ── Risk / cls score ─────────────────────────────────────────────────────────
     valid_r = ~np.isnan(risk)
     scores  = np.full_like(risk, float("nan"))
     if is_surv:
@@ -170,227 +180,89 @@ def plot_biopsy_umap(data: dict, emb: np.ndarray, task_key: str, out_dir: Path):
         scores[valid_r] = 1.0 / (1.0 + np.exp(-risk[valid_r]))
         score_lbl = "P(ACR+)"
 
-    # TTE in years for display
     tte_yrs = tte / 365.25
 
-    fig = plt.figure(figsize=(24, 11), facecolor=BG)
+    # Masks for hexbins — events only (event==1), ignore censored
+    if is_surv:
+        # event rate hexbin: prospective biopsies with event=1 OR event=0, but only
+        # biopsies where the patient eventually has the event (event==1)
+        evt_mask     = (~np.isnan(event)) & (event == 1)          # only eventual events
+        # avg TTE hexbin: prospective (tte>0) AND event==1 (censored excluded)
+        tte_hex_mask = evt_mask & (~np.isnan(tte)) & (tte > 0)
+    else:
+        # cls: event rate = label (positive class), censored n/a
+        evt_mask     = ~np.isnan(label)
+        tte_hex_mask = np.zeros(N, dtype=bool)   # not meaningful for cls
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5), facecolor=BG)
     fig.suptitle(
-        f"Biopsy-Level Representation Space  —  {TASK_LABELS[task_key]}"
+        f"Biopsy Representation UMAP  —  {TASK_LABELS[task_key]}"
         f"  ({N} biopsies, {n_pts} patients)",
-        fontsize=12, fontweight="bold", y=0.98, color="#1A1018")
-    grd = gridspec.GridSpec(2, 4, figure=fig, wspace=0.28, hspace=0.42)
+        fontsize=12, fontweight="bold", y=1.01, color="#1A1018")
 
-    ax_score   = fig.add_subplot(grd[0, 0])
-    ax_ev      = fig.add_subplot(grd[0, 1])
-    ax_tte     = fig.add_subplot(grd[0, 2])
-    ax_ev_hex  = fig.add_subplot(grd[0, 3])
-    ax_days    = fig.add_subplot(grd[1, 0])
-    ax_km      = fig.add_subplot(grd[1, 1])
-    ax_split   = fig.add_subplot(grd[1, 2])
-    ax_tte_hex = fig.add_subplot(grd[1, 3])
+    # ① Risk / cls score scatter
+    ax1 = axes[0]
+    valid_s = ~np.isnan(scores)
+    sc = ax1.scatter(x[valid_s], y[valid_s], c=scores[valid_s], cmap="RdBu_r",
+                     s=MS, alpha=0.75, linewidths=0, vmin=0, vmax=1)
+    if (~valid_s).any():
+        ax1.scatter(x[~valid_s], y[~valid_s], c="lightgrey",
+                    s=MS * 0.6, alpha=0.25, linewidths=0)
+    cb1 = fig.colorbar(sc, ax=ax1, pad=0.02, fraction=0.046, shrink=0.88)
+    cb1.set_label(score_lbl, fontsize=8); cb1.ax.tick_params(labelsize=7)
+    _ax_style(ax1, f"① {score_lbl}", fig)
 
-    def _sc(ax, vals, cmap, title, vmin=None, vmax=None, alpha=0.75, sz=MS):
-        valid = ~np.isnan(vals)
-        sc = ax.scatter(x[valid], y[valid], c=vals[valid], cmap=cmap,
-                        s=sz, alpha=alpha, linewidths=0,
-                        vmin=(vmin if vmin is not None else float(np.nanmin(vals))),
-                        vmax=(vmax if vmax is not None else float(np.nanmax(vals))))
-        if (~valid).any():
-            ax.scatter(x[~valid], y[~valid], c="lightgrey",
-                       s=sz * 0.6, alpha=0.25, linewidths=0)
-        cb = fig.colorbar(sc, ax=ax, pad=0.02, fraction=0.046, shrink=0.85)
-        cb.ax.tick_params(labelsize=7)
-        ax.set_title(title, fontsize=9, fontweight="bold", pad=4)
-        ax.set_xlabel("UMAP-1", fontsize=8); ax.set_ylabel("UMAP-2", fontsize=8)
-        ax.tick_params(labelsize=7)
-        ax.set_facecolor(BG)
-        ax.spines[["top","right"]].set_visible(False)
-        return cb
-
-    # ① Risk score
-    _sc(ax_score, scores, "RdBu_r", f"① Risk score\n({score_lbl})", vmin=0, vmax=1)
-
-    # ② Biopsy timing relative to event (pre/post for survival; label for cls)
-    if is_surv:
-        # pre-event biopsy (tte>0) vs post-event (tte<0) vs censored (ev=0)
-        pre_ev  = (~np.isnan(tte)) & (tte > 0) & (event == 1)   # before event, event happened
-        post_ev = (~np.isnan(tte)) & (tte < 0) & (event == 1)   # after event already occurred
-        cens    = (~np.isnan(tte)) & (event == 0)                # censored
-        no_data = np.isnan(tte) | np.isnan(event)
-        ax_ev.scatter(x[no_data],  y[no_data],  c="lightgrey", s=MS*0.5, alpha=0.25, linewidths=0)
-        ax_ev.scatter(x[cens],     y[cens],     c=LO,          s=MS,     alpha=0.6,  linewidths=0, label="censored")
-        ax_ev.scatter(x[pre_ev],   y[pre_ev],   c=HI,          s=MS,     alpha=0.85, linewidths=0, label="pre-event")
-        ax_ev.scatter(x[post_ev],  y[post_ev],  c="#FF8A00",   s=MS,     alpha=0.85, linewidths=0, label="post-event")
-        ax_ev.legend(fontsize=6.5, framealpha=0.8, markerscale=1.3)
-        ax_ev.set_title("② Biopsy timing vs event\n(red=pre-event, orange=post, blue=censored)",
-                        fontsize=9, fontweight="bold", pad=4)
+    # ② Event-rate hexbin — only biopsies where event occurs (event==1), censored excluded
+    ax2 = axes[1]
+    gs = max(10, min(30, int(np.sqrt(evt_mask.sum()) // 2)))
+    if evt_mask.sum() > 10:
+        if is_surv:
+            # count density of event biopsies — shows where events cluster in UMAP
+            hx2 = ax2.hexbin(x[evt_mask], y[evt_mask], gridsize=gs,
+                              cmap="Reds", linewidths=0.2, mincnt=1)
+            _ax_style(ax2, "② Event density\n(event biopsies only, censored excluded)",
+                      fig, hx2, "Biopsy count")
+        else:
+            hx2 = ax2.hexbin(x[evt_mask], y[evt_mask], C=label[evt_mask],
+                              reduce_C_function=np.mean, gridsize=gs,
+                              cmap="RdBu_r", linewidths=0.2)
+            hx2.set_clim(0, 1)
+            _ax_style(ax2, "② ACR+ label density\n(labelled biopsies only)",
+                      fig, hx2, "Mean label (0–1)")
     else:
-        _sc(ax_ev, label, "RdBu_r",
-            "② True label\n(positive=red, negative=blue)", vmin=0, vmax=1)
-    ax_ev.set_xlabel("UMAP-1", fontsize=8); ax_ev.set_ylabel("UMAP-2", fontsize=8)
-    ax_ev.tick_params(labelsize=7); ax_ev.set_facecolor(BG)
-    ax_ev.spines[["top","right"]].set_visible(False)
+        ax2.text(0.5, 0.5, "no event data", ha="center", va="center",
+                 transform=ax2.transAxes)
+        _ax_style(ax2, "② Event density", fig)
 
-    # ③ TTE scatter — ALL biopsies; prospective (tte>0) get colormap, rest get markers
-    has_tte = ~np.isnan(tte)
-    if is_surv:
-        # Show all biopsies; layer: grey (no outcome) → orange (post-event) → colormap (prospective)
-        no_outcome = np.isnan(tte) | np.isnan(event)
-        post_ev3   = has_tte & (tte < 0)
-        prosp      = has_tte & (tte > 0)
-        ax_tte.scatter(x[no_outcome], y[no_outcome], c="lightgrey", s=MS*0.6,
-                       alpha=0.25, linewidths=0, zorder=1)
-        ax_tte.scatter(x[post_ev3],  y[post_ev3],   c="#FF8A00",  s=MS,
-                       alpha=0.6,  linewidths=0, label="post-event", zorder=2)
-        if prosp.sum() > 0:
-            tte_pos  = tte_yrs[prosp]
-            tte_clip = np.clip(tte_pos, 0, np.nanpercentile(tte_pos, 95) if prosp.sum() > 2 else tte_pos.max())
-            sc_tte = ax_tte.scatter(x[prosp], y[prosp], c=tte_clip, cmap="plasma_r",
-                                    s=MS, alpha=0.85, linewidths=0, vmin=0,
-                                    vmax=float(tte_clip.max() or 1), zorder=3)
-            cb_tte = fig.colorbar(sc_tte, ax=ax_tte, pad=0.02, fraction=0.046, shrink=0.85)
-            cb_tte.ax.tick_params(labelsize=7); cb_tte.set_label("TTE to event (yrs)", fontsize=7)
-            ev_m  = prosp & (event == 1)
-            cen_m = prosp & (event == 0)
-            ax_tte.scatter(x[ev_m],  y[ev_m],  marker="x", s=18, color=HI,
-                           linewidths=0.9, alpha=0.9, label="event", zorder=4)
-            ax_tte.scatter(x[cen_m], y[cen_m], marker="o", s=6, color="none",
-                           edgecolors=LO, linewidths=0.5, alpha=0.5, label="censored", zorder=3)
-        ax_tte.legend(fontsize=6.5, framealpha=0.75, loc="lower right", markerscale=1.2)
-        n_pro = int(prosp.sum()); n_post = int(post_ev3.sum()); n_nan = int(no_outcome.sum())
-        ax_tte.set_title(f"③ Biopsy TTE (prospective=bright, post-event=orange)\n"
-                         f"pro={n_pro} post={n_post} no-data={n_nan}",
-                         fontsize=9, fontweight="bold", pad=4)
+    # ③ Avg TTE hexbin — event biopsies only (event==1), prospective (tte>0), censored excluded
+    ax3 = axes[2]
+    if is_surv and tte_hex_mask.sum() > 10:
+        gs3 = max(10, min(30, int(np.sqrt(tte_hex_mask.sum()) // 2)))
+        tte_v = tte_yrs[tte_hex_mask]
+        tte_clip = np.clip(tte_v, 0, np.nanpercentile(tte_v, 95))
+        hx3 = ax3.hexbin(x[tte_hex_mask], y[tte_hex_mask], C=tte_clip,
+                          reduce_C_function=np.mean, gridsize=gs3,
+                          cmap="RdBu", linewidths=0.2)
+        tte_hex_v = hx3.get_array()
+        med = float(np.nanmedian(tte_hex_v))
+        half = max(abs(float(tte_hex_v.max()) - med),
+                   abs(med - float(tte_hex_v.min())), 1e-6)
+        vmin = max(0.0, med - half)   # TTE cannot be negative
+        hx3.set_clim(vmin, med + half)
+        n_ev = int(tte_hex_mask.sum())
+        _ax_style(ax3, f"③ Avg TTE to event (yrs)\n(event biopsies only, n={n_ev}, blue=longer)",
+                  fig, hx3, f"Mean TTE yrs (med={med:.1f})", bg="#f0ede8")
+    elif not is_surv:
+        ax3.text(0.5, 0.5, "TTE not applicable\n(classification task)",
+                 ha="center", va="center", transform=ax3.transAxes, fontsize=9)
+        _ax_style(ax3, "③ Avg TTE", fig)
     else:
-        ev_cols = np.where(event == 1, HI, LO)
-        valid_all = ~np.isnan(event)
-        ax_tte.scatter(x[~valid_all], y[~valid_all], c="lightgrey", s=MS*0.6, alpha=0.25, linewidths=0)
-        ax_tte.scatter(x[valid_all],  y[valid_all],  c=ev_cols[valid_all], s=MS, alpha=0.75, linewidths=0)
-        ax_tte.set_title("③ TTE / event\n(red=event, blue=censored)", fontsize=9, fontweight="bold", pad=4)
-    ax_tte.set_xlabel("UMAP-1", fontsize=8); ax_tte.set_ylabel("UMAP-2", fontsize=8)
-    ax_tte.tick_params(labelsize=7); ax_tte.set_facecolor(BG)
-    ax_tte.spines[["top","right"]].set_visible(False)
-
-    # ④ Event density hexbin — all biopsies with event data, adaptive gridsize
-    valid_ev = ~np.isnan(event)
-    gs4 = max(10, min(30, int(np.sqrt(valid_ev.sum()) // 2)))   # adaptive gridsize
-    if valid_ev.sum() > 10:
-        hx_ev = ax_ev_hex.hexbin(
-            x[valid_ev], y[valid_ev], C=event[valid_ev],
-            reduce_C_function=np.mean,
-            gridsize=gs4, cmap="RdBu_r", linewidths=0.2)
-        hx_ev.set_clim(0, 1)
-        cb_ev = fig.colorbar(hx_ev, ax=ax_ev_hex, pad=0.02, fraction=0.046, shrink=0.85)
-        cb_ev.set_label("Event rate (0=none, 1=all)", fontsize=7)
-        cb_ev.ax.tick_params(labelsize=7)
-        label_iv = "④ Event density" if is_surv else "④ Positive label density"
-        ax_ev_hex.set_title(f"{label_iv}\n(all biopsies w/ outcome, red=high)",
-                            fontsize=9, fontweight="bold", pad=4)
-    else:
-        ax_ev_hex.text(0.5, 0.5, "no event data", ha="center", va="center",
-                       transform=ax_ev_hex.transAxes)
-    ax_ev_hex.set_xlabel("UMAP-1", fontsize=8); ax_ev_hex.set_ylabel("UMAP-2", fontsize=8)
-    ax_ev_hex.tick_params(labelsize=7); ax_ev_hex.set_facecolor("#f0ede8")
-    ax_ev_hex.spines[["top","right"]].set_visible(False)
-
-    # ⑤ Days post-transplant (biopsy-specific)
-    valid_d = ~np.isnan(bdays)
-    bdays_yrs = bdays / 365.25
-    if valid_d.sum() > 10:
-        _sc(ax_days, bdays_yrs, "viridis",
-            "⑤ Days post-transplant\n(biopsy timeline)", alpha=0.75)
-        ax_days.collections[-1]  # colorbar already added by _sc
-    else:
-        ax_days.text(0.5, 0.5, "no biopsy day data", ha="center", va="center",
-                     transform=ax_days.transAxes)
-        ax_days.set_title("⑤ Days post-transplant", fontsize=9, fontweight="bold", pad=4)
-        ax_days.set_facecolor(BG)
-        ax_days.spines[["top","right"]].set_visible(False)
-
-    # ⑥ KM: top vs bottom risk tertile — biopsy-level (prospective biopsies only, tte>0)
-    ax_km.set_facecolor(BG)
-    ax_km.spines[["top","right"]].set_visible(False)
-    if is_surv:
-        b_risk, b_tte, b_ev = biopsy_km_data(data)
-        if len(b_risk) >= 20:
-            q33, q67 = np.nanpercentile(b_risk, [33, 67])
-            hi_m = b_risk >= q67
-            lo_m = b_risk <= q33
-            if hi_m.sum() > 5 and lo_m.sum() > 5:
-                _km_step(b_ev[hi_m], b_tte[hi_m] / 365.25, HI, ax_km,
-                         f"High risk (n={hi_m.sum()})")
-                _km_step(b_ev[lo_m], b_tte[lo_m] / 365.25, LO, ax_km,
-                         f"Low risk (n={lo_m.sum()})")
-                if hi_m.sum() >= 3 and lo_m.sum() >= 3:
-                    lr = logrank_test(b_tte[hi_m], b_tte[lo_m],
-                                      event_observed_A=b_ev[hi_m],
-                                      event_observed_B=b_ev[lo_m])
-                    pv = lr.p_value
-                    if pv < 0.001:
-                        pv_str = f"p < 0.001 (={pv:.2e})"
-                    elif pv < 0.05:
-                        pv_str = f"p = {pv:.3f}"
-                    else:
-                        pv_str = f"p = {pv:.3f} (n.s.)"
-                    ax_km.text(0.98, 0.98, f"log-rank {pv_str}",
-                               transform=ax_km.transAxes, ha="right", va="top", fontsize=8)
-                ax_km.set_xlabel("Time from biopsy (years)", fontsize=8)
-                ax_km.set_ylabel("Event-free probability", fontsize=8)
-                ax_km.legend(fontsize=7, framealpha=0.8)
-                ax_km.set_ylim(-0.05, 1.05)
-    else:
-        ax_km.text(0.5, 0.5, "KM not applicable\n(classification task)",
-                   ha="center", va="center", transform=ax_km.transAxes, fontsize=9)
-    ax_km.set_title("⑥ KM: top vs bottom risk tertile\n(biopsy-level, tte>0 prospective only)",
-                    fontsize=9, fontweight="bold", pad=4)
-    ax_km.tick_params(labelsize=7)
-
-    # ⑦ CV split
-    uniq_splits = sorted(set(splits.tolist()))
-    for si, sp in enumerate(uniq_splits):
-        idx = np.where(splits == sp)[0]
-        col = SPLIT_COLS[si % len(SPLIT_COLS)]
-        ax_split.scatter(x[idx], y[idx], color=col, s=MS, alpha=0.7,
-                         linewidths=0, label=f"s{int(sp)}")
-    ax_split.set_title("⑦ CV split annotation", fontsize=9, fontweight="bold", pad=4)
-    ax_split.set_xlabel("UMAP-1", fontsize=8); ax_split.set_ylabel("UMAP-2", fontsize=8)
-    ax_split.tick_params(labelsize=7); ax_split.set_facecolor(BG)
-    ax_split.spines[["top","right"]].set_visible(False)
-    ax_split.legend(fontsize=6.5, framealpha=0.8, ncol=2, markerscale=1.2)
-
-    # ⑧ Avg TTE hexbin (median-centred) — prospective biopsies (tte>0) where available,
-    #    else all valid tte
-    valid_th = ~np.isnan(tte_yrs) & (tte > 0)
-    if valid_th.sum() < 10:
-        valid_th = ~np.isnan(tte_yrs)   # fall back to all if too few prospective
-    if valid_th.sum() > 10:
-        gs8 = max(10, min(30, int(np.sqrt(valid_th.sum()) // 2)))
-        tte_clip_hex = np.clip(tte_yrs[valid_th], 0,
-                               np.nanpercentile(tte_yrs[valid_th], 95))
-        hx_tte = ax_tte_hex.hexbin(
-            x[valid_th], y[valid_th],
-            C=tte_clip_hex,
-            reduce_C_function=np.mean,
-            gridsize=gs8, cmap="RdBu", linewidths=0.2)
-        tte_hex_v = hx_tte.get_array()
-        med_th    = float(np.nanmedian(tte_hex_v))
-        half_th   = max(abs(float(tte_hex_v.max()) - med_th),
-                        abs(med_th - float(tte_hex_v.min())), 1e-6)
-        hx_tte.set_clim(med_th - half_th, med_th + half_th)
-        cb_th = fig.colorbar(hx_tte, ax=ax_tte_hex, pad=0.02, fraction=0.046, shrink=0.85)
-        cb_th.set_label(f"Mean TTE yrs (med={med_th:.1f})", fontsize=7)
-        cb_th.ax.tick_params(labelsize=7)
-    else:
-        ax_tte_hex.text(0.5, 0.5, "no TTE data", ha="center", va="center",
-                        transform=ax_tte_hex.transAxes)
-    ax_tte_hex.set_title("⑧ Avg TTE per hexagon\n(median-centred, blue=longer TTE)",
-                         fontsize=9, fontweight="bold", pad=4)
-    ax_tte_hex.set_xlabel("UMAP-1", fontsize=8); ax_tte_hex.set_ylabel("UMAP-2", fontsize=8)
-    ax_tte_hex.tick_params(labelsize=7); ax_tte_hex.set_facecolor("#f0ede8")
-    ax_tte_hex.spines[["top","right"]].set_visible(False)
+        ax3.text(0.5, 0.5, "no TTE data", ha="center", va="center",
+                 transform=ax3.transAxes)
+        _ax_style(ax3, "③ Avg TTE", fig)
 
     fig.patch.set_facecolor(BG)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.tight_layout()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = "biopsy_rep_umap"
