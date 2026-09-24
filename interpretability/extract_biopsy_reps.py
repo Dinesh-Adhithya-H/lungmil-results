@@ -29,6 +29,7 @@ Usage: sbatch interpretability/submit_extract_biopsy_reps.sh
 """
 
 import argparse
+import math
 import sys
 import types
 from pathlib import Path
@@ -102,30 +103,38 @@ def extract_patient(model, patient, device, task_cfg):
     haz_traj  = extr["hazard_traj"].get(longi_key, [])
     rep_list  = extr["per_biopsy_reps"].get(longi_key, [])
     T         = extr["n_biopsies"]
+    is_cls    = (longi_key == "acr_cls")
 
     result = []
     for t_idx in range(T):
-        if t_idx >= len(haz_traj):
-            break
+        # haz_traj and rep_list are now length-T aligned (NaN for zero-token positions)
         rep = rep_list[t_idx] if t_idx < len(rep_list) and rep_list[t_idx] is not None else None
         if rep is None:
             continue
 
         rec  = records[t_idx]
         stem = patient["stems"][t_idx]
-        day  = float(days[t_idx])
+        day_raw = days[t_idx] if t_idx < len(days) else None
+        day  = float(day_raw) if day_raw is not None else float("nan")
 
-        tte   = float(rec.get(tte_key,  float("nan"))) if tte_key  else float("nan")
-        event = float(rec.get(evt_key,  float("nan"))) if evt_key  else float("nan")
-        label = float(rec.get(lbl_key,  float("nan"))) if lbl_key  else float("nan")
-        if label is None:
-            label = float("nan")
+        def _to_float(v):
+            return float(v) if v is not None else float("nan")
+        tte   = _to_float(rec.get(tte_key))  if tte_key  else float("nan")
+        event = _to_float(rec.get(evt_key))  if evt_key  else float("nan")
+        label = _to_float(rec.get(lbl_key))  if lbl_key  else float("nan")
+
+        raw = float(haz_traj[t_idx]) if t_idx < len(haz_traj) else float("nan")
+        # For classification: store sigmoid probability so risk ∈ (0,1)
+        if is_cls and not math.isnan(raw):
+            risk = 1.0 / (1.0 + math.exp(-raw))
+        else:
+            risk = raw
 
         result.append({
             "stem":       stem,
             "biopsy_day": day,
             "rep":        rep,
-            "risk":       float(haz_traj[t_idx]),
+            "risk":       risk,
             "tte":        tte,
             "event":      event,
             "label":      label,
@@ -186,7 +195,9 @@ def main():
                 try:
                     recs = extract_patient(model, patient, device, cfg)
                 except Exception as exc:
+                    import traceback
                     print(f"    WARNING: patient {patient['patient_id']} failed: {exc}")
+                    traceback.print_exc()
                     continue
                 for r in recs:
                     r["patient_id"] = patient["patient_id"]

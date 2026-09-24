@@ -1,0 +1,55 @@
+cluster_id,bio_category,model,task,mean_rel_attn,sem_rel_attn,n_instances
+5_10,Alveolar,ABMIL_HE_Phase1,death_surv,2.24665,0.13313,21870
+5_9,Alveolar,ABMIL_HE_Phase1,death_surv,2.1011,0.16715,45496
+5_8,Alveolar,ABMIL_HE_Phase1,death_surv,2.01983,0.28466,46543
+5_3,Alveolar,ABMIL_HE_Phase1,death_surv,1.96339,0.07892,442516
+5_5,Alveolar,ABMIL_HE_Phase1,death_surv,1.89862,0.10697,181789
+5_2,Alveolar,ABMIL_HE_Phase1,death_surv,1.3701,0.02465,2021197
+5_6,Alveolar,ABMIL_HE_Phase1,death_surv,1.26466,0.17378,58437
+5_7,Alveolar,ABMIL_HE_Phase1,death_surv,1.23363,0.09536,50757
+5_4,Alveolar,ABMIL_HE_Phase1,death_surv,1.18186,0.06146,393619
+5_1,Alveolar,ABMIL_HE_Phase1,death_surv,0.80954,0.01125,2569589
+1_9,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,2.14156,0.21805,21836
+1_5,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.95105,0.0816,251976
+1_8,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.92839,0.11332,23719
+1_7,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.92472,0.128,82758
+1_2,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.76299,0.02922,746780
+1_6,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.75224,0.02096,113928
+1_1,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.71516,0.00109,1277345
+1_10,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.64969,0.00465,16485
+1_4,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.64443,0.00124,323509
+1_3,Alveolar with empty spaces,ABMIL_HE_Phase1,death_surv,0.60761,0.00761,516994
+0_4,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,1.73368,0.05385,448994
+2,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,1.59159,0.00232,3594
+7_10,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,1.43542,0.08651,18054
+0_7,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,1.16164,0.00965,30065
+0_1,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,1.05389,0.01771,788059
+0_5,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,1.04432,0.07141,66863
+7_7,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.95065,0.0352,32192
+7_5,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.90936,0.00622,50811
+0_3,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.89492,0.02747,476906
+0_8,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.8511,0.01672,16496
+7_2,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.82555,0.00597,293992
+0_2,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.81023,0.00741,628033
+7_1,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.74877,0.00634,351158
+7_4,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.72936,0.00743,117121
+0_6,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.70818,0.00356,32206
+7_3,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.66646,0.0052,126318
+7_8,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.6508,0.0086,22775
+7_9,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.62942,0.00487,22387
+7_6,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.62093,0.012,33133
+0_9,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.42447,0.0435,14108
+4,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,death_surv,0.00765,0.00564,360
+6_6,Bronchial,ABMIL_HE_Phase1,death_surv,1.34434,0.01431,51910
+6_2,Bronchial,ABMIL_HE_Phase1,death_surv,1.10229,0.04775,398202
+6_4,Bronchial,ABMIL_HE_Phase1,death_surv,1.04323,0.00391,294084
+6_5,Bronchial,ABMIL_HE_Phase1,death_surv,0.9179,0.00253,102619
+6_3,Bronchial,ABMIL_HE_Phase1,death_surv,0.8575,0.00578,343596
+6_1,Bronchial,ABMIL_HE_Phase1,death_surv,0.85234,0.00208,473986
+6_8,Bronchial,ABMIL_HE_Phase1,death_surv,0.82425,0.01109,27781
+6_9,Bronchial,ABMIL_HE_Phase1,death_surv,0.77696,0.0056,15913
+6_7,Bronchial,ABMIL_HE_Phase1,death_surv,0.66811,0.00894,28070
+8,Bronchial,ABMIL_HE_Phase1,death_surv,0.61147,0.00138,5039
+10,Cartilage,ABMIL_HE_Phase1,death_surv,0.84518,0.00292,253355
+9,Lymphocytoplasmic inflammation,ABMIL_HE_Phase1,death_surv,0.48388,0.00122,38352
+3,Unknown,ABMIL_HE_Phase1,death_surv,0.62829,0.00177,2574

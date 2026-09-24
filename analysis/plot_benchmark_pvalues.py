@@ -1,5 +1,5 @@
 """
-One-sided paired t-test: LongMK > each other model, per task.
+One-sided paired t-test: LongMIL > each other model, per task.
 Produces a heatmap (models × tasks) coloured by p-value significance,
 using the same model colours as plot_benchmark.py.
 
@@ -40,17 +40,15 @@ SHARED_MODEL_COLORS = {
     "SetMIL":             "#CE93D8",
     "SetMIL-MT":          "#9C27B0",
     "SetMIL-MT (no SAB)": "#6A1B9A",
-    "LongMK-MT":          "#EF9A9A",
-    "LongMK":             "#C62828",
+    "LongMIL":            "#C62828",
 }
 
-# All models except LongMK itself (it's the reference)
+# All models except LongMIL itself (it's the reference)
 MODEL_ORDER = [
     "Linear HE", "Linear BAL", "Linear CT", "Linear Clinical", "wt avg Linear",
     "ABMIL HE", "ABMIL BAL", "ABMIL CT", "ABMIL Clinical", "wt avg ABMIL",
     "Early fusion", "Middle fusion", "Late fusion",
     "SetMIL", "SetMIL-MT", "SetMIL-MT (no SAB)",
-    "LongMK-MT",
 ]
 
 TASKS = {
@@ -76,8 +74,7 @@ CSV_TO_DISPLAY = {
     "SetMIL":                "SetMIL",
     "SetMIL-MT":             "SetMIL-MT",
     "SetMIL-MT (no SAB)":    "SetMIL-MT (no SAB)",
-    "LongMK-MT (no ALiBi)":  "LongMK-MT",
-    "LongMK (no ALiBi) ★":   "LongMK",
+    "LongMIL-v2":             "LongMIL",
 }
 
 SPLIT_COLS = ["s0", "s1", "s2", "s3", "s4"]
@@ -121,7 +118,7 @@ def load_csv_splits(task_key):
 
 
 def paired_ttest_onesided(a, b):
-    """P(LongMK > other): one-sided paired t-test on valid paired obs."""
+    """P(LongMIL > other): one-sided paired t-test on valid paired obs."""
     a, b = np.array(a, dtype=float), np.array(b, dtype=float)
     mask = ~np.isnan(a) & ~np.isnan(b)
     n = mask.sum()
@@ -142,7 +139,7 @@ for j, (task_key, meta) in enumerate(TASKS.items()):
     csv_splits = load_csv_splits(task_key)
     all_splits = {**lin_splits, **csv_splits}
 
-    longmk_vals = all_splits.get("LongMK")
+    longmk_vals = all_splits.get("LongMIL")
     if longmk_vals is None:
         continue
 
@@ -194,8 +191,8 @@ ax.set_yticklabels(MODEL_ORDER, fontsize=8)
 for tick, mdl in zip(ax.get_yticklabels(), MODEL_ORDER):
     tick.set_color(SHARED_MODEL_COLORS.get(mdl, "#333"))
 
-ax.set_title("LongMK vs. all models — one-sided paired t-test\n"
-             "p(LongMK > other), n = number of valid paired splits",
+ax.set_title("LongMIL vs. all models — one-sided paired t-test\n"
+             "p(LongMIL > other), n = number of valid paired splits",
              fontsize=9, fontweight="bold", pad=8)
 
 # Significance legend

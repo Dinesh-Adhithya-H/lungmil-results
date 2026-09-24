@@ -66,8 +66,7 @@ MODEL_DEFS = [
     ("SetMIL",             "setmil"),
     ("SetMIL-MT",          "setmil"),
     ("SetMIL-MT (no SAB)", "setmil"),
-    ("LongMK-MT",          "longi"),
-    ("LongMK",             "longi"),
+    ("LongMIL",            "longi"),
 ]
 
 GROUP_LABELS = {
@@ -75,7 +74,7 @@ GROUP_LABELS = {
     "p1":     "ABMIL unimodal",
     "fusion": "Fusion",
     "setmil": "SetMIL family",
-    "longi":  "LongitudinalMK",
+    "longi":  "LongMIL",
 }
 
 # ── Task definitions ───────────────────────────────────────────────────────────
@@ -99,8 +98,7 @@ CSV_TO_DISPLAY = {
     "SetMIL":          "SetMIL",
     "SetMIL-MT":       "SetMIL-MT",
     "SetMIL-MT (no SAB)":   "SetMIL-MT (no SAB)",
-    "LongMK-MT (no ALiBi)": "LongMK-MT",
-    "LongMK (no ALiBi) ★":  "LongMK",
+    "LongMK-v2":            "LongMIL",
 }
 
 LONGI_TASK_KEYS = {
@@ -111,8 +109,7 @@ LONGI_TASK_KEYS = {
 }
 
 LONGI_VARIANTS = {
-    "longitudinal_mk_mt_no_alibi": "LongMK-MT",
-    "longitudinal_mk_no_alibi":    "LongMK",
+    "longitudinal_mk_no_alibi_v2": "LongMIL",
 }
 
 NON_LONGI_VARIANTS = {
@@ -252,9 +249,9 @@ def draw_table(means, stds, splits_raw):
     BEST_EC  = "#1e8449"
     MISS_BG  = "#f5f5f5"
 
-    DATA_H   = 0.95
-    HEADER_H = 0.75
-    SEP_H    = 0.38
+    DATA_H   = 1.55
+    HEADER_H = 1.20
+    SEP_H    = 0.60
 
     row_heights = []
     for r in rows:
@@ -265,8 +262,8 @@ def draw_table(means, stds, splits_raw):
         else:
             row_heights.append(DATA_H)
 
-    COL_W_LABEL = 2.6
-    COL_W_TASK  = 2.3
+    COL_W_LABEL = 3.6
+    COL_W_TASK  = 3.2
     col_widths  = [COL_W_LABEL] + [COL_W_TASK] * n_tasks
 
     fig_w = sum(col_widths) + 0.4
@@ -304,10 +301,10 @@ def draw_table(means, stds, splits_raw):
         kw = dict(ha=halign, transform=fig.transFigure,
                   fontweight="bold" if bold else "normal")
         if sub:
-            ax.text(cx, cy + 0.012, main, va="center", fontsize=fs,
+            ax.text(cx, cy + 0.010, main, va="center", fontsize=fs,
                     color=color, **kw)
-            ax.text(cx, cy - 0.013, sub, va="center", fontsize=5.0,
-                    color="#777", fontfamily="monospace",
+            ax.text(cx, cy - 0.012, sub, va="center", fontsize=7.0,
+                    color="#555", fontfamily="monospace",
                     ha=halign, transform=fig.transFigure)
         else:
             ax.text(cx, cy, main, va="center", fontsize=fs, color=color, **kw)
@@ -323,15 +320,15 @@ def draw_table(means, stds, splits_raw):
         if r[0] == "header":
             for ci in range(n_tasks + 1):
                 add_rect(ri, ci, HDR_BG, ec=HDR_BG)
-            add_text(ri, 0, "Model", fs=9.5, bold=True, color=HDR_FG, halign="left")
+            add_text(ri, 0, "Model", fs=14, bold=True, color=HDR_FG, halign="left")
             for ti, task in enumerate(TASKS):
-                add_text(ri, ti + 1, task["label"], fs=8.5, bold=True, color=HDR_FG)
+                add_text(ri, ti + 1, task["label"], fs=13, bold=True, color=HDR_FG)
 
         elif r[0] == "sep":
             _, group_lbl = r
             for ci in range(n_tasks + 1):
                 add_rect(ri, ci, SEP_BG, ec=SEP_BG)
-            add_text(ri, 0, group_lbl, fs=7.8, bold=True, color=SEP_FG, halign="left")
+            add_text(ri, 0, group_lbl, fs=11, bold=True, color=SEP_FG, halign="left")
 
         else:
             _, mi = r
@@ -349,7 +346,7 @@ def draw_table(means, stds, splits_raw):
                 transform=fig.transFigure,
                 facecolor=model_color, edgecolor="none", clip_on=False)
             fig.add_artist(stripe)
-            add_text(ri, 0, label, fs=8.0, bold=False, color="#111", halign="left")
+            add_text(ri, 0, label, fs=12, bold=False, color="#111", halign="left")
 
             # Task cells
             for ti in range(n_tasks):
@@ -370,7 +367,7 @@ def draw_table(means, stds, splits_raw):
                 add_rect(ri, ti + 1, cell_bg, ec=ec, lw=lw)
 
                 if np.isnan(m):
-                    add_text(ri, ti + 1, "—", fs=8.5, color="#aaa")
+                    add_text(ri, ti + 1, "—", fs=12, color="#aaa")
                 else:
                     main_txt = f"{m:.3f} ± {s:.3f}"
                     if sv is not None:
@@ -380,16 +377,16 @@ def draw_table(means, stds, splits_raw):
                     else:
                         per = ""
                     add_text(ri, ti + 1, main_txt, sub=per,
-                             fs=8.0, bold=is_best, color="#111")
+                             fs=11, bold=is_best, color="#111")
 
     # Colorbar
     cb_ax = fig.add_axes([0.55, 0.008, 0.30, 0.013])
     cb = plt.colorbar(cm.ScalarMappable(norm=Normalize(0, 1), cmap=CMAP),
                       cax=cb_ax, orientation="horizontal")
-    cb.set_label("Relative rank per task column", fontsize=6)
+    cb.set_label("Relative rank per task column", fontsize=9)
     cb.set_ticks([0, 0.5, 1])
     cb.set_ticklabels(["Low", "Mid", "High"])
-    cb.ax.tick_params(labelsize=5.5)
+    cb.ax.tick_params(labelsize=8)
 
     # Legend
     lh = [
@@ -399,15 +396,15 @@ def draw_table(means, stds, splits_raw):
                        label="Not available"),
     ]
     fig.legend(handles=lh, loc="lower left",
-               bbox_to_anchor=(0.02, 0.005), fontsize=6, framealpha=0.9)
+               bbox_to_anchor=(0.02, 0.005), fontsize=9, framealpha=0.9)
 
     fig.suptitle("Benchmark — All Models × All Tasks  (mean ± std, 5 splits)",
-                 fontsize=11.5, fontweight="bold", y=0.998)
+                 fontsize=16, fontweight="bold", y=0.998)
     fig.text(0.02, 0.001,
              "BACC = balanced accuracy. C-idx = Harrell C-index. "
              "Per-split values s0–s4 shown below mean±std. "
              "Green border = best per column.",
-             fontsize=5.5, color="#666", va="bottom")
+             fontsize=8, color="#666", va="bottom")
 
     for ext in ("png", "pdf"):
         out = OUT_DIR / f"benchmark_table_v2.{ext}"

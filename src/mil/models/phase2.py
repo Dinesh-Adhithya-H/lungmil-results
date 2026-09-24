@@ -650,9 +650,9 @@ class LongitudinalMIL(nn.Module):
                  dropout: float = 0.1, modal_dropout: float = 0.3,
                  max_he_patches: int = 2048,
                  tasks: Optional[List[str]] = None,
-                 use_task_gate: bool = False,
                  use_alibi: bool = True,
-                 use_learned_weight: bool = False):
+                 use_learned_weight: bool = False,
+                 use_no_time: bool = False):
         super().__init__()
         self.encoders           = nn.ModuleDict(encoders)
         self.modal_dropout      = modal_dropout
@@ -660,9 +660,9 @@ class LongitudinalMIL(nn.Module):
         self.n_seeds            = n_seeds
         _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
         self.task_names         = _tasks
-        self.use_task_gate      = use_task_gate
         self.use_alibi          = use_alibi
         self.use_learned_weight = use_learned_weight
+        self.use_no_time        = use_no_time
 
         # Modality identity embedding: one learned vector per modality, added to
         # all K slots so TemporalSAB knows which modality each token came from
@@ -676,42 +676,57 @@ class LongitudinalMIL(nn.Module):
             for mod in encoders
         })
 
-        # Task-specific adaptive modality gate (applied BEFORE TemporalSAB to each modality's K seeds)
-        # Noisy modalities are suppressed pre-SAB so they cannot corrupt useful modalities
-        # via temporal cross-attention. TemporalSAB runs once per task with task-gated seeds.
-        # Only active when use_task_gate=True (_mt variants).
-        self.task_gate = TaskModalGate(len(self._mod_order), _tasks) if use_task_gate else None
-
         # Temporal attention: TemporalSAB (ALiBi + causal) or plain SAB stack
         if use_alibi:
             self.temporal_sab = TemporalSAB(hidden_dim, n_heads, dropout, n_sab_layers)
         else:
             self.plain_sab = nn.ModuleList(
-                [SAB(hidden_dim, n_heads, dropout) for _ in range(max(n_sab_layers, 1))])
+                [SAB(hidden_dim, n_heads, dropout) for _ in range(n_sab_layers)])
 
-        self.abmil_V = nn.ModuleDict({
-            t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh())
-            for t in _tasks})
-        self.abmil_U = nn.ModuleDict({
-            t: nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
-            for t in _tasks})
+        # Meta tokens concatenated to each summary token before ABMIL (after SAB).
+        # Each token goes from hidden_dim → hidden_dim + TIME_DIM + MOD_DIM = 264.
+        # This gives ABMIL explicit temporal and modality context without gating.
+        TIME_DIM = 4
+        MOD_DIM  = 4
+        self._time_dim   = TIME_DIM
+        self._mod_dim    = MOD_DIM
+        self._hidden_dim = hidden_dim
+        # 4-dim learned modality embedding (replaces TaskModalGate scalar gating)
+        self.mod_embed_4 = nn.Embedding(len(self._mod_idx), MOD_DIM)
+        nn.init.trunc_normal_(self.mod_embed_4.weight, std=0.02)
+
+        abmil_in = hidden_dim + MOD_DIM + (TIME_DIM if use_learned_weight else 0)
+
+        # Deep gated ABMIL: 2-layer MLP for V and U to increase capacity
+        def _deep_V(in_dim, h):
+            return nn.Sequential(
+                nn.Linear(in_dim, h), nn.LayerNorm(h), nn.GELU(),
+                nn.Linear(h, h), nn.Tanh())
+
+        def _deep_U(in_dim, h):
+            return nn.Sequential(
+                nn.Linear(in_dim, h), nn.LayerNorm(h), nn.GELU(),
+                nn.Linear(h, h), nn.Sigmoid())
+
+        self.abmil_V = nn.ModuleDict({t: _deep_V(abmil_in, hidden_dim) for t in _tasks})
+        self.abmil_U = nn.ModuleDict({t: _deep_U(abmil_in, hidden_dim) for t in _tasks})
         self.abmil_w = nn.ModuleDict({
             t: nn.Linear(hidden_dim, 1, bias=False)
             for t in _tasks})
 
-        # Per-task temporal weighting: fixed recency decay or learned biopsy gate
-        # Learned gate: net([days_t_norm, days_prev_norm]) → sigmoid scalar per biopsy
-        # The scalar multiplies all K seeds from that biopsy before ABMIL, so
-        # the model freely learns which timepoints to up- or down-weight (0 = suppress).
+        # Temporal time token: 4-dim per biopsy, log-normalised inputs.
+        # use_learned_weight: learned time MLP (v2 variants)
+        # use_no_time: no time encoding at all (plain ABMIL across biopsies)
+        # otherwise: fixed recency_gamma scalar penalty
         if use_learned_weight:
-            self.biopsy_weight_net = nn.ModuleDict({
+            self.biopsy_time_net = nn.ModuleDict({
                 t: nn.Sequential(
                     nn.Linear(2, 16), nn.ReLU(),
-                    nn.Linear(16, 1), nn.Sigmoid(),
+                    nn.Linear(16, TIME_DIM),
                 )
                 for t in _tasks
             })
-        else:
+        elif not use_no_time:
             self.recency_gamma = nn.ParameterDict({
                 t: nn.Parameter(torch.ones(1)) for t in _tasks})
 
@@ -731,39 +746,58 @@ class LongitudinalMIL(nn.Module):
         """Apply temporal or plain SAB depending on use_alibi flag."""
         if self.use_alibi:
             return self.temporal_sab(tokens, days_tok)
-        for layer in self.plain_sab:
+        for layer in self.plain_sab:  # empty list → no-op when n_sab_layers=0
             tokens = layer(tokens)
         return tokens
 
     def _abmil_rep(self, task: str, tokens: torch.Tensor,
                    days: torch.Tensor, anchor_day: float) -> torch.Tensor:
-        """Gated ABMIL anchored at anchor_day.
-
-        When use_learned_weight=True, tokens are already scaled by learned
-        per-biopsy weights (applied in forward before this call), so ABMIL
-        runs with standard softmax — no fixed recency bias.
-        When use_learned_weight=False, recency_gamma adds an exponential
-        distance penalty to the ABMIL logits.
+        """Gated ABMIL. When use_learned_weight=True, tokens are (N, H+4) with
+        the 4-dim time token already concatenated; ABMIL runs on 260-dim input
+        and produces a 256-dim rep (time dims are consumed by V/U projection).
+        When use_learned_weight=False, uses fixed recency_gamma penalty instead.
         """
         gate = self.abmil_V[task](tokens) * self.abmil_U[task](tokens)  # (N, H)
         raw  = self.abmil_w[task](gate).squeeze(-1)                      # (N,)
-        if not self.use_learned_weight:
+        if not self.use_learned_weight and not self.use_no_time:
             sigma = (days.max() - days.min() + 1.0).clamp(min=1.0)
             raw   = raw - self.recency_gamma[task].abs() * (days - anchor_day).abs() / sigma
         alpha = torch.softmax(raw, dim=0)                                 # (N,)
-        return (alpha.unsqueeze(1) * tokens).sum(0)                       # (H,)
+        # gate is already projected to H=256 by V and U; use attention-weighted
+        # gate as rep so heads always receive H-dim regardless of time_dim concat
+        return (alpha.unsqueeze(1) * gate).sum(0)                        # (H,)
 
-    def _apply_biopsy_weights(self, task: str, tokens: torch.Tensor,
-                               tok_biopsy: list, days_arr: list,
-                               anchor_day: float, n_biopsies: int,
-                               device: torch.device) -> torch.Tensor:
-        """Scale each biopsy's seeds by sigmoid(net([d_anchor, d_i]))."""
-        feats = torch.tensor(
-            [[anchor_day, days_arr[i]] for i in range(n_biopsies)],
-            dtype=torch.float32, device=device)                          # (n_biopsies, 2)
-        bw = self.biopsy_weight_net[task](feats).squeeze(1)             # (n_biopsies,)
-        tok_idx = torch.tensor(tok_biopsy, dtype=torch.long, device=device)
-        return tokens * bw[tok_idx].unsqueeze(1)
+    def _concat_meta(self, task: str, tokens: torch.Tensor,
+                     tok_biopsy: list, tok_mod: list, days_arr: list,
+                     anchor_day: float, n_biopsies: int,
+                     device: torch.device) -> torch.Tensor:
+        """Concat 4-dim modality token + (optionally) 4-dim time token to each seed.
+
+        Always appends modality token (H→H+4).
+        For use_learned_weight variants also appends time token (H+4→H+8 = 264).
+
+        Modality token: learned 4-dim embedding per modality — lets ABMIL
+          distinguish which modality each seed came from without gating.
+        Time token: log_norm(anchor_day), log_norm(prev_day) → 4-dim
+          log_norm(d) = log(1+d) / log(1+1825), range [0,1].
+        """
+        import math as _m
+        tok_m_idx = torch.tensor(tok_mod,    dtype=torch.long, device=device)
+        mod_exp   = self.mod_embed_4(tok_m_idx)                          # (N, 4)
+        parts = [tokens, mod_exp]
+
+        if self.use_learned_weight:
+            _log_max = _m.log(1 + 1825.0)
+            feats = torch.tensor(
+                [[_m.log(1 + anchor_day) / _log_max,
+                  _m.log(1 + days_arr[i]) / _log_max]
+                 for i in range(n_biopsies)],
+                dtype=torch.float32, device=device)                      # (n_biopsies, 2)
+            time_vecs = self.biopsy_time_net[task](feats)               # (n_biopsies, 4)
+            tok_b_idx = torch.tensor(tok_biopsy, dtype=torch.long, device=device)
+            parts.append(time_vecs[tok_b_idx])                          # (N, 4)
+
+        return torch.cat(parts, dim=1)                                   # (N, H+4 or H+8)
 
     def forward(self, patient_data: dict, device: torch.device) -> dict:
         """
@@ -773,7 +807,7 @@ class LongitudinalMIL(nn.Module):
           'records'   : list of T per-biopsy label dicts
 
         Returns task-keyed dict:
-          'acr_surv' : (hazard, rep, acr_t, acr_e)     — patient-level
+          'acr_surv' : [(hazard, t_val, e_val), ...]    — per biopsy (gap-time TTE)
           'clad'     : [(hazard, t_val, e_val), ...]    — per biopsy
           'death'    : [(hazard, t_val, e_val), ...]    — per biopsy
           'acr_cls'  : [(logit, label), ...]            — labeled biopsies only
@@ -847,141 +881,70 @@ class LongitudinalMIL(nn.Module):
 
         out: dict = {}
 
-        if self.use_task_gate:
-            # Gated path: gate K seeds BEFORE TemporalSAB so noisy modalities
-            # cannot contaminate useful modalities via temporal cross-attention.
-            # TemporalSAB runs once per task with task-specific gated seeds.
-            tok_biopsy_t = torch.tensor(tok_biopsy, dtype=torch.long, device=device)
-            tok_mod_t    = torch.tensor(tok_mod,    dtype=torch.long, device=device)
+        # Shared SAB over all modalities (no task-specific gating).
+        # Modality and time context are injected via _concat_meta after SAB.
+        tokens = self._sab_forward(all_tokens_raw, days_tok)
 
-            for task in self.task_names:
-                # gate_mat[b, m] = importance of modality m at biopsy b for this task
-                gate_mat = torch.stack([
-                    self.task_gate.nets[task](biopsy_presence[b])
-                    for b in range(T)
-                ])                                                 # (T, n_mods)
-                scale    = gate_mat[tok_biopsy_t, tok_mod_t]      # (total_tokens,)
-                # Scale K seeds pre-SAB: gate ≈ 0 → modality excluded
-                tokens_gated = all_tokens_raw * scale.unsqueeze(1)  # (total_tokens, H)
-                tokens_t = self._sab_forward(tokens_gated, days_tok)
-
-                if task == "acr_surv":
-                    anchor = days_tok[-1].item()
-                    t_use  = (self._apply_biopsy_weights(task, tokens_t, tok_biopsy,
-                                                         days_arr_f, anchor, T, device)
-                              if self.use_learned_weight else tokens_t)
-                    rep    = self._abmil_rep(task, t_use, days_tok, anchor)
+        for task in self.task_names:
+            if task == "acr_surv":
+                # Per-biopsy gap-time predictions (lower-triangular evaluation):
+                # at biopsy t, use all tokens up to t, predict time to next ACR
+                # from this biopsy. Uses tte_next_acr / event_next_acr per record.
+                biopsy_hazards = []
+                for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                    if end_idx == 0:
+                        continue
+                    tte = float(rec.get("tte_next_acr", float("nan")))
+                    ev  = float(rec.get("event_next_acr", float("nan")))
+                    if _math.isnan(tte) or tte < 0:
+                        continue
+                    anchor = float(days_list[t_idx])
+                    tok_t  = self._concat_meta(task, tokens[:end_idx],
+                                               tok_biopsy[:end_idx], tok_mod[:end_idx],
+                                               days_arr_f, anchor, t_idx + 1, device)
+                    days_t = days_tok[:end_idx]
+                    rep    = self._abmil_rep(task, tok_t, days_t, anchor)
                     hazard = self.heads[task](rep).squeeze()
-                    acr_t  = next(
-                        (float(r.get("acr_days", float("nan"))) for r in records
-                         if not _math.isnan(float(r.get("acr_days", float("nan"))))),
-                        float("nan"))
-                    acr_e  = next(
-                        (float(r.get("acr_status", float("nan"))) for r in records
-                         if not _math.isnan(float(r.get("acr_status", float("nan"))))),
-                        float("nan"))
-                    out[task] = (hazard, rep, acr_t, acr_e)
+                    e_safe = float(ev) if not _math.isnan(float(ev)) else 0.0
+                    biopsy_hazards.append((hazard, tte, e_safe))
+                out[task] = biopsy_hazards
 
-                elif task in ("clad", "death"):
-                    t_key, e_key = (("clad_time", "clad_event") if task == "clad"
-                                    else ("death_time", "death_event"))
-                    biopsy_hazards = []
-                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
-                        if end_idx == 0:
-                            continue
-                        t_val = float(rec.get(t_key, float("nan")))
-                        e_val = float(rec.get(e_key, float("nan")))
-                        if _math.isnan(t_val) or t_val < 0:
-                            continue
-                        anchor = float(days_list[t_idx])
-                        tok_t  = (self._apply_biopsy_weights(task, tokens_t[:end_idx],
-                                                              tok_biopsy[:end_idx], days_arr_f,
-                                                              anchor, t_idx + 1, device)
-                                  if self.use_learned_weight else tokens_t[:end_idx])
-                        days_t = days_tok[:end_idx]
-                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
-                        hazard = self.heads[task](rep).squeeze()
-                        e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
-                        biopsy_hazards.append((hazard, t_val, e_safe))
-                    out[task] = biopsy_hazards
-
-                elif task == "acr_cls":
-                    cls_out = []
-                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
-                        label = rec.get("label")
-                        if label is None or end_idx == 0:
-                            continue
-                        anchor = float(days_list[t_idx])
-                        tok_t  = (self._apply_biopsy_weights(task, tokens_t[:end_idx],
-                                                              tok_biopsy[:end_idx], days_arr_f,
-                                                              anchor, t_idx + 1, device)
-                                  if self.use_learned_weight else tokens_t[:end_idx])
-                        days_t = days_tok[:end_idx]
-                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
-                        logit  = self.heads[task](rep).squeeze()
-                        cls_out.append((logit, label))
-                    out[task] = cls_out
-
-        else:
-            # Ungated path: single shared SAB over all modalities
-            tokens = self._sab_forward(all_tokens_raw, days_tok)
-
-            for task in self.task_names:
-                if task == "acr_surv":
-                    anchor = days_tok[-1].item()
-                    tok_task = (self._apply_biopsy_weights(task, tokens, tok_biopsy,
-                                                           days_arr_f, anchor, T, device)
-                                if self.use_learned_weight else tokens)
-                    rep    = self._abmil_rep(task, tok_task, days_tok, anchor)
+            elif task in ("clad", "death"):
+                t_key, e_key = (("clad_time", "clad_event") if task == "clad"
+                                else ("death_time", "death_event"))
+                biopsy_hazards = []
+                for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                    if end_idx == 0:
+                        continue
+                    t_val = float(rec.get(t_key, float("nan")))
+                    e_val = float(rec.get(e_key, float("nan")))
+                    if _math.isnan(t_val) or t_val < 0:
+                        continue
+                    anchor = float(days_list[t_idx])
+                    tok_t  = self._concat_meta(task, tokens[:end_idx],
+                                               tok_biopsy[:end_idx], tok_mod[:end_idx],
+                                               days_arr_f, anchor, t_idx + 1, device)
+                    days_t = days_tok[:end_idx]
+                    rep    = self._abmil_rep(task, tok_t, days_t, anchor)
                     hazard = self.heads[task](rep).squeeze()
-                    acr_t  = next(
-                        (float(r.get("acr_days", float("nan"))) for r in records
-                         if not _math.isnan(float(r.get("acr_days", float("nan"))))),
-                        float("nan"))
-                    acr_e  = next(
-                        (float(r.get("acr_status", float("nan"))) for r in records
-                         if not _math.isnan(float(r.get("acr_status", float("nan"))))),
-                        float("nan"))
-                    out[task] = (hazard, rep, acr_t, acr_e)
+                    e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
+                    biopsy_hazards.append((hazard, t_val, e_safe))
+                out[task] = biopsy_hazards
 
-                elif task in ("clad", "death"):
-                    t_key, e_key = (("clad_time", "clad_event") if task == "clad"
-                                    else ("death_time", "death_event"))
-                    biopsy_hazards = []
-                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
-                        if end_idx == 0:
-                            continue
-                        t_val = float(rec.get(t_key, float("nan")))
-                        e_val = float(rec.get(e_key, float("nan")))
-                        if _math.isnan(t_val) or t_val < 0:
-                            continue
-                        anchor = float(days_list[t_idx])
-                        tok_t  = (self._apply_biopsy_weights(task, tokens[:end_idx],
-                                                              tok_biopsy[:end_idx], days_arr_f,
-                                                              anchor, t_idx + 1, device)
-                                  if self.use_learned_weight else tokens[:end_idx])
-                        days_t = days_tok[:end_idx]
-                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
-                        hazard = self.heads[task](rep).squeeze()
-                        e_safe = float(e_val) if not _math.isnan(float(e_val)) else 0.0
-                        biopsy_hazards.append((hazard, t_val, e_safe))
-                    out[task] = biopsy_hazards
-
-                elif task == "acr_cls":
-                    cls_out = []
-                    for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
-                        label = rec.get("label")
-                        if label is None or end_idx == 0:
-                            continue
-                        anchor = float(days_list[t_idx])
-                        tok_t  = (self._apply_biopsy_weights(task, tokens[:end_idx],
-                                                              tok_biopsy[:end_idx], days_arr_f,
-                                                              anchor, t_idx + 1, device)
-                                  if self.use_learned_weight else tokens[:end_idx])
-                        days_t = days_tok[:end_idx]
-                        rep    = self._abmil_rep(task, tok_t, days_t, anchor)
-                        logit  = self.heads[task](rep).squeeze()
-                        cls_out.append((logit, label))
-                    out[task] = cls_out
+            elif task == "acr_cls":
+                cls_out = []
+                for t_idx, (rec, end_idx) in enumerate(zip(records, biopsy_ends)):
+                    label = rec.get("label")
+                    if label is None or end_idx == 0:
+                        continue
+                    anchor = float(days_list[t_idx])
+                    tok_t  = self._concat_meta(task, tokens[:end_idx],
+                                               tok_biopsy[:end_idx], tok_mod[:end_idx],
+                                               days_arr_f, anchor, t_idx + 1, device)
+                    days_t = days_tok[:end_idx]
+                    rep    = self._abmil_rep(task, tok_t, days_t, anchor)
+                    logit  = self.heads[task](rep).squeeze()
+                    cls_out.append((logit, label))
+                out[task] = cls_out
 
         return out

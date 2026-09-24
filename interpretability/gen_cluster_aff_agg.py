@@ -1,15 +1,13 @@
 """
-Cross-split aggregated cluster-level attribution for the best model per task.
+Cross-split aggregated cluster-level attribution for LongMIL v2 (best model, all tasks).
 
-Best models (benchmark):
-  ACR classification -> set_mil_mt_no_sab  (BACC 0.623)
-  ACR survival       -> longitudinal_mk_no_alibi  (C-index 0.679)
-  CLAD survival      -> set_mil_mt         (C-index 0.563)
-  Death survival     -> longitudinal_mk_no_alibi  (C-index 0.771)
+Best model (LongMIL v2 = longitudinal_mk_no_alibi_v2):
+  ACR classification  BACC 0.610 ± 0.060
+  ACR survival        C-index 0.721 ± 0.077
+  CLAD survival       C-index 0.595 ± 0.083
+  Death survival      C-index 0.759 ± 0.052
 
-For set_mil models: reads paper_interp_data.json (already has cluster delta).
-For longitudinal models: reads cluster_aff_data_{task}.json (from re-inference jobs).
-
+Reads cluster_aff_data_{task}.json from longitudinal_mk_no_alibi_v2 interp folders.
 Output: figures/interpretability/cluster_agg/{task}_cluster_aff_agg.png
 """
 import json
@@ -38,13 +36,11 @@ HE_BIO_COLORS = {
     "Unknown":                                  "#9E9E9E",
 }
 MOD_COLORS = {"HE": "#E64A19", "BAL": "#1565C0", "CT": "#2E7D32", "Clinical": "#9b59b6"}
-FONT = 12
+FONT = 22   # slideshow: very large base font
 
 # Plain-language display names for model variants
 MODEL_DISPLAY = {
-    "longitudinal_mk_no_alibi": "LongMK (longitudinal multimodal attention)",
-    "set_mil_mt_no_sab":        "SetMIL-MT (multimodal set-based MIL)",
-    "set_mil_mt":               "SetMIL-MT (multimodal set-based MIL)",
+    "longitudinal_mk_no_alibi_v2": "LongMIL (longitudinal multimodal MIL with time encoding)",
 }
 
 # Clinical variable name expansions
@@ -66,53 +62,53 @@ CLINICAL_NAME_MAP = {
 plt.rcParams.update({
     "font.family":      "DejaVu Sans",
     "axes.labelsize":   FONT,
-    "axes.titlesize":   FONT + 1,
-    "xtick.labelsize":  FONT - 2,
-    "ytick.labelsize":  FONT - 2,
-    "legend.fontsize":  FONT - 2,
+    "axes.titlesize":   FONT + 2,
+    "xtick.labelsize":  FONT,
+    "ytick.labelsize":  FONT,
+    "legend.fontsize":  FONT - 1,
     "figure.dpi":       150,
 })
 
 TASK_CONFIG = {
     "acr_cls": {
-        "model_family": "set_mil",
-        "variant":      "set_mil_mt_no_sab",
-        "dir_pattern":  "set_mil_mt_no_sab_split{s}_fold0_cls",
-        "json_task":    "acr_cls",
+        "model_family": "longitudinal",
+        "variant":      "longitudinal_mk_no_alibi_v2",
+        "dir_pattern":  "longitudinal_mk_no_alibi_v2_split{s}_fold0_acr_cls",
+        "json_key":     "acr_cls",
         "label":        "ACR Classification  (ACR+ vs ACR-)",
         "hi_lbl":       "ACR+",
         "lo_lbl":       "ACR-",
-        "performance":  "BACC 0.623 +/- 0.034",
+        "performance":  "BACC 0.610 ± 0.060",
     },
     "acr_surv": {
         "model_family": "longitudinal",
-        "variant":      "longitudinal_mk_no_alibi",
-        "dir_pattern":  "longitudinal_mk_no_alibi_split{s}_fold0_acr_surv",
+        "variant":      "longitudinal_mk_no_alibi_v2",
+        "dir_pattern":  "longitudinal_mk_no_alibi_v2_split{s}_fold0_acr_surv",
         "json_key":     "acr_surv",
         "label":        "ACR Survival  (time to next rejection)",
         "hi_lbl":       "High risk (short TTE)",
         "lo_lbl":       "Low risk (long TTE)",
-        "performance":  "C-index 0.679 +/- 0.064",
+        "performance":  "C-index 0.721 ± 0.077",
     },
     "clad": {
-        "model_family": "set_mil",
-        "variant":      "set_mil_mt",
-        "dir_pattern":  "set_mil_mt_split{s}_fold0_clad_surv",
-        "json_task":    "clad",
+        "model_family": "longitudinal",
+        "variant":      "longitudinal_mk_no_alibi_v2",
+        "dir_pattern":  "longitudinal_mk_no_alibi_v2_split{s}_fold0_clad_surv",
+        "json_key":     "clad",
         "label":        "CLAD Survival  (time to CLAD onset)",
         "hi_lbl":       "High risk (short TTE)",
         "lo_lbl":       "Low risk (long TTE)",
-        "performance":  "C-index 0.563 +/- 0.080",
+        "performance":  "C-index 0.595 ± 0.083",
     },
     "death": {
         "model_family": "longitudinal",
-        "variant":      "longitudinal_mk_no_alibi",
-        "dir_pattern":  "longitudinal_mk_no_alibi_split{s}_fold0_death_surv",
+        "variant":      "longitudinal_mk_no_alibi_v2",
+        "dir_pattern":  "longitudinal_mk_no_alibi_v2_split{s}_fold0_death_surv",
         "json_key":     "death",
         "label":        "Mortality  (post-transplant survival)",
         "hi_lbl":       "Non-survivor (short survival)",
         "lo_lbl":       "Long-term survivor",
-        "performance":  "C-index 0.771 +/- 0.056",
+        "performance":  "C-index 0.759 ± 0.052",
     },
 }
 
@@ -207,16 +203,16 @@ def _fmt_sci(v):
     return f"{mant:.1f}×10$^{{{exp}}}$"
 
 
-def plot_task(agg, cfg, task_key, top_n=14):
+def plot_task(agg, cfg, task_key, top_n=10):
     mods = [m for m in ["HE", "BAL", "CT", "Clinical"] if m in agg]
     if not mods:
         print(f"  [plot] {task_key}: no modality data")
         return
 
     n_cols = len(mods)
-    panel_w = {"HE": 8.5, "BAL": 8.5, "CT": 6.5, "Clinical": 8.0}
-    total_w = sum(panel_w.get(m, 7.5) for m in mods)
-    fig, axes = plt.subplots(1, n_cols, figsize=(total_w, 10))
+    panel_w = {"HE": 13.0, "BAL": 13.0, "CT": 10.0, "Clinical": 12.0}
+    total_w = sum(panel_w.get(m, 11.0) for m in mods)
+    fig, axes = plt.subplots(1, n_cols, figsize=(total_w, 22))
     if n_cols == 1:
         axes = [axes]
 
@@ -247,18 +243,18 @@ def plot_task(agg, cfg, task_key, top_n=14):
         x = np.arange(len(delta_s))
         bar_cols = ["#C62828" if v > 0 else "#1565C0" for v in delta_s]
 
-        bars = ax.barh(x, delta_s, color=bar_cols, height=0.65, alpha=0.88,
+        bars = ax.barh(x, delta_s, color=bar_cols, height=0.72, alpha=0.88,
                        edgecolor="white", linewidth=0.4)
         ax.errorbar(delta_s, x, xerr=err_s, fmt="none",
-                    color="#222", capsize=3, capthick=0.9, lw=1.0, alpha=0.75)
+                    color="#222", capsize=5, capthick=1.5, lw=1.8, alpha=0.75)
         ax.axvline(0, color="#444", lw=1.1)
 
         # Light x-grid for readability
         ax.xaxis.grid(True, linestyle=":", linewidth=0.5, color="#ccc", zorder=0)
         ax.set_axisbelow(True)
 
-        # Y-tick labels: wrap long names at 32 chars
-        def _wrap(s, n=32):
+        # Y-tick labels: wrap long names at 24 chars (large font needs early wrap)
+        def _wrap(s, n=24):
             if len(s) <= n:
                 return s
             # break at last space before n
@@ -266,17 +262,19 @@ def plot_task(agg, cfg, task_key, top_n=14):
             return s[:cut] + "\n" + s[cut + 1:] if cut > 0 else s[:n] + "-\n" + s[n:]
 
         ax.set_yticks(x)
-        ax.set_yticklabels([_wrap(lb) for lb in labs_s], fontsize=FONT - 3)
-        ax.tick_params(axis="y", pad=2)
+        ax.set_yticklabels([_wrap(lb) for lb in labs_s], fontsize=FONT)
+        ax.tick_params(axis="y", pad=4)
+        ax.tick_params(axis="x", labelsize=FONT, rotation=30)
+        ax.xaxis.set_major_locator(plt.MaxNLocator(5))
 
-        ax.set_xlabel("Attribution score  (positive = enriched in high-risk group)", fontsize=FONT - 1)
+        ax.set_xlabel("Attribution score  (positive = enriched in high-risk group)", fontsize=FONT)
         ax.set_title(
             f"{mod}  [top {len(order)} clusters]\n"
             f"← {cfg['lo_lbl']}  |  {cfg['hi_lbl']} →",
-            fontsize=FONT, fontweight="bold",
-            color=MOD_COLORS.get(mod, "#333"), pad=8)
+            fontsize=FONT + 3, fontweight="bold",
+            color=MOD_COLORS.get(mod, "#333"), pad=12)
         ax.text(0.98, 0.01, f"n={n_sp} splits", transform=ax.transAxes,
-                ha="right", va="bottom", fontsize=FONT - 2, color="#555")
+                ha="right", va="bottom", fontsize=FONT - 1, color="#555")
         ax.set_xlim(-shared_xlim, shared_xlim)
         ax.spines[["top", "right"]].set_visible(False)
         ax.spines["left"].set_linewidth(0.7)
@@ -288,7 +286,7 @@ def plot_task(agg, cfg, task_key, top_n=14):
         Patch(facecolor="#1565C0", alpha=0.88, label=f"Enriched in {cfg['lo_lbl']}"),
     ]
     for ax in axes:
-        ax.legend(handles=legend_elems, fontsize=FONT - 3, loc="lower right",
+        ax.legend(handles=legend_elems, fontsize=FONT, loc="lower right",
                   framealpha=0.85, edgecolor="#ccc")
 
     model_disp = MODEL_DISPLAY.get(cfg["variant"], cfg["variant"])
@@ -296,12 +294,12 @@ def plot_task(agg, cfg, task_key, top_n=14):
         f"{cfg['label']}\n"
         f"Model: {model_disp}  [{cfg['performance']}]  |  "
         f"Mean ± s.d. across {agg[mods[0]]['n_splits']} cross-validation splits",
-        fontsize=FONT + 2, fontweight="bold", y=1.01)
+        fontsize=FONT + 6, fontweight="bold", y=1.02)
     fig.tight_layout(rect=[0, 0, 1, 1])
 
     stem = OUT_FIGURES / f"{task_key}_cluster_aff_agg"
-    fig.savefig(str(stem) + ".png", dpi=300, bbox_inches="tight")
-    fig.savefig(str(stem) + ".pdf", dpi=300, bbox_inches="tight")
+    fig.savefig(str(stem) + ".png", dpi=200, bbox_inches="tight")
+    fig.savefig(str(stem) + ".pdf", dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"  -> {stem}.png")
 

@@ -1,0 +1,55 @@
+cluster_id,bio_category,model,task,mean_rel_attn,sem_rel_attn,n_instances
+5_1,Alveolar,LongMIL_Phase2,death_surv,8.71277,0.48766,5
+5_2,Alveolar,LongMIL_Phase2,death_surv,6.34337,0.4224,5
+5_3,Alveolar,LongMIL_Phase2,death_surv,3.97458,0.85259,5
+5_4,Alveolar,LongMIL_Phase2,death_surv,1.14587,0.07674,5
+5_5,Alveolar,LongMIL_Phase2,death_surv,0.57273,0.09036,5
+5_7,Alveolar,LongMIL_Phase2,death_surv,0.29424,0.13867,5
+5_6,Alveolar,LongMIL_Phase2,death_surv,0.28735,0.06201,5
+5_9,Alveolar,LongMIL_Phase2,death_surv,0.26173,0.17495,5
+5_8,Alveolar,LongMIL_Phase2,death_surv,0.24744,0.05409,5
+5_10,Alveolar,LongMIL_Phase2,death_surv,0.06705,0.03928,5
+1_1,Alveolar with empty spaces,LongMIL_Phase2,death_surv,5.84935,0.28483,5
+1_2,Alveolar with empty spaces,LongMIL_Phase2,death_surv,3.06318,0.40227,5
+1_4,Alveolar with empty spaces,LongMIL_Phase2,death_surv,1.6224,0.26298,5
+1_3,Alveolar with empty spaces,LongMIL_Phase2,death_surv,1.57199,0.25744,5
+1_6,Alveolar with empty spaces,LongMIL_Phase2,death_surv,0.92011,0.50874,5
+1_5,Alveolar with empty spaces,LongMIL_Phase2,death_surv,0.91851,0.09432,5
+1_9,Alveolar with empty spaces,LongMIL_Phase2,death_surv,0.27521,0.09876,5
+1_7,Alveolar with empty spaces,LongMIL_Phase2,death_surv,0.15911,0.0395,5
+1_8,Alveolar with empty spaces,LongMIL_Phase2,death_surv,0.09472,0.01232,5
+1_10,Alveolar with empty spaces,LongMIL_Phase2,death_surv,0.01637,0.00425,5
+0_1,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,2.65673,0.19904,5
+0_2,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,2.44138,0.28617,5
+0_4,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,1.91095,0.24473,5
+0_3,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,1.85815,0.15159,5
+7_1,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.46325,0.11945,5
+0_5,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.36158,0.14085,5
+7_2,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.34988,0.08756,5
+0_7,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.15168,0.03918,5
+7_3,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.15004,0.06102,5
+7_4,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.11472,0.04054,5
+0_8,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.05634,0.02147,5
+0_6,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.04857,0.01642,5
+7_7,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.02586,0.01825,5
+7_5,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.02542,0.01697,5
+7_10,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.02373,0.02116,5
+0_9,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.01729,0.01197,5
+7_6,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.01723,0.00918,5
+2,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.01672,0.01493,5
+7_9,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.01453,0.00998,5
+7_8,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.00362,0.00288,5
+4,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,death_surv,0.00037,0.00033,5
+6_1,Bronchial,LongMIL_Phase2,death_surv,2.0106,0.15965,5
+6_2,Bronchial,LongMIL_Phase2,death_surv,1.50468,0.24125,5
+6_3,Bronchial,LongMIL_Phase2,death_surv,1.21353,0.05814,5
+6_4,Bronchial,LongMIL_Phase2,death_surv,1.02278,0.20501,5
+6_5,Bronchial,LongMIL_Phase2,death_surv,0.15272,0.03056,5
+6_6,Bronchial,LongMIL_Phase2,death_surv,0.09778,0.01043,5
+6_8,Bronchial,LongMIL_Phase2,death_surv,0.05167,0.01792,5
+6_7,Bronchial,LongMIL_Phase2,death_surv,0.05084,0.02629,5
+6_9,Bronchial,LongMIL_Phase2,death_surv,0.03,0.02654,5
+8,Bronchial,LongMIL_Phase2,death_surv,0.00804,0.00656,5
+10,Cartilage,LongMIL_Phase2,death_surv,0.73996,0.08715,5
+9,Lymphocytoplasmic inflammation,LongMIL_Phase2,death_surv,0.01113,0.00796,5
+3,Unknown,LongMIL_Phase2,death_surv,0.00015,6e-05,5

@@ -20,7 +20,7 @@ echo "=== extract_biopsy_reps split=${SPLIT} ==="
 python interpretability/extract_biopsy_reps.py \
     --split  ${SPLIT} \
     --fold   0 \
-    --tasks  acr_surv \
+    --tasks  acr_cls acr_surv clad_surv death_surv \
     --device cuda
 
 echo "=== Done split=${SPLIT} ==="

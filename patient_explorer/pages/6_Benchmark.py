@@ -16,8 +16,8 @@ FIG_DIR = Path("/ictstr01/home/aih/dinesh.haridoss/chicago_mil/figures/benchmark
 
 BEST_MODELS = {
     "acr_cls":   {"model": "SetMIL-MT (no SAB)", "metric": "BACC",    "value": 0.623, "std": 0.034, "model_color": "#9C27B0", "task_color": "#7c83ff"},
-    "acr_surv":  {"model": "LongMK",             "metric": "C-index", "value": 0.679, "std": 0.064, "model_color": "#C62828", "task_color": "#58a6ff"},
-    "clad_surv": {"model": "SetMIL-MT",          "metric": "C-index", "value": 0.563, "std": 0.080, "model_color": "#9C27B0", "task_color": "#f78166"},
+    "acr_surv":  {"model": "LongMK-v2",          "metric": "C-index", "value": 0.721, "std": 0.086, "model_color": "#C62828", "task_color": "#58a6ff"},
+    "clad_surv": {"model": "LongMK-v2",          "metric": "C-index", "value": 0.595, "std": 0.092, "model_color": "#C62828", "task_color": "#f78166"},
     "death_surv":{"model": "LongMK",             "metric": "C-index", "value": 0.771, "std": 0.056, "model_color": "#C62828", "task_color": "#3fb950"},
 }
 
@@ -118,22 +118,27 @@ MODEL_GROUPS = {
     "SetMIL-MT (no SAB)": "Set-based MIL",
     "LongMK-MT":          "Longitudinal",
     "LongMK":             "Longitudinal",
+    "LongMK-v2":          "Longitudinal",
 }
 
 rows = [
     # ACR Classification (BACC)
     {"Group": "Set-based MIL",    "Model": "SetMIL-MT (no SAB)", "Task": "ACR cls",   "Metric": "BACC",    "Mean": 0.623, "Std": 0.034, "Best": "★"},
     {"Group": "Set-based MIL",    "Model": "SetMIL-MT",          "Task": "ACR cls",   "Metric": "BACC",    "Mean": 0.606, "Std": 0.038, "Best": ""},
+    {"Group": "Longitudinal",     "Model": "LongMK-v2",          "Task": "ACR cls",   "Metric": "BACC",    "Mean": 0.614, "Std": 0.090, "Best": ""},
     {"Group": "Longitudinal",     "Model": "LongMK",             "Task": "ACR cls",   "Metric": "BACC",    "Mean": 0.598, "Std": 0.041, "Best": ""},
     # ACR Survival (C-index)
-    {"Group": "Longitudinal",     "Model": "LongMK",             "Task": "ACR surv",  "Metric": "C-index", "Mean": 0.679, "Std": 0.064, "Best": "★"},
+    {"Group": "Longitudinal",     "Model": "LongMK-v2",          "Task": "ACR surv",  "Metric": "C-index", "Mean": 0.721, "Std": 0.086, "Best": "★"},
+    {"Group": "Longitudinal",     "Model": "LongMK",             "Task": "ACR surv",  "Metric": "C-index", "Mean": 0.679, "Std": 0.064, "Best": ""},
     {"Group": "Longitudinal",     "Model": "LongMK-MT",          "Task": "ACR surv",  "Metric": "C-index", "Mean": 0.651, "Std": 0.059, "Best": ""},
     {"Group": "Set-based MIL",    "Model": "SetMIL-MT",          "Task": "ACR surv",  "Metric": "C-index", "Mean": 0.628, "Std": 0.055, "Best": ""},
     # CLAD Survival (C-index)
-    {"Group": "Set-based MIL",    "Model": "SetMIL-MT",          "Task": "CLAD surv", "Metric": "C-index", "Mean": 0.563, "Std": 0.080, "Best": "★"},
+    {"Group": "Longitudinal",     "Model": "LongMK-v2",          "Task": "CLAD surv", "Metric": "C-index", "Mean": 0.595, "Std": 0.092, "Best": "★"},
+    {"Group": "Set-based MIL",    "Model": "SetMIL-MT",          "Task": "CLAD surv", "Metric": "C-index", "Mean": 0.563, "Std": 0.080, "Best": ""},
     {"Group": "Longitudinal",     "Model": "LongMK",             "Task": "CLAD surv", "Metric": "C-index", "Mean": 0.549, "Std": 0.072, "Best": ""},
     # Death Survival (C-index)
     {"Group": "Longitudinal",     "Model": "LongMK",             "Task": "Death surv","Metric": "C-index", "Mean": 0.771, "Std": 0.056, "Best": "★"},
+    {"Group": "Longitudinal",     "Model": "LongMK-v2",          "Task": "Death surv","Metric": "C-index", "Mean": 0.759, "Std": 0.058, "Best": ""},
     {"Group": "Longitudinal",     "Model": "LongMK-MT",          "Task": "Death surv","Metric": "C-index", "Mean": 0.748, "Std": 0.062, "Best": ""},
     {"Group": "Set-based MIL",    "Model": "SetMIL-MT",          "Task": "Death surv","Metric": "C-index", "Mean": 0.720, "Std": 0.058, "Best": ""},
 ]

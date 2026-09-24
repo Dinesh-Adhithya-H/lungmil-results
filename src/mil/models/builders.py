@@ -113,7 +113,7 @@ def build_model_v8(
             hidden_dim=HIDDEN_DIM,
             n_seeds=slot_k,
             n_pma_layers=2,
-            n_sab_layers=0 if no_sab else max(1, n_cross_layers),
+            n_sab_layers=0 if no_sab else n_cross_layers,
             n_heads=P2_N_HEADS,
             dropout=P2_ATTN_DROPOUT,
             modal_dropout=he_aware_dropout,
@@ -136,24 +136,28 @@ def build_model_v8(
                                 hidden_dim=HIDDEN_DIM,
                                 tasks=_task_list)
     if variant in ("longitudinal_mk", "longitudinal_mk_mt",
-                   "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
+                   "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi",
+                   "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time"):
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
-        no_alibi = variant in ("longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi")
+        no_alibi  = variant in ("longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi",
+                                "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time")
+        use_lw    = variant in ("longitudinal_mk_no_alibi_v2",)
+        use_nt    = variant == "longitudinal_mk_no_alibi_v2_no_time"
         return LongitudinalMIL(
             encoders,
             hidden_dim=HIDDEN_DIM,
             n_seeds=slot_k,
             n_pma_layers=2,
-            n_sab_layers=max(1, n_cross_layers),
+            n_sab_layers=n_cross_layers,
             n_heads=P2_N_HEADS,
             dropout=P2_ATTN_DROPOUT,
             modal_dropout=modal_dropout,
             max_he_patches=max_he_patches,
             tasks=_task_list,
-            use_task_gate=(variant in ("longitudinal_mk_mt", "longitudinal_mk_mt_no_alibi")),
             use_alibi=not no_alibi,
-            use_learned_weight=no_alibi,
+            use_learned_weight=use_lw,
+            use_no_time=use_nt,
         )
     raise ValueError(f"Unknown variant {variant!r}. Choose from: {P2_VARIANTS}")
 

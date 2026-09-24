@@ -1,7 +1,13 @@
 """
 Unimodal ablation — LongMIL only.
-For each task: Full multimodal bar + 4 unimodal bars + best-ABMIL reference line.
-Tells the story: LongMIL with all modalities beats the best single-modality model.
+Horizontal-bar layout matching benchmark style.
+
+For each task: Full multimodal bar + 4 unimodal bars + per-modality ABMIL diamond.
+
+Fair comparison: LongMIL(mod only) and ABMIL(mod) are BOTH evaluated on the same
+modality-specific test subset (patients that have that modality). The paired
+t-test compares LongMIL(mod) vs ABMIL(mod) per split, BH-corrected over 4 tasks × 4 mods.
+
 Run via: sbatch analysis/submit_unimodal_ablation_v2.sh
 """
 from pathlib import Path
@@ -11,82 +17,85 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from matplotlib.patches import Patch, FancyBboxPatch
+from matplotlib.patches import Patch
+import matplotlib.lines as mlines
 from scipy import stats
 
 ROOT     = Path(__file__).resolve().parent.parent
 PRED     = ROOT / "results" / "predictions"
-LIN_CSV  = ROOT / "results" / "linear_models" / "metrics_summary.csv"
 ABL_CSV  = ROOT / "interpretability" / "unimodal_ablation" / "unimodal_ablation_summary.csv"
 OUT_DIR  = ROOT / "figures" / "interpretability" / "unimodal_ablation"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 BG = "#FAF6F2"
 
-LONGMIL_COLOR  = "#B71C1C"   # dark red — full multimodal LongMIL
-MOD_COLORS     = {
+LONGMIL_COLOR = "#B71C1C"
+MOD_COLORS    = {
     "HE":       "#E64A19",
     "BAL":      "#1565C0",
     "CT":       "#2E7D32",
     "Clinical": "#7B1FA2",
 }
-ABMIL_LINE_COLOR = "#0D47A1"   # dark blue reference line
+ABMIL_COLOR = "#0D47A1"
 
 MOD_ORDER  = ["HE", "BAL", "CT", "Clinical"]
 SPLIT_COLS = ["s0", "s1", "s2", "s3", "s4"]
 
+ROW_LABELS = ["Full (all 4 mod.)"] + [f"{m} only" for m in MOD_ORDER]
+ROW_COLORS = [LONGMIL_COLOR] + [MOD_COLORS[m] for m in MOD_ORDER]
+N_ROWS = len(ROW_LABELS)
+
 TASK_CFG = {
-    "acr_cls":   {
+    "acr_cls": {
         "bench_file": "comparison_acr_cls.csv",
-        "metric_col": "mean",  "split_metric": "bacc",
-        "abl_metric": "bacc",  "abl_suffix":   "acr_cls",
-        "lin_task":   "ACR",   "lin_metric":   "bacc",
-        "metric_label": "BACC",
-        "label": "ACR Classification",
+        "abl_metric": "bacc",    "abl_suffix": "acr_cls",
+        "metric_label": "BACC  (0.5 = chance,  1.0 = perfect)",
+        "label": "ACR classification",
     },
-    "acr_surv":  {
+    "acr_surv": {
         "bench_file": "comparison_acr_surv.csv",
-        "metric_col": "mean",  "split_metric": "c_index",
         "abl_metric": "c_index", "abl_suffix": "acr_surv",
-        "lin_task":   "ACR_TTE", "lin_metric": "cindex",
-        "metric_label": "C-index",
-        "label": "ACR Survival",
+        "metric_label": "C-index  (0.5 = chance,  1.0 = perfect)",
+        "label": "Time to first ACR",
     },
     "clad_surv": {
         "bench_file": "comparison_clad.csv",
-        "metric_col": "mean",  "split_metric": "c_index",
         "abl_metric": "c_index", "abl_suffix": "clad_surv",
-        "lin_task":   "CLAD",  "lin_metric":  "cindex",
-        "metric_label": "C-index",
-        "label": "CLAD Survival",
+        "metric_label": "C-index  (0.5 = chance,  1.0 = perfect)",
+        "label": "Time to CLAD",
     },
     "death_surv": {
         "bench_file": "comparison_death.csv",
-        "metric_col": "mean",  "split_metric": "c_index",
         "abl_metric": "c_index", "abl_suffix": "death_surv",
-        "lin_task":   "Death", "lin_metric":  "cindex",
-        "metric_label": "C-index",
-        "label": "Post-Transplant Mortality",
+        "metric_label": "C-index  (0.5 = chance,  1.0 = perfect)",
+        "label": "Time to death",
     },
 }
 
 CSV_TO_DISPLAY = {
-    "P1 HE":       "ABMIL HE",   "P1 BAL":      "ABMIL BAL",
-    "P1 CT":       "ABMIL CT",   "P1 Clinical":  "ABMIL Clinical",
-    "LongMK-v2":   "LongMIL",
+    "P1 HE":      "ABMIL HE",   "P1 BAL":     "ABMIL BAL",
+    "P1 CT":      "ABMIL CT",   "P1 Clinical": "ABMIL Clinical",
+    "LongMK-v2":  "LongMIL",
 }
 ABMIL_UNIMODAL = {"ABMIL HE", "ABMIL BAL", "ABMIL CT", "ABMIL Clinical"}
+
+# ── Font sizes (matching benchmark) ──────────────────────────────────────────
+FS_TITLE   = 36
+FS_YLABEL  = 26
+FS_XLABEL  = 24
+FS_TICK    = 23
+FS_LEGEND  = 22
+FS_SIG     = 21
+FS_CAPTION = 18
+FS_ANNOT   = 18
 
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
 def load_benchmark(bench_file):
-    """Load LongMIL full-multimodal splits and per-modality ABMIL means from benchmark CSV."""
     df = pd.read_csv(PRED / bench_file)
     longmil_splits = []
-    # per-modality ABMIL: {mod: mean}
-    abmil_per_mod = {}
-
+    abmil_per_mod  = {}
     for _, row in df.iterrows():
         name = CSV_TO_DISPLAY.get(str(row["model"]).strip())
         if name is None:
@@ -100,21 +109,16 @@ def load_benchmark(bench_file):
         if name == "LongMIL":
             longmil_splits = splits
         elif name in ABMIL_UNIMODAL:
-            mod = name.replace("ABMIL ", "")   # "HE", "BAL", "CT", "Clinical"
-            abmil_per_mod[mod] = float(np.nanmean(splits))
-
-    # best ABMIL (for BH test) — highest mean across modalities
-    if abmil_per_mod:
-        best_mod        = max(abmil_per_mod, key=abmil_per_mod.get)
-        best_abmil_mean = abmil_per_mod[best_mod]
-    else:
-        best_mod, best_abmil_mean = "", 0.0
-
-    return longmil_splits, best_abmil_mean, abmil_per_mod, best_mod
+            mod = name.replace("ABMIL ", "")
+            abmil_per_mod[mod] = {
+                "splits": splits,
+                "mean":   float(np.nanmean([v for v in splits if not np.isnan(v)])),
+                "std":    float(np.nanstd( [v for v in splits if not np.isnan(v)])),
+            }
+    return longmil_splits, abmil_per_mod
 
 
 def load_longmil_unimodal(abl_suffix, abl_metric):
-    """Load LongMIL unimodal ablation per-modality splits from summary CSV."""
     if not ABL_CSV.exists():
         return {}
     df = pd.read_csv(ABL_CSV)
@@ -128,15 +132,17 @@ def load_longmil_unimodal(abl_suffix, abl_metric):
         if "value" in grp.columns and grp["value"].notna().any():
             vals = grp["value"].dropna().tolist()
         elif "mean" in grp.columns and grp["mean"].notna().any():
-            r = grp.iloc[0]
-            vals = [float(r["mean"])]
+            vals = [float(grp.iloc[0]["mean"])]
         else:
             continue
-        vals_clean = [v for v in vals if not np.isnan(float(v)) and 0.0 <= float(v) <= 1.0]
+        vals_clean = [float(v) for v in vals if not np.isnan(float(v)) and 0.0 <= float(v) <= 1.0]
         if not vals_clean:
             continue
-        out[mod] = {"mean": float(np.nanmean(vals_clean)), "std": float(np.nanstd(vals_clean)),
-                    "splits": vals_clean}
+        out[mod] = {
+            "mean":   float(np.nanmean(vals_clean)),
+            "std":    float(np.nanstd(vals_clean)),
+            "splits": vals_clean,
+        }
     return out
 
 
@@ -159,269 +165,353 @@ def sig_stars(p):
     if p < 0.001: return "***"
     if p < 0.01:  return "**"
     if p < 0.05:  return "*"
-    return "ns"
+    return ""
 
 
-# ── Main figure: 4-panel ──────────────────────────────────────────────────────
+def _bracket_label(ax, rows, text, color):
+    if not rows:
+        return
+    y_top = min(rows) - 0.45
+    y_bot = max(rows) + 0.45
+    y_mid = (y_top + y_bot) / 2
+    ax.plot([1.04, 1.04], [y_top, y_bot], color=color, linewidth=2.5,
+            clip_on=False, zorder=8)
+    ax.text(1.06, y_mid, text, ha="left", va="center", fontsize=14,
+            fontweight="bold", color=color, clip_on=False, rotation=90)
 
-FS_TITLE  = 28
-FS_LABEL  = 22
-FS_TICK   = 19
-FS_LEGEND = 18
-FS_ANNOT  = 15
-FS_SIG    = 18
 
-fig, axes = plt.subplots(1, 4, figsize=(52, 14), facecolor=BG)
-fig.patch.set_facecolor(BG)
-fig.suptitle(
-    "LongMIL — Unimodal Ablation  ·  Full multimodal vs. single-modality input",
-    fontsize=32, fontweight="bold", y=1.01,
-)
+def plot_ablation_task(ax, task_key, sig_mod_map, all_data, show_ylabel=True):
+    cfg = TASK_CFG[task_key]
+    lm_splits  = all_data[task_key]["lm_splits"]
+    ab_per_mod = all_data[task_key]["ab_per_mod"]
+    lm_unimodal = all_data[task_key]["lm_uni"]
 
-# Collect all (longmil_splits, abmil_splits) pairs across tasks for BH correction
-all_tests = []   # list of (task_key, lm_splits, ab_splits)
-for tk, cfg in TASK_CFG.items():
-    lm_splits, best_ab_mean, ab_splits, best_ab_mod = load_benchmark(cfg["bench_file"])
-    all_tests.append((tk, lm_splits, ab_splits, best_ab_mod))
+    y = np.arange(N_ROWS)
 
-raw_pvals = []
-for _, lm_s, ab_per_mod, best_mod in all_tests:
-    lm = np.array([v for v in lm_s if not np.isnan(v)])
-    best_ab_mean = max(ab_per_mod.values()) if ab_per_mod else 0.0
-    # use best ABMIL mean as a scalar reference; paired test not meaningful here
-    # so just test LongMIL splits against best ABMIL mean as a threshold
-    if len(lm) >= 2 and best_ab_mean > 0:
-        from scipy.stats import ttest_1samp
-        _, p = ttest_1samp(lm, best_ab_mean, alternative="greater")
-        raw_pvals.append(p)
-    else:
-        raw_pvals.append(1.0)
-
-adj_pvals = bh_correct(np.array(raw_pvals))
-
-for ax_idx, ((task_key, cfg), (_, lm_splits, ab_per_mod, best_mod), adj_p) in enumerate(
-        zip(TASK_CFG.items(), all_tests, adj_pvals)):
-
-    ax = axes[ax_idx]
-    ax.set_facecolor(BG)
-
-    lm_unimodal = load_longmil_unimodal(cfg["abl_suffix"], cfg["abl_metric"])
-    lm_full_mean = float(np.nanmean([v for v in lm_splits if not np.isnan(v)]))
-    lm_full_std  = float(np.nanstd( [v for v in lm_splits if not np.isnan(v)]))
-
-    # ── X positions: Full | HE | BAL | CT | Clinical ─────────────────────────
-    labels   = ["Full\n(all 4 mod.)"] + MOD_ORDER
-    x_pos    = np.arange(len(labels))
-    bar_w    = 0.55
-
-    # Full multimodal bar
-    ax.bar(x_pos[0], lm_full_mean, width=bar_w, color=LONGMIL_COLOR,
-           alpha=0.90, zorder=2, linewidth=2, edgecolor="#7B0000")
-    if lm_full_std > 0:
-        ax.errorbar(x_pos[0], lm_full_mean, yerr=lm_full_std,
-                    fmt="none", ecolor="#222", elinewidth=1.8, capsize=6, zorder=4)
-    for sv in lm_splits:
-        if not np.isnan(sv):
-            ax.scatter(x_pos[0], sv, s=40, color="white", edgecolors=LONGMIL_COLOR,
-                       linewidths=1.2, zorder=5)
-
-    # Unimodal bars
-    for mi, mod in enumerate(MOD_ORDER):
-        xi   = x_pos[mi + 1]
-        col  = MOD_COLORS[mod]
-        d    = lm_unimodal.get(mod)
-        if d is None:
-            continue
-        ax.bar(xi, d["mean"], width=bar_w, color=col, alpha=0.80, zorder=2,
-               linewidth=1.2, edgecolor=col)
-        if d["std"] > 0:
-            ax.errorbar(xi, d["mean"], yerr=d["std"],
-                        fmt="none", ecolor="#222", elinewidth=1.8, capsize=6, zorder=4)
-        for sv in d["splits"]:
-            if not np.isnan(sv):
-                ax.scatter(xi, sv, s=40, color="white", edgecolors=col,
-                           linewidths=1.2, zorder=5)
-
-    # ── Per-modality ABMIL reference diamonds ─────────────────────────────────
-    for mi, mod in enumerate(MOD_ORDER):
-        xi = x_pos[mi + 1]
-        abmil_val = ab_per_mod.get(mod)
-        if abmil_val is not None and abmil_val > 0:
-            ax.scatter(xi, abmil_val, marker="D", s=110, color=ABMIL_LINE_COLOR,
-                       edgecolors="white", linewidths=1.2, zorder=7)
-            ax.text(xi, abmil_val + 0.025, f"{abmil_val:.2f}",
-                    ha="center", va="bottom", fontsize=FS_ANNOT - 1,
-                    color=ABMIL_LINE_COLOR, fontweight="bold")
-
-    # ── Significance star above full multimodal bar ───────────────────────────
-    stars = sig_stars(adj_p)
-    y_star = lm_full_mean + lm_full_std + 0.04
-    if stars != "ns":
-        ax.text(x_pos[0], y_star, stars, ha="center", va="bottom",
-                fontsize=FS_SIG + 2, color=LONGMIL_COLOR, fontweight="bold", zorder=6)
-    else:
-        ax.text(x_pos[0], y_star, "ns", ha="center", va="bottom",
-                fontsize=FS_ANNOT, color="#888888", zorder=6)
+    # ── Group backgrounds ─────────────────────────────────────────────────────
+    ax.axhspan(-0.5, 0.5, facecolor="#FCE4EC", alpha=0.40, zorder=0)
+    ax.axhspan(0.5, N_ROWS - 0.5, facecolor="#E8F5E9", alpha=0.35, zorder=0)
+    ax.axhline(0.5, color="#bbbbbb", linewidth=1.2, linestyle="--", zorder=1)
 
     # ── Chance line ───────────────────────────────────────────────────────────
-    ax.axhline(0.5, color="#aaa", linewidth=1.2, linestyle=":", alpha=0.7)
+    ax.axvline(0.5, color="#888", linewidth=1.2, linestyle=":", alpha=0.8)
 
-    # ── Axes ──────────────────────────────────────────────────────────────────
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(labels, fontsize=FS_TICK, fontweight="bold")
-    ax.set_ylim(0.0, 1.05)
-    ax.set_title(cfg["label"], fontsize=FS_TITLE, fontweight="bold", pad=12)
-    if ax_idx == 0:
-        ax.set_ylabel(cfg["metric_label"], fontsize=FS_LABEL)
-    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
-    ax.tick_params(axis="y", labelsize=FS_TICK)
+    # ── Full multimodal bar (row 0) ───────────────────────────────────────────
+    lm_full_valid = [float(v) for v in lm_splits if not np.isnan(float(v))]
+    lm_full_mean  = float(np.nanmean(lm_full_valid)) if lm_full_valid else np.nan
+    lm_full_std   = float(np.nanstd(lm_full_valid))  if lm_full_valid else 0.0
+
+    if not np.isnan(lm_full_mean):
+        ax.barh(y[0], lm_full_mean, height=0.60, color=LONGMIL_COLOR, alpha=0.90, zorder=2)
+        if lm_full_std > 0:
+            ax.errorbar(lm_full_mean, y[0], xerr=lm_full_std, fmt="none",
+                        ecolor="#222", elinewidth=1.5, capsize=5, zorder=4)
+        for sv in lm_full_valid:
+            ax.scatter(sv, y[0], s=22, color="white", edgecolors=LONGMIL_COLOR,
+                       linewidths=1.0, zorder=5, alpha=0.95)
+
+    # ── Unimodal bars + ABMIL diamonds + significance stars ──────────────────
+    for mi, mod in enumerate(MOD_ORDER):
+        row_y = y[mi + 1]
+        col   = ROW_COLORS[mi + 1]
+        d     = lm_unimodal.get(mod)
+
+        if d is not None:
+            ax.barh(row_y, d["mean"], height=0.60, color=col, alpha=0.82, zorder=2)
+            if d["std"] > 0:
+                ax.errorbar(d["mean"], row_y, xerr=d["std"], fmt="none",
+                            ecolor="#222", elinewidth=1.5, capsize=5, zorder=4)
+            for sv in d["splits"]:
+                if not np.isnan(float(sv)):
+                    ax.scatter(float(sv), row_y, s=22, color="white", edgecolors=col,
+                               linewidths=1.0, zorder=5, alpha=0.95)
+            # Significance star (LongMIL(mod) > ABMIL(mod), BH-corrected)
+            adj_p = sig_mod_map.get(task_key, {}).get(mod, 1.0)
+            stars = sig_stars(adj_p)
+            if stars:
+                x_star = min(d["mean"] + (d["std"] if d["std"] > 0 else 0) + 0.03, 0.98)
+                ax.text(x_star, row_y, stars, va="center", ha="left",
+                        fontsize=FS_SIG, color="#B71C1C", fontweight="bold", zorder=7)
+
+        # ABMIL reference diamond (slightly above the bar, y + 0.2 which is below after invert)
+        ab_d = ab_per_mod.get(mod)
+        if ab_d is not None and ab_d["mean"] > 0:
+            ax.scatter(ab_d["mean"], row_y - 0.20, marker="D", s=90,
+                       color=ABMIL_COLOR, edgecolors="white", linewidths=1.2, zorder=7)
+            if ab_d["std"] > 0:
+                ax.errorbar(ab_d["mean"], row_y - 0.20, xerr=ab_d["std"], fmt="none",
+                            ecolor=ABMIL_COLOR, elinewidth=1.3, capsize=4, zorder=6, alpha=0.7)
+
+    # ── Bracket labels ────────────────────────────────────────────────────────
+    _bracket_label(ax, [0],            "Full multimodal", "#B71C1C")
+    _bracket_label(ax, list(range(1, N_ROWS)), "Unimodal",  "#2E7D32")
+
+    # ── Axes formatting ───────────────────────────────────────────────────────
+    ax.set_yticks(y)
+    ax.set_yticklabels(ROW_LABELS, fontsize=FS_YLABEL)
+    if show_ylabel:
+        ax.set_ylabel("Input modality", fontsize=FS_XLABEL)
+    ax.set_xlabel(cfg["metric_label"], fontsize=FS_XLABEL)
+    ax.set_title(cfg["label"], fontsize=FS_TITLE, fontweight="bold", pad=10)
+    ax.tick_params(axis="x", labelsize=FS_TICK)
+    ax.tick_params(axis="y", labelsize=FS_YLABEL)
+    ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.spines[["top", "right"]].set_visible(False)
+    ax.set_facecolor(BG)
+    ax.invert_yaxis()
+    ax.set_xlim(0.0, 1.18)
 
-    # ── Subtle rectangle around full multimodal bar ───────────────────────────
-    rect = FancyBboxPatch(
-        (x_pos[0] - bar_w / 2 - 0.03, 0.0),
-        bar_w + 0.06,
-        lm_full_mean + lm_full_std + 0.07,
-        boxstyle="round,pad=0.01",
-        linewidth=2.5, edgecolor=LONGMIL_COLOR,
-        facecolor="none", zorder=6, clip_on=False,
-    )
-    ax.add_patch(rect)
 
-# ── Legend + caption ──────────────────────────────────────────────────────────
-legend_handles = [
-    Patch(facecolor=LONGMIL_COLOR, edgecolor="#7B0000", linewidth=2,
-          label="LongMIL — Full multimodal (all 4 modalities)"),
-] + [
-    Patch(facecolor=MOD_COLORS[m], label=f"LongMIL — {m} only") for m in MOD_ORDER
-] + [
-    plt.Line2D([0], [0], marker="D", color="w", markerfacecolor=ABMIL_LINE_COLOR,
-               markersize=10, label="ABMIL (same modality) baseline"),
-]
+def make_legend():
+    handles = [Patch(facecolor=LONGMIL_COLOR, label="LongMIL — Full (all 4 mod.)")]
+    for m in MOD_ORDER:
+        handles.append(Patch(facecolor=MOD_COLORS[m], label=f"LongMIL — {m} only"))
+    handles.append(mlines.Line2D([0], [0], marker="D", color="w",
+                                 markerfacecolor=ABMIL_COLOR, markersize=10,
+                                 label="ABMIL baseline (same modality subset)"))
+    handles.append(mlines.Line2D([], [], color="#888", linewidth=1.2,
+                                 linestyle=":", label="Chance (0.5)"))
+    return handles
 
-fig.legend(handles=legend_handles, fontsize=FS_LEGEND, ncol=3,
-           loc="lower center", bbox_to_anchor=(0.5, -0.04),
-           framealpha=0.95, edgecolor="#ccc",
-           handlelength=2.0, handleheight=1.4, borderpad=1.0, columnspacing=2.0)
 
-ablation_note = (
-    "Ablation: at inference, only one modality is provided to LongMIL — remaining modalities are masked.\n"
-    "Compares full multimodal LongMIL (red, outlined) vs. each single-modality input. "
-    "Blue diamonds show the ABMIL unimodal baseline for the same modality.\n"
-    "* p<0.05  ** p<0.01  *** p<0.001  (one-sided t-test vs. best ABMIL mean, BH-corrected across 4 tasks)"
+# ── Pre-load all data ─────────────────────────────────────────────────────────
+all_data = {}
+for tk, cfg in TASK_CFG.items():
+    lm_splits, ab_per_mod = load_benchmark(cfg["bench_file"])
+    lm_uni = load_longmil_unimodal(cfg["abl_suffix"], cfg["abl_metric"])
+    all_data[tk] = {"lm_splits": lm_splits, "ab_per_mod": ab_per_mod, "lm_uni": lm_uni}
+
+# ── Paired t-test: LongMIL(mod) > ABMIL(mod), BH over 4 tasks × 4 mods ──────
+raw_pvals  = []
+test_keys  = []
+for tk, cfg in TASK_CFG.items():
+    lm_uni    = all_data[tk]["lm_uni"]
+    ab_per_mod = all_data[tk]["ab_per_mod"]
+    for mod in MOD_ORDER:
+        lm_d = lm_uni.get(mod)
+        ab_d = ab_per_mod.get(mod)
+        if lm_d is None or ab_d is None:
+            raw_pvals.append(1.0)
+            test_keys.append((tk, mod))
+            continue
+        lm_s = np.array([v for v in lm_d["splits"] if not np.isnan(float(v))], dtype=float)
+        ab_s = np.array([v for v in ab_d["splits"] if not np.isnan(float(v))], dtype=float)
+        n = min(len(lm_s), len(ab_s))
+        if n >= 2:
+            _, p = stats.ttest_rel(lm_s[:n], ab_s[:n], alternative="greater")
+        else:
+            p = 1.0
+        raw_pvals.append(p)
+        test_keys.append((tk, mod))
+
+adj_arr = bh_correct(np.array(raw_pvals))
+sig_mod_map = {tk: {} for tk in TASK_CFG}
+for (tk, mod), adj_p in zip(test_keys, adj_arr):
+    sig_mod_map[tk][mod] = adj_p
+
+print("=== Significance (BH-corrected, paired t-test: LongMIL(mod) > ABMIL(mod)) ===")
+for (tk, mod), adj_p in zip(test_keys, adj_arr):
+    stars = sig_stars(adj_p) or "ns"
+    print(f"  {tk:12s}  {mod:10s}  adj_p={adj_p:.4f}  {stars}")
+
+# ── Per-task figures ──────────────────────────────────────────────────────────
+CAPTION = (
+    "Ablation: at inference, only one modality is provided to LongMIL — remaining modalities are masked to zero.\n"
+    "LongMIL (coloured bars) and ABMIL diamonds are both evaluated on the same modality-specific test subset.\n"
+    "Stars: * p<0.05  ** p<0.01  *** p<0.001  (one-sided paired t-test, LongMIL(mod) > ABMIL(mod), BH-corrected over 4 tasks × 4 modalities)"
 )
-fig.text(0.5, -0.10, ablation_note, ha="center", va="top",
-         fontsize=FS_ANNOT, color="#555", style="italic",
-         transform=fig.transFigure)
 
-fig.tight_layout(rect=[0, 0.06, 1, 1])
+legend_handles = make_legend()
+
+for task_key in TASK_CFG:
+    fig, ax = plt.subplots(figsize=(22, 9), facecolor=BG)
+    fig.patch.set_facecolor(BG)
+    plot_ablation_task(ax, task_key, sig_mod_map, all_data, show_ylabel=True)
+    fig.legend(handles=legend_handles, fontsize=FS_LEGEND, ncol=3,
+               loc="lower center", bbox_to_anchor=(0.5, -0.01),
+               framealpha=0.95, edgecolor="#ccc",
+               handlelength=1.8, handleheight=1.4, borderpad=1.0, columnspacing=1.6)
+    fig.text(0.5, -0.10, CAPTION, ha="center", va="top",
+             fontsize=FS_CAPTION, color="#555", style="italic",
+             transform=fig.transFigure)
+    fig.tight_layout(rect=[0, 0.12, 1, 1])
+    for ext in ("png", "pdf"):
+        fig.savefig(OUT_DIR / f"unimodal_ablation_v2_{task_key}.{ext}", dpi=300,
+                    bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"Saved unimodal_ablation_v2_{task_key}")
+
+# ── 4-panel combined figure (task-centric, existing layout) ──────────────────
+fig, axes = plt.subplots(1, 4, figsize=(60, 12), facecolor=BG)
+fig.patch.set_facecolor(BG)
+fig.suptitle(
+    "LongMIL — Unimodal Ablation  ·  Full multimodal vs. single-modality input  "
+    "(5-fold CV, Northwestern University)   "
+    "|   * p<0.05  ** p<0.01  *** p<0.001  (BH-corrected, LongMIL(mod) > ABMIL(mod))",
+    fontsize=22, fontweight="bold", y=1.01,
+)
+for ax, task_key in zip(axes, TASK_CFG):
+    plot_ablation_task(ax, task_key, sig_mod_map, all_data, show_ylabel=False)
+fig.tight_layout(rect=[0, 0.08, 1, 0.97])
+fig.legend(handles=legend_handles, loc="lower center", ncol=6, fontsize=FS_LEGEND,
+           bbox_to_anchor=(0.5, 0.01), frameon=False,
+           handlelength=1.8, handleheight=1.4, columnspacing=1.6)
 for ext in ("png", "pdf"):
-    fig.savefig(OUT_DIR / f"unimodal_ablation_v2_all.{ext}", dpi=200,
+    fig.savefig(OUT_DIR / f"unimodal_ablation_v2_all.{ext}", dpi=300,
                 bbox_inches="tight", facecolor=BG)
 plt.close(fig)
 print("Saved unimodal_ablation_v2_all")
 
-# ── Per-task figures (same design, single panel) ──────────────────────────────
-for tk_idx, (task_key, cfg) in enumerate(TASK_CFG.items()):
-    _, lm_splits, ab_per_mod2, _ = all_tests[tk_idx]
-    lm_unimodal  = load_longmil_unimodal(cfg["abl_suffix"], cfg["abl_metric"])
-    def _safe_float(v):
-        try: return float(v)
-        except (TypeError, ValueError): return None
-    lm_splits_f  = [_safe_float(v) for v in lm_splits]
-    lm_splits_f  = [v for v in lm_splits_f if v is not None and not np.isnan(v)]
-    lm_full_mean = float(np.nanmean(lm_splits_f)) if lm_splits_f else 0.0
-    lm_full_std  = float(np.nanstd(lm_splits_f))  if lm_splits_f else 0.0
-    best_ab_mean2 = max(ab_per_mod2.values()) if ab_per_mod2 else 0.0  # kept for rect height
 
-    fig2, ax2 = plt.subplots(figsize=(14, 9), facecolor=BG)
-    fig2.patch.set_facecolor(BG)
-    ax2.set_facecolor(BG)
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW: Modality-centric layout — 4 panels (one per modality),
+# each showing LongMIL and ABMIL performance across all 4 tasks.
+# ══════════════════════════════════════════════════════════════════════════════
 
-    labels  = ["Full\n(all 4 mod.)"] + MOD_ORDER
-    x_pos   = np.arange(len(labels))
-    bar_w   = 0.55
+TASK_LABELS = {
+    "acr_cls":    "ACR classification",
+    "acr_surv":   "Time to first ACR",
+    "clad_surv":  "Time to CLAD",
+    "death_surv": "Time to death",
+}
+TASK_COLORS = {
+    "acr_cls":    "#E07B20",  # amber
+    "acr_surv":   "#952030",  # crimson
+    "clad_surv":  "#1A5C8A",  # navy
+    "death_surv": "#2D8A4E",  # forest green
+}
+TASK_ORDER = ["acr_cls", "acr_surv", "clad_surv", "death_surv"]
 
-    ax2.bar(x_pos[0], lm_full_mean, width=bar_w, color=LONGMIL_COLOR,
-            alpha=0.90, zorder=2, linewidth=2, edgecolor="#7B0000")
-    if lm_full_std > 0:
-        ax2.errorbar(x_pos[0], lm_full_mean, yerr=lm_full_std,
-                     fmt="none", ecolor="#222", elinewidth=2.0, capsize=8, zorder=4)
-    for sv in lm_splits_f:
-        ax2.scatter(x_pos[0], sv, s=60, color="white", edgecolors=LONGMIL_COLOR,
-                        linewidths=1.5, zorder=5)
 
-    for mi, mod in enumerate(MOD_ORDER):
-        xi  = x_pos[mi + 1]
-        col = MOD_COLORS[mod]
-        d   = lm_unimodal.get(mod)
-        if d is None:
-            continue
-        ax2.bar(xi, d["mean"], width=bar_w, color=col, alpha=0.80, zorder=2,
-                linewidth=1.2, edgecolor=col)
-        if d["std"] > 0:
-            ax2.errorbar(xi, d["mean"], yerr=d["std"],
-                         fmt="none", ecolor="#222", elinewidth=2.0, capsize=8, zorder=4)
-        for sv in d["splits"]:
-            if not np.isnan(sv):
-                ax2.scatter(xi, sv, s=60, color="white", edgecolors=col,
-                            linewidths=1.5, zorder=5)
+def plot_ablation_modality(ax, mod, sig_mod_map, all_data, show_ylabel=True, show_task_labels=True):
+    """One panel: per-task bars for a single modality."""
+    tasks = TASK_ORDER
+    y = np.arange(len(tasks))
 
-    for mi, mod in enumerate(MOD_ORDER):
-        xi2 = x_pos[mi + 1]
-        abmil_val2 = ab_per_mod2.get(mod)
-        if abmil_val2 is not None and abmil_val2 > 0:
-            ax2.scatter(xi2, abmil_val2, marker="D", s=140, color=ABMIL_LINE_COLOR,
-                        edgecolors="white", linewidths=1.5, zorder=7)
-            ax2.text(xi2, abmil_val2 + 0.025, f"{abmil_val2:.2f}",
-                     ha="center", va="bottom", fontsize=FS_ANNOT,
-                     color=ABMIL_LINE_COLOR, fontweight="bold")
+    # Task background bands
+    for ti, tk in enumerate(tasks):
+        col = TASK_COLORS[tk]
+        ax.axhspan(ti - 0.5, ti + 0.5, facecolor=col, alpha=0.06, zorder=0)
 
-    adj_p_task = adj_pvals[tk_idx]
-    stars_task = sig_stars(adj_p_task)
-    y_star2 = lm_full_mean + lm_full_std + 0.04
-    color_star = LONGMIL_COLOR if stars_task != "ns" else "#888888"
-    ax2.text(x_pos[0], y_star2, stars_task, ha="center", va="bottom",
-             fontsize=FS_SIG + 4, color=color_star, fontweight="bold", zorder=6)
+    ax.axvline(0.5, color="#888", linewidth=1.2, linestyle=":", alpha=0.8, zorder=1)
 
-    ax2.axhline(0.5, color="#aaa", linewidth=1.5, linestyle=":", alpha=0.7)
+    for ti, task_key in enumerate(tasks):
+        col     = TASK_COLORS[task_key]
+        lm_uni  = all_data[task_key]["lm_uni"].get(mod)
+        ab_d    = all_data[task_key]["ab_per_mod"].get(mod)
+        row_y   = y[ti]
 
-    rect2 = FancyBboxPatch(
-        (x_pos[0] - bar_w / 2 - 0.04, 0.3),
-        bar_w + 0.08,
-        lm_full_mean - 0.3 + lm_full_std + 0.08,
-        boxstyle="round,pad=0.01",
-        linewidth=3, edgecolor=LONGMIL_COLOR,
-        facecolor="none", zorder=6, clip_on=False,
-    )
-    ax2.add_patch(rect2)
+        # LongMIL unimodal bar
+        if lm_uni is not None:
+            ax.barh(row_y, lm_uni["mean"], height=0.55,
+                    color=col, alpha=0.85, zorder=2)
+            if lm_uni["std"] > 0:
+                ax.errorbar(lm_uni["mean"], row_y, xerr=lm_uni["std"], fmt="none",
+                            ecolor="#222", elinewidth=1.5, capsize=5, zorder=4)
+            for sv in lm_uni["splits"]:
+                if not np.isnan(float(sv)):
+                    ax.scatter(float(sv), row_y, s=22, color="white",
+                               edgecolors=col, linewidths=1.0, zorder=5, alpha=0.95)
+            # Value annotation
+            ax.text(lm_uni["mean"] + 0.01, row_y + 0.17,
+                    f"{lm_uni['mean']:.3f}", va="center", ha="left",
+                    fontsize=FS_ANNOT, color="#222", fontweight="bold", zorder=6)
 
-    ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(labels, fontsize=FS_TICK + 2, fontweight="bold")
-    ax2.set_ylim(0.3, 1.05)
-    ax2.set_title(f"LongMIL Unimodal Ablation — {cfg['label']}",
-                  fontsize=FS_TITLE, fontweight="bold", pad=14)
-    ax2.set_ylabel(cfg["metric_label"], fontsize=FS_LABEL)
-    ax2.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
-    ax2.tick_params(labelsize=FS_TICK)
-    ax2.spines[["top", "right"]].set_visible(False)
+        # ABMIL reference diamond
+        if ab_d is not None and ab_d["mean"] > 0:
+            ax.scatter(ab_d["mean"], row_y - 0.18, marker="D", s=100,
+                       color=ABMIL_COLOR, edgecolors="white", linewidths=1.2, zorder=7)
+            if ab_d["std"] > 0:
+                ax.errorbar(ab_d["mean"], row_y - 0.18, xerr=ab_d["std"], fmt="none",
+                            ecolor=ABMIL_COLOR, elinewidth=1.3, capsize=4,
+                            zorder=6, alpha=0.7)
 
-    fig2.legend(handles=legend_handles, fontsize=FS_LEGEND - 1, ncol=3,
-                loc="lower center", bbox_to_anchor=(0.5, -0.06),
-                framealpha=0.95, edgecolor="#ccc",
-                handlelength=2.0, handleheight=1.4, borderpad=1.0)
-    fig2.text(0.5, -0.13,
-              "Ablation: only one modality provided — rest masked.  "
-              "Blue diamonds = ABMIL baseline for same modality.  "
-              "* p<0.05  ** p<0.01  *** p<0.001  (one-sided t-test vs. best ABMIL, BH-corrected)",
-              ha="center", fontsize=FS_ANNOT, color="#555", style="italic",
-              transform=fig2.transFigure)
+        # Significance star
+        adj_p = sig_mod_map.get(task_key, {}).get(mod, 1.0)
+        stars = sig_stars(adj_p)
+        if stars and lm_uni is not None:
+            x_star = lm_uni["mean"] + (lm_uni["std"] if lm_uni["std"] > 0 else 0) + 0.03
+            ax.text(min(x_star, 0.96), row_y, stars, va="center", ha="left",
+                    fontsize=FS_SIG, color="#B71C1C", fontweight="bold", zorder=8)
 
-    fig2.tight_layout(rect=[0, 0.08, 1, 1])
+    ax.set_yticks(y)
+    if show_task_labels:
+        ax.set_yticklabels([TASK_LABELS[tk] for tk in tasks],
+                           fontsize=FS_YLABEL + 4, fontweight="bold")
+        ax.yaxis.set_tick_params(length=0, pad=14)
+        ax.yaxis.tick_right()
+    else:
+        ax.set_yticklabels([""] * len(tasks))
+        ax.tick_params(axis="y", length=0)
+    if show_ylabel:
+        ax.set_ylabel("Task", fontsize=FS_XLABEL)
+    ax.set_xlabel("Performance  (0.5 = chance,  1.0 = perfect)", fontsize=FS_XLABEL)
+    ax.set_title(f"{mod}", fontsize=FS_TITLE, fontweight="bold", pad=10)
+    ax.tick_params(axis="x", labelsize=FS_TICK)
+    ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_facecolor(BG)
+    ax.invert_yaxis()
+    ax.set_xlim(0.0, 1.12)
+
+
+# Per-modality individual figures
+for mod in MOD_ORDER:
+    fig, ax = plt.subplots(figsize=(18, 9), facecolor=BG)
+    fig.patch.set_facecolor(BG)
+    plot_ablation_modality(ax, mod, sig_mod_map, all_data, show_ylabel=True)
+
+    # Legend
+    mod_handles = []
+    for tk in TASK_ORDER:
+        mod_handles.append(Patch(facecolor=TASK_COLORS[tk], alpha=0.85,
+                                 label=f"LongMIL — {TASK_LABELS[tk]}"))
+    mod_handles.append(mlines.Line2D([0], [0], marker="D", color="w",
+                                     markerfacecolor=ABMIL_COLOR, markersize=10,
+                                     label="ABMIL baseline"))
+    mod_handles.append(mlines.Line2D([], [], color="#888", linewidth=1.2,
+                                     linestyle=":", label="Chance (0.5)"))
+    fig.legend(handles=mod_handles, fontsize=FS_LEGEND, ncol=3,
+               loc="lower center", bbox_to_anchor=(0.5, -0.01),
+               framealpha=0.95, edgecolor="#ccc",
+               handlelength=1.8, handleheight=1.4, borderpad=1.0, columnspacing=1.6)
+    fig.tight_layout(rect=[0, 0.12, 1, 1])
     for ext in ("png", "pdf"):
-        fig2.savefig(OUT_DIR / f"unimodal_ablation_v2_{task_key}.{ext}", dpi=200,
-                     bbox_inches="tight", facecolor=BG)
-    plt.close(fig2)
-    print(f"Saved unimodal_ablation_v2_{task_key}")
+        fig.savefig(OUT_DIR / f"unimodal_ablation_by_mod_{mod}.{ext}",
+                    dpi=300, bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"Saved unimodal_ablation_by_mod_{mod}")
 
+# Combined 4-modality figure (modality-centric)
+mod_handles = []
+for tk in TASK_ORDER:
+    mod_handles.append(Patch(facecolor=TASK_COLORS[tk], alpha=0.85,
+                             label=f"LongMIL — {TASK_LABELS[tk]}"))
+mod_handles.append(mlines.Line2D([0], [0], marker="D", color="w",
+                                 markerfacecolor=ABMIL_COLOR, markersize=10,
+                                 label="ABMIL baseline (same modality subset)"))
+mod_handles.append(mlines.Line2D([], [], color="#888", linewidth=1.2,
+                                 linestyle=":", label="Chance (0.5)"))
+
+fig, axes = plt.subplots(1, 4, figsize=(56, 12), facecolor=BG)
+fig.patch.set_facecolor(BG)
+fig.suptitle(
+    "LongMIL — Unimodal Ablation by Modality\n"
+    "Each panel: LongMIL and ABMIL (◆) performance across all 4 tasks for one modality  "
+    "|  * p<0.05  ** p<0.01  *** p<0.001  (BH-corrected)",
+    fontsize=24, fontweight="bold", y=1.02,
+)
+for ax, mod in zip(axes, MOD_ORDER):
+    is_last = (mod == MOD_ORDER[-1])
+    plot_ablation_modality(ax, mod, sig_mod_map, all_data,
+                           show_ylabel=False, show_task_labels=is_last)
+fig.tight_layout(rect=[0, 0.10, 1, 0.97])
+fig.legend(handles=mod_handles, loc="lower center", ncol=6, fontsize=FS_LEGEND,
+           bbox_to_anchor=(0.5, 0.01), frameon=False,
+           handlelength=1.8, handleheight=1.4, columnspacing=1.6)
+for ext in ("png", "pdf"):
+    fig.savefig(OUT_DIR / f"unimodal_ablation_by_mod_all.{ext}",
+                dpi=300, bbox_inches="tight", facecolor=BG)
+plt.close(fig)
+print("Saved unimodal_ablation_by_mod_all")
 print("Done.")

@@ -1,0 +1,55 @@
+cluster_id,bio_category,model,task,mean_rel_attn,sem_rel_attn,n_instances
+5_9,Alveolar,ABMIL_HE_Phase1,acr_surv,2.59971,0.27972,45496
+5_4,Alveolar,ABMIL_HE_Phase1,acr_surv,2.49119,0.03705,393619
+5_5,Alveolar,ABMIL_HE_Phase1,acr_surv,2.0468,0.1288,181789
+5_6,Alveolar,ABMIL_HE_Phase1,acr_surv,1.68839,0.21798,58437
+5_3,Alveolar,ABMIL_HE_Phase1,acr_surv,1.6061,0.06348,442516
+5_2,Alveolar,ABMIL_HE_Phase1,acr_surv,1.21249,0.02827,2021197
+5_10,Alveolar,ABMIL_HE_Phase1,acr_surv,1.20027,0.09911,21870
+5_8,Alveolar,ABMIL_HE_Phase1,acr_surv,0.94396,0.10404,46543
+5_7,Alveolar,ABMIL_HE_Phase1,acr_surv,0.78697,0.08436,50757
+5_1,Alveolar,ABMIL_HE_Phase1,acr_surv,0.46903,0.00915,2569589
+1_5,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,3.12049,0.04341,251976
+1_8,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,1.88784,0.2648,23719
+1_9,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,1.28587,0.0452,21836
+1_1,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.83077,0.01251,1277345
+1_7,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.7616,0.02869,82758
+1_6,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.73761,0.02059,113928
+1_2,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.69542,0.00525,746780
+1_10,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.67669,0.01861,16485
+1_3,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.51805,0.01475,516994
+1_4,Alveolar with empty spaces,ABMIL_HE_Phase1,acr_surv,0.36997,0.00432,323509
+7_5,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.65233,0.12467,50811
+0_4,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.6031,0.0577,448994
+0_7,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.39539,0.28769,30065
+7_10,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.31512,0.26221,18054
+7_2,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.29823,0.07784,293992
+7_4,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.26176,0.06486,117121
+0_5,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.24816,0.13562,66863
+0_8,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,1.0632,0.0809,16496
+7_7,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.98481,0.12229,32192
+2,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.92494,0.07642,3594
+7_3,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.84084,0.09819,126318
+7_9,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.67388,0.12122,22387
+7_8,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.62111,0.04259,22775
+0_2,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.53362,0.0157,628033
+0_9,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.41225,0.13139,14108
+7_1,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.39439,0.0233,351158
+0_3,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.38587,0.01381,476906
+0_1,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.36575,0.00997,788059
+0_6,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.24291,0.0097,32206
+7_6,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.22852,0.0275,33133
+4,Alveolar with hemorrhage and inflammation,ABMIL_HE_Phase1,acr_surv,0.02032,0.00165,360
+6_4,Bronchial,ABMIL_HE_Phase1,acr_surv,4.03678,0.06105,294084
+8,Bronchial,ABMIL_HE_Phase1,acr_surv,2.04968,0.436,5039
+6_6,Bronchial,ABMIL_HE_Phase1,acr_surv,1.86749,0.07457,51910
+6_1,Bronchial,ABMIL_HE_Phase1,acr_surv,1.31381,0.01312,473986
+6_2,Bronchial,ABMIL_HE_Phase1,acr_surv,1.14142,0.01992,398202
+6_9,Bronchial,ABMIL_HE_Phase1,acr_surv,1.12591,0.26292,15913
+6_3,Bronchial,ABMIL_HE_Phase1,acr_surv,0.99266,0.01449,343596
+6_8,Bronchial,ABMIL_HE_Phase1,acr_surv,0.96395,0.06252,27781
+6_7,Bronchial,ABMIL_HE_Phase1,acr_surv,0.86809,0.21114,28070
+6_5,Bronchial,ABMIL_HE_Phase1,acr_surv,0.7645,0.0395,102619
+10,Cartilage,ABMIL_HE_Phase1,acr_surv,0.86865,0.02247,253355
+9,Lymphocytoplasmic inflammation,ABMIL_HE_Phase1,acr_surv,1.71385,0.12993,38352
+3,Unknown,ABMIL_HE_Phase1,acr_surv,0.38764,0.0242,2574

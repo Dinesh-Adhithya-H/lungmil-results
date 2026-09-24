@@ -1,0 +1,55 @@
+cluster_id,bio_category,model,task,mean_rel_attn,sem_rel_attn,n_instances
+5_1,Alveolar,LongMIL_Phase2,clad_surv,9.40454,1.67255,5
+5_2,Alveolar,LongMIL_Phase2,clad_surv,6.52266,0.91619,5
+5_3,Alveolar,LongMIL_Phase2,clad_surv,3.81588,0.46137,5
+5_4,Alveolar,LongMIL_Phase2,clad_surv,1.19378,0.19029,5
+5_5,Alveolar,LongMIL_Phase2,clad_surv,0.51693,0.10769,5
+5_6,Alveolar,LongMIL_Phase2,clad_surv,0.33917,0.11687,5
+5_7,Alveolar,LongMIL_Phase2,clad_surv,0.30521,0.1978,5
+5_8,Alveolar,LongMIL_Phase2,clad_surv,0.17359,0.05548,5
+5_9,Alveolar,LongMIL_Phase2,clad_surv,0.12912,0.04937,5
+5_10,Alveolar,LongMIL_Phase2,clad_surv,0.06172,0.04067,5
+1_1,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,6.26996,1.53554,5
+1_2,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,3.13855,0.65527,5
+1_3,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,1.90789,0.44239,5
+1_4,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,1.16618,0.23737,5
+1_5,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,0.85947,0.13188,5
+1_6,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,0.69657,0.27872,5
+1_9,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,0.51142,0.32051,5
+1_7,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,0.09449,0.02812,5
+1_8,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,0.07967,0.02704,5
+1_10,Alveolar with empty spaces,LongMIL_Phase2,clad_surv,0.06399,0.02704,5
+0_1,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,2.99502,0.64651,5
+0_2,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,2.37442,0.39217,5
+0_4,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,1.85639,0.38909,5
+0_3,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,1.64254,0.20404,5
+0_5,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.46555,0.23031,5
+7_1,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.45704,0.13787,5
+7_2,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.42262,0.12499,5
+7_3,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.12809,0.08889,5
+7_4,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.09752,0.03783,5
+0_7,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.08402,0.01453,5
+0_6,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.05893,0.02527,5
+2,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.03106,0.02776,5
+0_8,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.02958,0.01477,5
+7_10,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.02255,0.02006,5
+7_7,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.02091,0.01376,5
+0_9,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.01412,0.01137,5
+7_5,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.01275,0.00574,5
+7_9,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.01087,0.0061,5
+7_6,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.0089,0.00307,5
+7_8,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.00378,0.00329,5
+4,Alveolar with hemorrhage and inflammation,LongMIL_Phase2,clad_surv,0.00101,0.00091,5
+6_1,Bronchial,LongMIL_Phase2,clad_surv,1.78696,0.24678,5
+6_2,Bronchial,LongMIL_Phase2,clad_surv,1.10404,0.1607,5
+6_4,Bronchial,LongMIL_Phase2,clad_surv,1.09145,0.15785,5
+6_3,Bronchial,LongMIL_Phase2,clad_surv,0.85238,0.18284,5
+6_5,Bronchial,LongMIL_Phase2,clad_surv,0.13992,0.03255,5
+6_6,Bronchial,LongMIL_Phase2,clad_surv,0.09067,0.01989,5
+6_8,Bronchial,LongMIL_Phase2,clad_surv,0.04506,0.01955,5
+6_7,Bronchial,LongMIL_Phase2,clad_surv,0.04079,0.01284,5
+8,Bronchial,LongMIL_Phase2,clad_surv,0.01144,0.01019,5
+6_9,Bronchial,LongMIL_Phase2,clad_surv,0.00798,0.00665,5
+10,Cartilage,LongMIL_Phase2,clad_surv,0.83802,0.17588,5
+9,Lymphocytoplasmic inflammation,LongMIL_Phase2,clad_surv,0.00193,0.00097,5
+3,Unknown,LongMIL_Phase2,clad_surv,0.00088,0.00078,5

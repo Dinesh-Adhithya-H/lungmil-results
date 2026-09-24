@@ -8,6 +8,7 @@ Run via: sbatch analysis/submit_modality_combo_ablation.sh
 from pathlib import Path
 import json
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -17,6 +18,7 @@ from itertools import combinations
 
 ROOT    = Path(__file__).resolve().parent.parent
 METRICS = ROOT / "results" / "mm_abmil_v8"
+PRED    = ROOT / "results" / "predictions"
 OUT_DIR = ROOT / "figures" / "benchmark"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -40,34 +42,64 @@ SHARED_MODEL_COLORS = {
     "SetMIL":             "#CE93D8",
     "SetMIL-MT":          "#9C27B0",
     "SetMIL-MT (no SAB)": "#6A1B9A",
-    "LongMK-MT":          "#EF9A9A",
-    "LongMK":             "#C62828",
+    "LongMK-MT":                        "#EF9A9A",
+    "LongMK":                           "#C62828",
+    "LongMIL (no time, cross-attn)":    "#CE93D8",
+    "LongMIL (no time, no cross-attn)": "#6A1B9A",
 }
 
 TASK_CFG = {
     "acr_cls":   {"suffix": "cls",       "metric": "bacc",    "label": "ACR classification (BACC)",
                   "longi_key": "acr_cls",
-                  "best_variant": "set_mil_mt_no_sab", "best_label": "SetMIL-MT (no SAB)"},
+                  "best_variant": "set_mil_mt_no_sab", "best_label": "SetMIL-MT (no SAB)",
+                  "comp_file": "comparison_acr_cls.csv",  "metric_col": "bacc"},
     "acr_surv":  {"suffix": "acr_surv",  "metric": "c_index", "label": "ACR survival (C-index)",
                   "longi_key": "acr_surv",
-                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK"},
+                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK",
+                  "comp_file": "comparison_acr_surv.csv", "metric_col": "cindex"},
     "clad_surv": {"suffix": "clad_surv", "metric": "c_index", "label": "CLAD survival (C-index)",
                   "longi_key": "clad",
-                  "best_variant": "set_mil_mt", "best_label": "SetMIL-MT"},
+                  "best_variant": "set_mil_mt", "best_label": "SetMIL-MT",
+                  "comp_file": "comparison_clad.csv",    "metric_col": "cindex"},
     "death_surv":{"suffix": "death_surv","metric": "c_index", "label": "Death survival (C-index)",
                   "longi_key": "death",
-                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK"},
+                  "best_variant": "longitudinal_mk_no_alibi", "best_label": "LongMK",
+                  "comp_file": "comparison_death.csv",   "metric_col": "cindex"},
 }
 
+SPLIT_COLS = ["s0", "s1", "s2", "s3", "s4"]
+P1_MOD_MAP = {"P1 HE": "HE", "P1 BAL": "BAL", "P1 CT": "CT", "P1 Clinical": "Clinical"}
+
+
+def load_abmil_data(cfg):
+    """Load P1 (ABMIL) per-modality + weighted-avg results from comparison CSV.
+    Returns dict: mod -> list of per-split values; 'wtd' -> list of per-split values."""
+    comp_path = PRED / cfg["comp_file"]
+    result = {m: [np.nan] * 5 for m in MOD_ORDER}
+    result["wtd"] = [np.nan] * 5
+    if not comp_path.exists():
+        return result
+    df = pd.read_csv(comp_path)
+    for _, row in df.iterrows():
+        model = str(row["model"]).strip()
+        vals = []
+        for s in SPLIT_COLS:
+            try:
+                vals.append(float(row.get(s, np.nan)))
+            except (TypeError, ValueError):
+                vals.append(np.nan)
+        if model in P1_MOD_MAP:
+            result[P1_MOD_MAP[model]] = vals
+        elif model == "P1 wtd ensemble":
+            result["wtd"] = vals
+    return result
+
 ALL_VARIANTS = {
-    "early":                       "Early fusion",
-    "middle":                      "Middle fusion",
-    "late":                        "Late fusion",
-    "set_mil_no_sab":              "SetMIL",
-    "set_mil_mt":                  "SetMIL-MT",
-    "set_mil_mt_no_sab":           "SetMIL-MT (no SAB)",
-    "longitudinal_mk_mt_no_alibi": "LongMK-MT",
-    "longitudinal_mk_no_alibi":    "LongMK",
+    "early":            "Early fusion",
+    "middle":           "Middle fusion",
+    "late":             "Late fusion",
+    "set_mil_no_sab":   "LongMIL (no time, cross-attn)",
+    "set_mil_mt_no_sab":"LongMIL (no time, no cross-attn)",
 }
 
 MOD_ORDER = ["HE", "BAL", "CT", "Clinical"]
@@ -136,55 +168,57 @@ def load_unimodal_per_split(variant, suffix, metric, longi_key=None):
     return per_mod, all_vals
 
 
+def _draw_bars(ax, x_pos, vals, width, col, alpha=0.85, hatch=None, scatter=True):
+    valid = [v for v in vals if not np.isnan(v)]
+    if not valid:
+        return
+    mean = np.nanmean(vals)
+    std  = np.nanstd(vals)
+    ec = "#333" if hatch else col
+    ax.bar(x_pos, mean, width=width, color=col, alpha=alpha,
+           hatch=hatch, edgecolor=ec, linewidth=0.6, zorder=2)
+    if std > 0:
+        ax.errorbar(x_pos, mean, yerr=std,
+                    fmt="none", ecolor="#222", elinewidth=0.6, capsize=1.5, zorder=3)
+    if scatter:
+        for sv in vals:
+            if not np.isnan(sv):
+                ax.scatter(x_pos, sv, s=5, color="white",
+                           edgecolors=col, linewidths=0.5, zorder=4, alpha=0.85)
+
+
 def plot_combo_for_task(task_key, cfg):
-    n_variants = len(ALL_VARIANTS)
+    # +1 slot for ABMIL reference bars
+    n_variants = len(ALL_VARIANTS) + 1
     variant_list = list(ALL_VARIANTS.items())
 
-    fig, ax = plt.subplots(figsize=(14, 5), facecolor=BG)
+    fig, ax = plt.subplots(figsize=(15, 5), facecolor=BG)
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
 
-    bar_w = 0.7 / n_variants
-    # Only plot: 4 single mods + all 4 combined (5 x-positions)
+    bar_w = 0.75 / n_variants
     x_labels = [COMBO_LABELS[c] for c in SINGLE_MODS] + ["All 4"]
     n_x = len(x_labels)
     x = np.arange(n_x)
 
+    # ── ABMIL reference bars (slot 0, hatched) ────────────────────────────────
+    abmil = load_abmil_data(cfg)
+    abmil_offset = (-n_variants / 2 + 0.5) * bar_w
+    for xi, mod in enumerate(MOD_ORDER):
+        _draw_bars(ax, x[xi] + abmil_offset, abmil[mod], bar_w * 0.85,
+                   col=MOD_COLORS[mod], alpha=0.6, hatch="///")
+    _draw_bars(ax, x[-1] + abmil_offset, abmil["wtd"], bar_w * 0.85,
+               col="#37474F", alpha=0.6, hatch="///")
+
+    # ── Multimodal model variants (slots 1–8) ─────────────────────────────────
     for vi, (variant, disp) in enumerate(variant_list):
-        offset = (vi - n_variants / 2 + 0.5) * bar_w
+        offset = (-n_variants / 2 + 1.5 + vi) * bar_w
         per_mod, all_vals = load_unimodal_per_split(variant, cfg["suffix"], cfg["metric"],
                                                      longi_key=cfg.get("longi_key"))
         col = SHARED_MODEL_COLORS.get(disp, "#888888")
-
         for xi, mod in enumerate(MOD_ORDER):
-            vals = per_mod[mod]
-            valid = [v for v in vals if not np.isnan(v)]
-            if not valid:
-                continue
-            mean = np.nanmean(vals)
-            std  = np.nanstd(vals)
-            ax.bar(x[xi] + offset, mean, width=bar_w * 0.85, color=col, alpha=0.85, zorder=2)
-            if std > 0:
-                ax.errorbar(x[xi] + offset, mean, yerr=std,
-                            fmt="none", ecolor="#222", elinewidth=0.6, capsize=1.5, zorder=3)
-            for sv in vals:
-                if not np.isnan(sv):
-                    ax.scatter(x[xi] + offset, sv, s=5, color="white",
-                               edgecolors=col, linewidths=0.5, zorder=4, alpha=0.85)
-
-        # All-4 column
-        valid = [v for v in all_vals if not np.isnan(v)]
-        if valid:
-            mean = np.nanmean(all_vals)
-            std  = np.nanstd(all_vals)
-            ax.bar(x[-1] + offset, mean, width=bar_w * 0.85, color=col, alpha=0.85, zorder=2)
-            if std > 0:
-                ax.errorbar(x[-1] + offset, mean, yerr=std,
-                            fmt="none", ecolor="#222", elinewidth=0.6, capsize=1.5, zorder=3)
-            for sv in all_vals:
-                if not np.isnan(sv):
-                    ax.scatter(x[-1] + offset, sv, s=5, color="white",
-                               edgecolors=col, linewidths=0.5, zorder=4, alpha=0.85)
+            _draw_bars(ax, x[xi] + offset, per_mod[mod], bar_w * 0.85, col=col)
+        _draw_bars(ax, x[-1] + offset, all_vals, bar_w * 0.85, col=col)
 
     # separator line before "All 4"
     ax.axvline(n_x - 1 - 0.5, color="#aaa", linewidth=0.8, linestyle="--", alpha=0.5)
@@ -198,10 +232,17 @@ def plot_combo_for_task(task_key, cfg):
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.tick_params(labelsize=8)
 
-    legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(disp, "#888"), label=disp)
-                      for _, disp in variant_list]
-    ax.legend(handles=legend_handles, fontsize=6.5, ncol=3, framealpha=0.85,
-              loc="lower right", edgecolor="#ccc")
+    # Legend: ABMIL reference first, then multimodal models
+    abmil_handles = [
+        Patch(facecolor=MOD_COLORS[m], alpha=0.6, hatch="///", edgecolor="#333",
+              label=f"ABMIL {m}")
+        for m in MOD_ORDER
+    ] + [Patch(facecolor="#37474F", alpha=0.6, hatch="///", edgecolor="#333",
+               label="ABMIL wtd avg")]
+    model_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(disp, "#888"), label=disp)
+                     for _, disp in variant_list]
+    ax.legend(handles=abmil_handles + model_handles, fontsize=6.0, ncol=4,
+              framealpha=0.9, loc="lower right", edgecolor="#ccc")
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
@@ -215,26 +256,39 @@ def plot_combined():
     fig.patch.set_facecolor(BG)
     fig.suptitle("Modality contribution (unimodal → all) — all models, all tasks",
                  fontsize=12, fontweight="bold")
-    n_variants = len(ALL_VARIANTS)
-    bar_w = 0.7 / n_variants
+    n_variants = len(ALL_VARIANTS) + 1  # +1 for ABMIL reference
+    bar_w = 0.75 / n_variants
     for ax, (task_key, cfg) in zip(axes.flat, TASK_CFG.items()):
         ax.set_facecolor(BG)
         x_labels = [COMBO_LABELS[c] for c in SINGLE_MODS] + ["All 4"]
         x = np.arange(len(x_labels))
 
+        # ABMIL reference (slot 0)
+        abmil = load_abmil_data(cfg)
+        abmil_offset = (-n_variants / 2 + 0.5) * bar_w
+        for xi, mod in enumerate(MOD_ORDER):
+            valid = [v for v in abmil[mod] if not np.isnan(v)]
+            if valid:
+                ax.bar(x[xi] + abmil_offset, np.nanmean(abmil[mod]),
+                       width=bar_w * 0.85, color=MOD_COLORS[mod], alpha=0.6,
+                       hatch="///", edgecolor="#333", linewidth=0.4, zorder=2)
+        valid = [v for v in abmil["wtd"] if not np.isnan(v)]
+        if valid:
+            ax.bar(x[-1] + abmil_offset, np.nanmean(abmil["wtd"]),
+                   width=bar_w * 0.85, color="#37474F", alpha=0.6,
+                   hatch="///", edgecolor="#333", linewidth=0.4, zorder=2)
+
+        # Multimodal variants
         for vi, (variant, disp) in enumerate(ALL_VARIANTS.items()):
-            offset = (vi - n_variants / 2 + 0.5) * bar_w
+            offset = (-n_variants / 2 + 1.5 + vi) * bar_w
             per_mod, all_vals = load_unimodal_per_split(variant, cfg["suffix"], cfg["metric"],
                                                          longi_key=cfg.get("longi_key"))
             col = SHARED_MODEL_COLORS.get(disp, "#888888")
             for xi, mod in enumerate(MOD_ORDER):
                 vals = per_mod[mod]
-                valid = [v for v in vals if not np.isnan(v)]
-                if not valid:
-                    continue
-                ax.bar(x[xi] + offset, np.nanmean(vals), width=bar_w * 0.85, color=col, alpha=0.85, zorder=2)
-            valid = [v for v in all_vals if not np.isnan(v)]
-            if valid:
+                if [v for v in vals if not np.isnan(v)]:
+                    ax.bar(x[xi] + offset, np.nanmean(vals), width=bar_w * 0.85, color=col, alpha=0.85, zorder=2)
+            if [v for v in all_vals if not np.isnan(v)]:
                 ax.bar(x[-1] + offset, np.nanmean(all_vals), width=bar_w * 0.85, color=col, alpha=0.85, zorder=2)
 
         ax.axvline(len(x) - 1 - 0.5, color="#aaa", linewidth=0.8, linestyle="--", alpha=0.5)
@@ -246,9 +300,14 @@ def plot_combined():
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
         ax.tick_params(labelsize=7)
 
-    legend_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(disp, "#888"), label=disp)
-                      for _, disp in ALL_VARIANTS.items()]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=5, fontsize=7,
+    abmil_handles = [
+        Patch(facecolor=MOD_COLORS[m], alpha=0.6, hatch="///", edgecolor="#333",
+              label=f"ABMIL {m}")
+        for m in MOD_ORDER
+    ] + [Patch(facecolor="#37474F", alpha=0.6, hatch="///", edgecolor="#333", label="ABMIL wtd avg")]
+    model_handles = [Patch(facecolor=SHARED_MODEL_COLORS.get(disp, "#888"), label=disp)
+                     for _, disp in ALL_VARIANTS.items()]
+    fig.legend(handles=abmil_handles + model_handles, loc="lower center", ncol=7, fontsize=7,
                bbox_to_anchor=(0.5, -0.04), frameon=False)
     fig.tight_layout()
     for ext in ("png", "pdf"):

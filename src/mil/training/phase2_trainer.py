@@ -2327,21 +2327,38 @@ def p2_train_longitudinal_epoch(
     cox_lambda_acr:   float = P2_COX_LAMBDA_ACR,
     cox_lambda_clad:  float = P2_COX_LAMBDA_CLAD,
     cox_lambda_death: float = P2_COX_LAMBDA_DEATH,
+    biopsy_batch_size: int  = 0,
+    cls_loss: str           = "hinge",
+    biopsy_independent: bool = False,
 ) -> dict:
-    """Training epoch for LongitudinalMIL. One forward pass per patient."""
+    """Training epoch for LongitudinalMIL.
+
+    biopsy_batch_size=0 (default): one forward per patient, losses summed, step every
+      grad_accum patients.  4 steps/epoch for 158 patients (grad_accum=32).
+    biopsy_batch_size=N>0: biopsy-level gradient accumulation — causal prefix 0..t for each
+      labeled biopsy, step every N labeled biopsies. ~961/4=240 steps/epoch (matches Phase1).
+      cls_loss="hinge" (default) matches Phase1's hinge loss; "bce" uses BCE instead.
+    """
     model.train()
     random.shuffle(patient_records)
     use_amp  = (scaler is not None)
     OOM_SKIP = 3
     oom_counts: dict = {}
 
-    total_bce = 0.0; n_bce = 0; n_steps = 0
+    total_cls = 0.0; n_cls = 0; n_steps = 0
     pending_loss: Optional[torch.Tensor] = None
     cox_bufs: Dict[str, list] = {"acr_surv": [], "clad": [], "death": []}
     accum_step = 0
+    biopsy_accum = 0
+    biopsy_cls_backward = False  # cls backward happened in current biopsy_batch window
     optimizer.zero_grad()
 
     surv_lam = {"acr_surv": cox_lambda_acr, "clad": cox_lambda_clad, "death": cox_lambda_death}
+
+    def _compute_cls_loss(logit, target):
+        if cls_loss == "hinge":
+            return hinge_loss(logit.unsqueeze(0), target, cw)
+        return bce_loss(logit.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
 
     def _flush():
         nonlocal pending_loss, n_steps
@@ -2360,6 +2377,31 @@ def p2_train_longitudinal_epoch(
                 combined.backward(); optimizer.step()
         optimizer.zero_grad(); pending_loss = None; n_steps += 1; _gc()
 
+    biopsy_cox_bufs: Dict[str, list] = {"acr_surv": [], "clad": [], "death": []}
+
+    def _biopsy_step():
+        """Step after accumulating biopsy_batch_size biopsy gradients (cls + Cox)."""
+        nonlocal n_steps, biopsy_cls_backward
+        did_backward = biopsy_cls_backward
+        biopsy_cls_backward = False
+        for tk, buf in biopsy_cox_bufs.items():
+            if buf and surv_lam[tk] > 0:
+                L_cox = cox_breslow_loss(buf)
+                if L_cox is not None and L_cox.requires_grad:
+                    scaled = L_cox * surv_lam[tk] / biopsy_batch_size
+                    if scaler:
+                        scaler.scale(scaled).backward()
+                    else:
+                        scaled.backward()
+                    did_backward = True
+            buf.clear()
+        if did_backward:
+            if scaler:
+                scaler.step(optimizer); scaler.update()
+            else:
+                optimizer.step()
+        optimizer.zero_grad(); n_steps += 1; _gc()
+
     for pat in patient_records:
         pid = pat["patient_id"]
         if oom_counts.get(pid, 0) >= OOM_SKIP:
@@ -2373,61 +2415,115 @@ def p2_train_longitudinal_epoch(
         if all(all(b.get(m) is None for m in MODALITIES) for b in bags_list):
             continue
 
-        try:
-            with torch.amp.autocast("cuda", enabled=use_amp):
-                result = model({"bags_list": bags_list, "days": days, "records": records}, device)
+        if biopsy_batch_size > 0:
+            # Biopsy-level gradient accumulation: causal prefix 0..t for each biopsy.
+            # biopsy_independent=True: each biopsy is a standalone sequence (no temporal context).
+            # All biopsies contribute to surv Cox loss; cls loss gates on label in (0,1) naturally.
+            for t_idx in range(len(records)):
+                try:
+                    if biopsy_independent:
+                        trunc = {
+                            "bags_list": [bags_list[t_idx]],
+                            "days":      [0.0],
+                            "records":   [records[t_idx]],
+                        }
+                    else:
+                        trunc = {
+                            "bags_list": bags_list[:t_idx + 1],
+                            "days":      days[:t_idx + 1],
+                            "records":   records[:t_idx + 1],
+                        }
+                    with torch.amp.autocast("cuda", enabled=use_amp):
+                        result = model(trunc, device)
+                    if isinstance(result, torch.Tensor):
+                        continue
+                    has_signal = False
+                    # Collect surv outputs before any backward (graph must stay alive).
+                    for tk in ("acr_surv", "clad", "death"):
+                        biopsy_surv = result.get(tk, [])
+                        if isinstance(biopsy_surv, list) and biopsy_surv:
+                            hazard, t_val, e_val = biopsy_surv[-1]
+                            if isinstance(hazard, torch.Tensor):
+                                biopsy_cox_bufs[tk].append((hazard.float(), t_val, e_val))
+                                has_signal = True
+                    # cls loss — retain_graph=True so Cox can backward through the same graph.
+                    cls_out = result.get("acr_cls", [])
+                    if isinstance(cls_out, list) and cls_out:
+                        logit, label = cls_out[-1]
+                        if isinstance(logit, torch.Tensor):
+                            target = logit.new_tensor([float(label)])
+                            loss = _compute_cls_loss(logit, target) / biopsy_batch_size
+                            if scaler:
+                                scaler.scale(loss).backward(retain_graph=True)
+                            else:
+                                loss.backward(retain_graph=True)
+                            total_cls += loss.item() * biopsy_batch_size; n_cls += 1
+                            has_signal = True
+                            biopsy_cls_backward = True
+                    if has_signal:
+                        biopsy_accum += 1
+                        if biopsy_accum >= biopsy_batch_size:
+                            _biopsy_step(); biopsy_accum = 0
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    oom_counts[pid] = oom_counts.get(pid, 0) + 1
+                    optimizer.zero_grad(); biopsy_accum = 0; biopsy_cls_backward = False
+                    if oom_counts[pid] >= OOM_SKIP:
+                        print(f"  [OOM-longitudinal] patient {pid} permanently skipped", flush=True)
+                    break
+        else:
+            try:
+                with torch.amp.autocast("cuda", enabled=use_amp):
+                    result = model({"bags_list": bags_list, "days": days, "records": records}, device)
 
-            if isinstance(result, torch.Tensor):
-                continue
+                if isinstance(result, torch.Tensor):
+                    continue
 
-            # ACR surv (patient-level)
-            acr_out = result.get("acr_surv")
-            if acr_out is not None and isinstance(acr_out, tuple) and len(acr_out) == 4:
-                hazard, _, acr_t, acr_e = acr_out
-                if isinstance(hazard, torch.Tensor) and not math.isnan(acr_t):
-                    cox_bufs["acr_surv"].append((hazard.float(), acr_t, acr_e))
+                # ACR surv + CLAD + Death — all per-biopsy gap-time
+                for tk in ("acr_surv", "clad", "death"):
+                    biopsy_hazards = result.get(tk, [])
+                    if not isinstance(biopsy_hazards, list):
+                        continue
+                    for hazard, t_val, e_val in biopsy_hazards:
+                        if isinstance(hazard, torch.Tensor):
+                            cox_bufs[tk].append((hazard.float(), t_val, e_val))
 
-            # CLAD + Death (per-biopsy gap-time)
-            for tk in ("clad", "death"):
-                biopsy_hazards = result.get(tk, [])
-                if not isinstance(biopsy_hazards, list):
-                    continue  # degenerate: forward returned 0-d tensor
-                for hazard, t_val, e_val in biopsy_hazards:
-                    if isinstance(hazard, torch.Tensor):
-                        cox_bufs[tk].append((hazard.float(), t_val, e_val))
+                # ACR cls (per labeled biopsy)
+                cls_out = result.get("acr_cls", [])
+                if not isinstance(cls_out, list):
+                    cls_out = []
+                for logit, label in cls_out:
+                    if isinstance(logit, torch.Tensor):
+                        target = logit.new_tensor([float(label)])
+                        loss = _compute_cls_loss(logit, target)
+                        pending_loss = loss if pending_loss is None else pending_loss + loss
+                        total_cls += loss.item(); n_cls += 1
 
-            # ACR cls (per labeled biopsy)
-            cls_out = result.get("acr_cls", [])
-            if not isinstance(cls_out, list):
-                cls_out = []
-            for logit, label in cls_out:
-                if isinstance(logit, torch.Tensor):
-                    target = logit.new_tensor([float(label)])
-                    loss   = bce_loss(logit.unsqueeze(0), target, cw) * P2_BCE_LOSS_SCALE
-                    pending_loss = loss if pending_loss is None else pending_loss + loss
-                    total_bce += loss.item(); n_bce += 1
+                accum_step += 1
+                if accum_step >= grad_accum:
+                    _flush(); accum_step = 0
 
-            accum_step += 1
-            if accum_step >= grad_accum:
-                _flush(); accum_step = 0
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                oom_counts[pid] = oom_counts.get(pid, 0) + 1
+                pending_loss = None
+                for buf in cox_bufs.values(): buf.clear()
+                accum_step = 0; optimizer.zero_grad()
+                if oom_counts[pid] >= OOM_SKIP:
+                    print(f"  [OOM-longitudinal] patient {pid} permanently skipped", flush=True)
 
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            oom_counts[pid] = oom_counts.get(pid, 0) + 1
-            pending_loss = None
-            for buf in cox_bufs.values(): buf.clear()
-            accum_step = 0; optimizer.zero_grad()
-            if oom_counts[pid] >= OOM_SKIP:
-                print(f"  [OOM-longitudinal] patient {pid} permanently skipped", flush=True)
-
-    if accum_step > 0:
+    if biopsy_batch_size > 0 and biopsy_accum > 0:
+        _biopsy_step(); biopsy_accum = 0
+    elif biopsy_batch_size == 0 and accum_step > 0:
         _flush()
 
-    return {"bce": total_bce / max(n_bce, 1), "n_steps": n_steps}
+    return {"bce": total_cls / max(n_cls, 1), "n_steps": n_steps}
 
 
 @torch.no_grad()
-def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None) -> dict:
+def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None,
+                              biopsy_independent: bool = False,
+                              task: str = "mega") -> dict:
     """Evaluate LongitudinalMIL. Returns dict with metrics for all 4 tasks + val_score."""
     model.eval()
     use_amp = (device.type == "cuda")
@@ -2444,6 +2540,37 @@ def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None)
         bags_list = [{m: bag_cache.get(s, {}).get(m) for m in MODALITIES} for s in stems]
         if all(all(b.get(m) is None for m in MODALITIES) for b in bags_list):
             continue
+
+        if biopsy_independent:
+            # Each biopsy is evaluated as a standalone sequence (no temporal context).
+            for t_idx, rec in enumerate(records):
+                try:
+                    with torch.amp.autocast("cuda", enabled=use_amp):
+                        result = model({"bags_list": [bags_list[t_idx]], "days": [0.0], "records": [rec]}, device)
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache(); continue
+                if isinstance(result, torch.Tensor):
+                    continue
+                # cls
+                if rec.get("label") in (0, 1):
+                    cls_out = result.get("acr_cls", [])
+                    if isinstance(cls_out, list):
+                        for logit, label in cls_out:
+                            if isinstance(logit, torch.Tensor):
+                                cls_probs.append(torch.sigmoid(logit.float()).item())
+                                cls_labels.append(label)
+                # surv
+                for tk in ("acr_surv", "clad", "death"):
+                    biopsy_hazards = result.get(tk, [])
+                    if not isinstance(biopsy_hazards, list):
+                        continue
+                    for hazard, t_val, e_val in biopsy_hazards:
+                        if isinstance(hazard, torch.Tensor):
+                            surv_data[tk]["h"].append(hazard.float().item())
+                            surv_data[tk]["t"].append(t_val)
+                            surv_data[tk]["e"].append(e_val)
+            continue
+
         try:
             with torch.amp.autocast("cuda", enabled=use_amp):
                 result = model({"bags_list": bags_list, "days": days, "records": records}, device)
@@ -2453,15 +2580,7 @@ def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None)
         if isinstance(result, torch.Tensor):
             continue
 
-        acr_out = result.get("acr_surv")
-        if acr_out is not None and isinstance(acr_out, tuple) and len(acr_out) == 4:
-            hazard, _, acr_t, acr_e = acr_out
-            if isinstance(hazard, torch.Tensor) and not math.isnan(acr_t):
-                surv_data["acr_surv"]["h"].append(hazard.float().item())
-                surv_data["acr_surv"]["t"].append(acr_t)
-                surv_data["acr_surv"]["e"].append(acr_e)
-
-        for tk in ("clad", "death"):
+        for tk in ("acr_surv", "clad", "death"):
             biopsy_hazards = result.get(tk, [])
             if not isinstance(biopsy_hazards, list):
                 continue  # degenerate: forward returned 0-d tensor
@@ -2498,7 +2617,18 @@ def p2_evaluate_longitudinal(model, patient_records, device, bag_cache, cw=None)
     ci_acr   = metrics["acr_surv"].get("c_index", 0.5)
     ci_clad  = metrics["clad"].get("c_index", 0.5)
     ci_death = metrics["death"].get("c_index", 0.5)
-    metrics["val_score"] = 0.5 * bacc + 0.5 * float(np.mean([ci_acr, ci_clad, ci_death]))
+    # Use only the relevant task metric for val_score (avoids dilution from unused heads).
+    if task == "cls":
+        val_score = bacc
+    elif task == "acr_surv":
+        val_score = ci_acr
+    elif task == "clad_surv":
+        val_score = ci_clad
+    elif task == "death_surv":
+        val_score = ci_death
+    else:  # "mega" or multi-task
+        val_score = 0.5 * bacc + 0.5 * float(np.mean([ci_acr, ci_clad, ci_death]))
+    metrics["val_score"] = val_score
     return metrics
 
 
@@ -2514,6 +2644,10 @@ def run_longitudinal_hp_sweep(
     sweep_epochs: int = P2_HP_SWEEP_EPOCHS,
     eval_every:   int = P2_HP_EVAL_EVERY,
     hp_patience:  int = P2_HP_PATIENCE,
+    biopsy_batch_size: int = 0,
+    cls_loss: str = "hinge",
+    biopsy_independent: bool = False,
+    task: str = "mega",
 ) -> Tuple[float, float]:
     """HP sweep for LongitudinalMIL — same grid as set_mil."""
     from itertools import product as iproduct
@@ -2544,9 +2678,13 @@ def run_longitudinal_hp_sweep(
 
         for ep in range(sweep_epochs):
             p2_train_longitudinal_epoch(model, patient_train, opt, cw, device,
-                                        bag_cache, scaler, P2_GRAD_ACCUM)
+                                        bag_cache, scaler, P2_GRAD_ACCUM,
+                                        biopsy_batch_size=biopsy_batch_size,
+                                        cls_loss=cls_loss,
+                                        biopsy_independent=biopsy_independent)
             if (ep + 1) % eval_every == 0:
-                vm = p2_evaluate_longitudinal(model, patient_val, device, bag_cache, cw)
+                vm = p2_evaluate_longitudinal(model, patient_val, device, bag_cache, cw,
+                                              biopsy_independent=biopsy_independent, task=task)
                 metric = vm["val_score"]
                 improved = metric > best_ep_metric
                 best_ep_metric = max(best_ep_metric, metric)
@@ -2589,6 +2727,10 @@ def run_longitudinal_final(
     patience: int = 20,
     grad_accum: int = 32,
     combined_train: bool = False,
+    biopsy_batch_size: int = 0,
+    cls_loss: str = "hinge",
+    biopsy_independent: bool = False,
+    task: str = "mega",
 ) -> dict:
     """Final training + test eval for LongitudinalMIL."""
     vtag = variant
@@ -2603,8 +2745,6 @@ def run_longitudinal_final(
             with open(mf) as f: return json.load(f)
         return {}
 
-    flat_train = [r for pat in patient_train for r in pat["records"]]
-    cw = compute_class_weights(flat_train)
     optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
                                  lr=lr, weight_decay=weight_decay)
     scheduler = _flat_cosine_scheduler(optimizer, n_epochs)
@@ -2616,14 +2756,23 @@ def run_longitudinal_final(
     train_pats = patient_train + patient_val if combined_train else patient_train
     if combined_train:
         print(f"  [LMK_final] combined_train: {len(train_pats)} patients")
+    flat_train = [r for pat in train_pats for r in pat["records"]]
+    cw = compute_class_weights(flat_train)
+    n_pos = sum(1 for r in flat_train if r.get("label") == 1)
+    n_neg = sum(1 for r in flat_train if r.get("label") == 0)
+    print(f"  [LMK_final] cls weights: w_neg={cw[0]:.3f} w_pos={cw[1]:.3f} (pos={n_pos} neg={n_neg})")
 
     for epoch in range(n_epochs):
         loss_d = p2_train_longitudinal_epoch(model, train_pats, optimizer, cw,
-                                             device, bag_cache, scaler, grad_accum)
+                                             device, bag_cache, scaler, grad_accum,
+                                             biopsy_batch_size=biopsy_batch_size,
+                                             cls_loss=cls_loss,
+                                             biopsy_independent=biopsy_independent)
         scheduler.step()
 
         if (epoch + 1) % eval_every == 0 or epoch == n_epochs - 1:
-            vm = p2_evaluate_longitudinal(model, patient_val, device, bag_cache, cw)
+            vm = p2_evaluate_longitudinal(model, patient_val, device, bag_cache, cw,
+                                          biopsy_independent=biopsy_independent, task=task)
             metric = vm["val_score"]
             improved = metric > best_metric
             print(f"  [LMK_final] ep {epoch+1:3d}/{n_epochs}  bce={loss_d['bce']:.4f}"
@@ -2658,7 +2807,8 @@ def run_longitudinal_final(
                   best_val_metric=best_metric, lr=lr, weight_decay=weight_decay)
 
     print(f"\n  [LMK_final] Evaluating on test set ({len(patient_test)} patients)...")
-    tm = p2_evaluate_longitudinal(model, patient_test, device, bag_cache)
+    tm = p2_evaluate_longitudinal(model, patient_test, device, bag_cache,
+                                   biopsy_independent=biopsy_independent, task=task)
     all_metrics: dict = {"test": tm}
     print(f"  [LMK_final] test  val_score={tm['val_score']:.4f}"
           f"  bacc={tm['acr_cls'].get('bacc', 0):.4f}"

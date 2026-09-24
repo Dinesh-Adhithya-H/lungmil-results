@@ -91,6 +91,25 @@ COX_LAMBDA    = 0.5   # weight for ACR Cox loss in Phase 2
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+class _FilteredBagCache:
+    """Wraps bag_cache to mask out modalities not in allowed_mods."""
+    def __init__(self, cache, allowed_mods):
+        self._cache   = cache
+        self._allowed = set(allowed_mods)
+
+    def get(self, stem, default=None):
+        entry = self._cache.get(stem, default if default is not None else {})
+        if not entry:
+            return entry
+        return {k: (v if k in self._allowed else None) for k, v in entry.items()}
+
+    def __contains__(self, item):
+        return item in self._cache
+
+    def __len__(self):
+        return len(self._cache)
+
+
 def set_seeds(s: int = 42):
     random.seed(s); np.random.seed(s); torch.manual_seed(s)
     if torch.cuda.is_available():
@@ -273,6 +292,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="CrossModalTransformer depth (HP)")
     p.add_argument("--modal-dropout",  type=float, default=0.3,
                    help="Per-modality drop probability during training (default 0.3)")
+    p.add_argument("--force-mods",     default=None,
+                   help="Comma-separated modalities to keep; others are masked to None "
+                        "(e.g. 'HE' for HE-only training)")
     p.add_argument("--max-he-patches", type=int, default=99999,
                    help="Max HE patches per patient per forward pass (default: all patches)")
     p.add_argument("--task",           default="mega",
@@ -313,6 +335,16 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Train final model on train+val combined (all folds share same test set). "
                         "Requires --global-hp or --p2-lr/--p2-wd. Trains for full P2_FINAL_EPOCHS "
                         "with no early stopping.")
+    p.add_argument("--p2-biopsy-batch", type=int, default=0, metavar="N",
+                   help="LongitudinalMIL: accumulate N labeled-biopsy causal forward passes "
+                        "before stepping (0=per-patient legacy). N=4 gives ~240 steps/epoch "
+                        "matching Phase1 ABMIL frequency.")
+    p.add_argument("--p2-cls-loss", default="hinge", choices=["hinge", "bce"],
+                   help="Classification loss for LongitudinalMIL cls head (default: hinge, "
+                        "matches Phase1 ABMIL).")
+    p.add_argument("--p2-biopsy-independent", action="store_true",
+                   help="LongitudinalMIL: train/eval each biopsy as a standalone sequence "
+                        "(no temporal context, no previous biopsies). Ablation vs Phase1.")
     p.add_argument("--p1-tasks",      default="acr",
                    help="Comma-separated Phase 1 tasks to train: acr,clad,death or 'all'")
     p.add_argument("--p1-epochs",      type=int, default=P1_EPOCHS)
@@ -416,6 +448,12 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
     split = args.split
     fold  = fold if fold is not None else args.fold
 
+    _force_mods = getattr(args, "force_mods", None)
+    if _force_mods:
+        _allowed = [m.strip() for m in _force_mods.split(",")]
+        bag_cache = _FilteredBagCache(bag_cache, _allowed)
+        print(f"  [force-mods] restricting bags to: {_allowed}")
+
     long_splits = build_splits_longitudinal(
         samples_dir=args.samples_dir,
         splits_csv=args.splits_csv,
@@ -443,6 +481,10 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
     p2_lr    = getattr(args, "p2_lr", None) or P2_LR
     p2_wd    = getattr(args, "p2_wd", None) or P2_WEIGHT_DECAY
 
+    _biopsy_batch = getattr(args, "p2_biopsy_batch", 0)
+    _cls_loss     = getattr(args, "p2_cls_loss", "hinge")
+    _biopsy_independent = getattr(args, "p2_biopsy_independent", False)
+
     if args.p2_hp_sweep:
         sweep_dir = save_dir / "hp_sweep"
         p2_lr, p2_wd = run_longitudinal_hp_sweep(
@@ -454,6 +496,9 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
             save_dir=sweep_dir,
             lr_grid=P2_HP_LR_GRID,
             wd_grid=P2_HP_WD_GRID,
+            biopsy_batch_size=_biopsy_batch,
+            cls_loss=_cls_loss,
+            biopsy_independent=_biopsy_independent,
         )
         print(f"  [LMK] HP sweep selected: lr={p2_lr}  wd={p2_wd}")
 
@@ -486,6 +531,10 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
         lr=p2_lr,
         weight_decay=p2_wd,
         combined_train=use_combined,
+        biopsy_batch_size=_biopsy_batch,
+        cls_loss=_cls_loss,
+        biopsy_independent=_biopsy_independent,
+        task=args.task,
         **final_kwargs,
     )
     return metrics
@@ -679,7 +728,7 @@ def main():
                                          fold=_f, split=args.split)
             for _r in _sd["train"] + _sd["val"] + _sd["test"]:
                 all_stems.add(_r["stem"])
-        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
+        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi", "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time"):
             for _f in range(4):
                 _ls = build_splits_longitudinal(args.samples_dir, args.splits_csv,
                                                 fold=_f, split=args.split)
@@ -700,7 +749,7 @@ def main():
                 print(f"\n{'='*60}\n  [all-folds] task={_task}  fold={_f}  (HP sweep only)\n{'='*60}")
                 _sd = build_splits_multitask(args.samples_dir, args.splits_csv,
                                              fold=_f, split=args.split)
-                if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
+                if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi", "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time"):
                     run_phase2_longitudinal(args, bag_cache, device, out, fold=_f)
                 else:
                     run_phase2(args, _sd, bag_cache, device, out, fold=_f)
@@ -713,7 +762,7 @@ def main():
             _orig_combined_train = args.combined_train
             args.global_hp       = True
             args.combined_train  = True
-            if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
+            if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi", "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time"):
                 metrics = run_phase2_longitudinal(args, bag_cache, device, out, fold=0)
             else:
                 metrics = run_phase2(args, _sd0, bag_cache, device, out, fold=0)
@@ -740,7 +789,7 @@ def main():
     all_stems = list({r["stem"] for r in all_recs})
 
     # For longitudinal_mk variants: stems come from patient-level splits
-    if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi") and args.phase in ("p2", "both"):
+    if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi", "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time") and args.phase in ("p2", "both"):
         _long_splits = build_splits_longitudinal(
             samples_dir=args.samples_dir,
             splits_csv=args.splits_csv,
@@ -760,7 +809,7 @@ def main():
         p1_paths = run_phase1(args, splits_dict, bag_cache, device, out)
 
     if args.phase in ("p2", "both"):
-        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"):
+        if args.p2_variant in ("longitudinal_mk", "longitudinal_mk_mt", "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi", "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time"):
             metrics = run_phase2_longitudinal(args, bag_cache, device, out)
         else:
             metrics = run_phase2(args, splits_dict, bag_cache, device, out,

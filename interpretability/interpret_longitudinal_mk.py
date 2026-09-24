@@ -356,7 +356,8 @@ def extract_patient_longitudinal(
       logits           : {task: float}
     """
     m = model
-    days_list = patient["days"]
+    # Normalize None days to 0.0 so temporal computations don't crash
+    days_list = [float(d) if d is not None else 0.0 for d in patient["days"]]
     records   = patient["records"]
     T         = len(days_list)
     K         = m.n_seeds
@@ -424,9 +425,9 @@ def extract_patient_longitudinal(
     seeds_pre_gate = all_tokens_raw.detach().cpu().numpy()
 
     # ── Stage 2: per-task extraction (gated path) ─────────────────────────────
-    tok_biopsy_t = torch.tensor(tok_biopsy, dtype=torch.long, device=device)
-    tok_mod_t    = torch.tensor(
-        [m._mod_idx[mo] for mo in tok_mod_name], dtype=torch.long, device=device)
+    tok_biopsy_t   = torch.tensor(tok_biopsy, dtype=torch.long, device=device)
+    tok_mod_idx_list = [m._mod_idx[mo] for mo in tok_mod_name]
+    tok_mod_t      = torch.tensor(tok_mod_idx_list, dtype=torch.long, device=device)
 
     gate_mat:        Dict[str, np.ndarray]  = {}
     temporal_attn:   Dict[str, dict]        = {}
@@ -438,7 +439,7 @@ def extract_patient_longitudinal(
 
     for task in tasks:
         # --- Task gate ---
-        if m.use_task_gate and m.task_gate is not None:
+        if getattr(m, "use_task_gate", False) and getattr(m, "task_gate", None) is not None:
             gate_stack = torch.stack([
                 m.task_gate.nets[task](biopsy_presence[b]) for b in range(T)
             ])                                           # (T, n_mods)
@@ -461,8 +462,6 @@ def extract_patient_longitudinal(
         temporal_attn[task] = attn_store                 # {per_layer, [alibi_bias]}
 
         # --- ABMIL weights (recency γ or learned biopsy weight) ---
-        gate_m  = m.abmil_V[task](tokens_t) * m.abmil_U[task](tokens_t)
-        raw_w   = m.abmil_w[task](gate_m).squeeze(-1)   # (N,)
         sigma   = (days_tok.max() - days_tok.min() + 1.0).clamp(min=1.0)
 
         if task == "acr_surv":
@@ -472,19 +471,27 @@ def extract_patient_longitudinal(
 
         days_arr_f = [float(d) for d in days_list]
         if m.use_learned_weight:
-            tokens_w = m._apply_biopsy_weights(task, tokens_t, tok_biopsy,
-                                               days_arr_f, anchor_day, T, device)
-            gate_w  = m.abmil_V[task](tokens_w) * m.abmil_U[task](tokens_w)
+            # v2: _concat_meta appends mod+time embed → 264-dim before ABMIL
+            tokens_w = m._concat_meta(task, tokens_t, tok_biopsy,
+                                      tok_mod_idx_list, days_arr_f,
+                                      anchor_day, T, device)
+            gate_w  = m.abmil_V[task](tokens_w) * m.abmil_U[task](tokens_w)  # (N, 256)
             raw_w   = m.abmil_w[task](gate_w).squeeze(-1)
             alpha   = torch.softmax(raw_w, dim=0)
-            # Capture per-biopsy scalar weights for visualization
-            feats_bw = torch.tensor([[anchor_day, days_arr_f[i]] for i in range(T)],
-                                    dtype=torch.float32, device=device)
-            bw_vals = m.biopsy_weight_net[task](feats_bw).squeeze(1).detach().cpu().numpy()
+            if hasattr(m, "biopsy_weight_net"):
+                feats_bw = torch.tensor([[anchor_day, days_arr_f[i]] for i in range(T)],
+                                        dtype=torch.float32, device=device)
+                bw_vals = m.biopsy_weight_net[task](feats_bw).squeeze(1).detach().cpu().numpy()
+            else:
+                bw_vals = None  # v2 uses biopsy_time_net; no separate scalar weight
+            tokens_for_rep = gate_w  # gate is always 256-dim
         else:
+            gate_m  = m.abmil_V[task](tokens_t) * m.abmil_U[task](tokens_t)
+            raw_w   = m.abmil_w[task](gate_m).squeeze(-1)   # (N,)
             bias  = -m.recency_gamma[task].abs() * (days_tok - anchor_day).abs() / sigma
             alpha = torch.softmax(raw_w + bias, dim=0)
             bw_vals = None
+            tokens_for_rep = tokens_t
 
         alpha_per_task[task] = alpha.detach().cpu().numpy()
         if "biopsy_weights" not in locals():
@@ -496,17 +503,19 @@ def extract_patient_longitudinal(
         for t_idx, end_idx in enumerate(biopsy_ends):
             if end_idx == 0:
                 per_biopsy_reps[task].append(None)
+                hazard_traj[task].append(float("nan"))  # keep aligned with per_biopsy_reps
                 continue
             tok_t  = tokens_t[:end_idx]
             days_t = days_tok[:end_idx]
             anc    = float(days_list[t_idx])
             if m.use_learned_weight:
-                tok_tw = m._apply_biopsy_weights(task, tok_t, tok_biopsy[:end_idx],
-                                                 days_arr_f, anc, t_idx + 1, device)
+                tok_tw = m._concat_meta(task, tok_t, tok_biopsy[:end_idx],
+                                        tok_mod_idx_list[:end_idx], days_arr_f,
+                                        anc, t_idx + 1, device)
                 gate2 = m.abmil_V[task](tok_tw) * m.abmil_U[task](tok_tw)
                 raw2  = m.abmil_w[task](gate2).squeeze(-1)
                 alp2  = torch.softmax(raw2, dim=0)
-                rep2  = (alp2.unsqueeze(1) * tok_tw).sum(0)
+                rep2  = (alp2.unsqueeze(1) * gate2).sum(0)  # gate2 is 256-dim
             else:
                 gate2  = m.abmil_V[task](tok_t) * m.abmil_U[task](tok_t)
                 raw2   = m.abmil_w[task](gate2).squeeze(-1)
@@ -519,7 +528,7 @@ def extract_patient_longitudinal(
             per_biopsy_reps[task].append(rep2.detach().cpu())
 
         # Final logit from full sequence
-        rep_full   = (alpha.unsqueeze(1) * tokens_t).sum(0)
+        rep_full   = (alpha.unsqueeze(1) * tokens_for_rep).sum(0)
         logits_out[task] = m.heads[task](rep_full).squeeze().item()
         rep_full_per_task[task] = rep_full.detach().cpu().numpy()  # (H,)
 
@@ -615,8 +624,49 @@ def plot_L_global(model: nn.Module, out_dir: Path, tasks: List[str]):
 
 
 def _plot_L_global_learned(model: nn.Module, out_dir: Path, tasks: List[str]):
-    """L_global for learned-weight variant: visualise biopsy_weight_net per task."""
+    """L_global for learned-weight variant: visualise biopsy_weight_net (or biopsy_time_net for v2)."""
+    import math as _m
     dev = next(model.parameters()).device
+
+    # v2 uses biopsy_time_net (4-dim time token) instead of biopsy_weight_net (scalar)
+    has_v2_time_net = hasattr(model, "biopsy_time_net") and not hasattr(model, "biopsy_weight_net")
+    if has_v2_time_net:
+        # visualise L2 norm of time token as function of (anchor_day, biopsy_day)
+        _log_max = _m.log(1 + 1825.0)
+        biopsy_range_v2 = np.linspace(0, 1826, 300)
+        anchor_days_v2  = np.array([90, 180, 365, 730, 1095], dtype=float)
+        n_tasks = len(tasks)
+        fig, axes = plt.subplots(1, n_tasks, figsize=(5 * n_tasks, 5))
+        if n_tasks == 1:
+            axes = [axes]
+        fig.suptitle("LongMK-v2 — Biopsy time token magnitude  ‖time_vec(anchor, biopsy_day)‖₂",
+                     fontsize=FONT_TITLE + 1, fontweight="bold", y=1.01)
+        anchor_cols = plt.cm.viridis(np.linspace(0.1, 0.9, len(anchor_days_v2)))
+        for ti, task in enumerate(tasks):
+            ax = axes[ti]
+            net = model.biopsy_time_net[task]
+            col = TASK_COLORS.get(task, "#777")
+            for anc, acol in zip(anchor_days_v2, anchor_cols):
+                feats = torch.tensor(
+                    [[_m.log(1 + anc) / _log_max,
+                      _m.log(1 + max(0.0, d)) / _log_max]
+                     for d in biopsy_range_v2],
+                    dtype=torch.float32, device=dev)
+                with torch.no_grad():
+                    tvecs = net(feats).cpu().numpy()          # (N, 4)
+                norms = np.linalg.norm(tvecs, axis=1)
+                ax.plot(biopsy_range_v2, norms, color=acol, lw=1.8,
+                        label=f"anchor={int(anc)}d")
+            ax.set_xlabel("Biopsy day (days post-transplant)")
+            ax.set_ylabel("‖time token‖₂  (4-dim)")
+            ax.set_title(f"{TASK_LABELS.get(task, task)}", fontsize=FONT_LABEL, color=col)
+            ax.legend(fontsize=7, loc="best", framealpha=0.8)
+        plt.tight_layout()
+        png = _savefig(fig, out_dir, "L_global_time_token_norm")
+        plt.close(fig)
+        print(f"  [L_global v2] → {png.name}")
+        return
+
     anchor_days  = np.array([100, 200, 365, 548, 730], dtype=float)
     biopsy_range = np.linspace(0, 730, 200)
 
@@ -2142,8 +2192,17 @@ def plot_population_seed_attribution(all_extractions: List[dict],
             if alpha is None:
                 continue
             if outcome_src == "label":
-                _lbl = extr["records"][0].get("label")
-                out_val = float("nan") if _lbl is None else float(_lbl)
+                # ever-positive: patient is positive if any biopsy label=1
+                vals = []
+                for rec in extr["records"]:
+                    v = rec.get("label")
+                    if v is not None:
+                        try: vals.append(int(float(v)))
+                        except (ValueError, TypeError): pass
+                if not vals:
+                    out_val = float("nan")
+                else:
+                    out_val = float(1 if any(v == 1 for v in vals) else 0)
             else:
                 out_val = extr["logits"].get(task, float("nan"))
             if np.isnan(out_val):
@@ -2369,6 +2428,8 @@ def plot_population_seed_attribution(all_extractions: List[dict],
         import json as _json
         agg_data = {
             "alpha_diff":  alpha_diff.tolist(),
+            "alpha_hi":    alpha_hi.tolist(),
+            "alpha_lo":    alpha_lo.tolist(),
             "seed_labels": seed_labels,
             "present_mods": present_mods,
             "n_hi": int(hi_m.sum()), "n_lo": int(lo_m.sum()),
@@ -2810,7 +2871,8 @@ def main():
     parser.add_argument("--fold",       type=int, default=0)
     parser.add_argument("--variant",    type=str, default="longitudinal_mk_mt",
                         choices=["longitudinal_mk", "longitudinal_mk_mt",
-                                 "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi"],
+                                 "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi",
+                                 "longitudinal_mk_no_alibi_v2"],
                         help="Model variant to load")
     parser.add_argument("--task",       type=str, default="mega",
                         choices=["mega", "acr_cls", "cls", "acr_surv", "clad", "clad_surv", "death", "death_surv"],

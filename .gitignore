@@ -91,3 +91,8 @@ results_lung_competitors/
 
 # Claude Code instructions (internal only)
 CLAUDE.md
+
+# ── Large generated outputs (videos, patient UMAPs, zip archives) ─────────────
+figures/video/
+figures/interpretability/patient_rep_umap/
+figures/*.zip

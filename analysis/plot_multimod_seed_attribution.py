@@ -17,9 +17,9 @@ INTERP_ROOT = Path("/home/aih/dinesh.haridoss/chicago_mil/interpretability/longi
 FIG_ROOT = Path("/home/aih/dinesh.haridoss/chicago_mil/figures/interpretability")
 
 TASK_CFG = {
-    "acr_surv": {"variant": "longitudinal_mk_no_alibi", "json_key": "acr_surv", "title": "ACR Survival"},
-    "clad_surv": {"variant": "longitudinal_mk_no_alibi", "json_key": "clad",    "title": "CLAD"},
-    "death_surv": {"variant": "longitudinal_mk_no_alibi", "json_key": "death",   "title": "Death"},
+    "acr_surv": {"variant": "longitudinal_mk_no_alibi_v2", "json_key": "acr_surv", "title": "ACR Survival"},
+    "clad_surv": {"variant": "longitudinal_mk_no_alibi_v2", "json_key": "clad",    "title": "CLAD"},
+    "death_surv": {"variant": "longitudinal_mk_no_alibi_v2", "json_key": "death",   "title": "Death"},
 }
 
 MOD_COLORS = {

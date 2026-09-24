@@ -1,0 +1,55 @@
+cluster_id,bio_category,abmil_mean_rel,abmil_sem,n_instances,longmil_mean_rel,longmil_sem,task
+5_9,Alveolar,2.80866,0.21835,45496,0.27407,0.13515,acr_cls
+5_5,Alveolar,2.4207,0.1095,181789,0.54302,0.15623,acr_cls
+5_4,Alveolar,1.88594,0.02866,393619,1.22628,0.14969,acr_cls
+5_3,Alveolar,1.80767,0.05715,442516,3.9256,0.64484,acr_cls
+5_7,Alveolar,1.40781,0.14072,50757,0.33875,0.132,acr_cls
+5_10,Alveolar,1.33171,0.19353,21870,0.07361,0.03818,acr_cls
+5_2,Alveolar,0.65715,0.01611,2021197,6.64303,0.64604,acr_cls
+5_1,Alveolar,0.54593,0.0098,2569589,8.80411,0.77574,acr_cls
+5_8,Alveolar,0.50072,0.05472,46543,0.18876,0.03844,acr_cls
+5_6,Alveolar,0.48976,0.08274,58437,0.22656,0.05513,acr_cls
+1_9,Alveolar with empty spaces,3.55375,0.11824,21836,0.1599,0.06748,acr_cls
+1_8,Alveolar with empty spaces,2.27875,0.21519,23719,0.07854,0.01533,acr_cls
+1_7,Alveolar with empty spaces,1.59677,0.03922,82758,0.1352,0.01125,acr_cls
+1_6,Alveolar with empty spaces,1.5879,0.06462,113928,0.61198,0.26301,acr_cls
+1_2,Alveolar with empty spaces,1.19756,0.00956,746780,3.04007,0.29113,acr_cls
+1_3,Alveolar with empty spaces,1.13094,0.02383,516994,1.56738,0.20533,acr_cls
+1_5,Alveolar with empty spaces,1.05352,0.0144,251976,0.92986,0.10779,acr_cls
+1_4,Alveolar with empty spaces,0.71246,0.00584,323509,1.21279,0.10769,acr_cls
+1_10,Alveolar with empty spaces,0.6288,0.01451,16485,0.04243,0.0081,acr_cls
+1_1,Alveolar with empty spaces,0.4955,0.00465,1277345,5.50791,0.44405,acr_cls
+2,Alveolar with hemorrhage and inflammation,3.2743,0.1945,3594,0.04267,0.03812,acr_cls
+7_5,Alveolar with hemorrhage and inflammation,2.00616,0.12391,50811,0.08485,0.0555,acr_cls
+0_5,Alveolar with hemorrhage and inflammation,1.37744,0.04978,66863,0.20798,0.04957,acr_cls
+7_4,Alveolar with hemorrhage and inflammation,0.96331,0.04421,117121,0.2104,0.06858,acr_cls
+7_2,Alveolar with hemorrhage and inflammation,0.91019,0.05055,293992,0.58936,0.1822,acr_cls
+7_8,Alveolar with hemorrhage and inflammation,0.78237,0.05949,22775,0.01024,0.00878,acr_cls
+7_7,Alveolar with hemorrhage and inflammation,0.71536,0.08935,32192,0.03007,0.01456,acr_cls
+4,Alveolar with hemorrhage and inflammation,0.68092,0.13758,360,0.00047,0.00042,acr_cls
+0_7,Alveolar with hemorrhage and inflammation,0.62476,0.0202,30065,0.08691,0.01724,acr_cls
+0_2,Alveolar with hemorrhage and inflammation,0.60393,0.00921,628033,2.33527,0.175,acr_cls
+7_10,Alveolar with hemorrhage and inflammation,0.59172,0.04541,18054,0.01798,0.01534,acr_cls
+0_8,Alveolar with hemorrhage and inflammation,0.5841,0.02003,16496,0.03154,0.01025,acr_cls
+0_4,Alveolar with hemorrhage and inflammation,0.49995,0.03215,448994,2.16985,0.3158,acr_cls
+7_9,Alveolar with hemorrhage and inflammation,0.4959,0.09534,22387,0.01526,0.00894,acr_cls
+0_1,Alveolar with hemorrhage and inflammation,0.44467,0.00312,788059,2.88907,0.30366,acr_cls
+7_1,Alveolar with hemorrhage and inflammation,0.41848,0.02087,351158,0.7163,0.24506,acr_cls
+0_3,Alveolar with hemorrhage and inflammation,0.4067,0.01413,476906,2.09181,0.19757,acr_cls
+7_3,Alveolar with hemorrhage and inflammation,0.39774,0.03517,126318,0.24573,0.14091,acr_cls
+0_6,Alveolar with hemorrhage and inflammation,0.19651,0.00185,32206,0.04424,0.0093,acr_cls
+7_6,Alveolar with hemorrhage and inflammation,0.17859,0.00664,33133,0.04019,0.01453,acr_cls
+0_9,Alveolar with hemorrhage and inflammation,0.14046,0.03102,14108,0.02484,0.01809,acr_cls
+6_6,Bronchial,6.64085,0.1306,51910,0.16262,0.02924,acr_cls
+6_4,Bronchial,4.28944,0.03159,294084,1.11717,0.16972,acr_cls
+6_5,Bronchial,2.69241,0.03977,102619,0.19087,0.06821,acr_cls
+6_2,Bronchial,2.43764,0.01856,398202,1.37252,0.25461,acr_cls
+6_3,Bronchial,2.17653,0.02337,343596,0.99669,0.17702,acr_cls
+6_1,Bronchial,1.78941,0.00869,473986,1.72491,0.23195,acr_cls
+6_9,Bronchial,1.34571,0.03836,15913,0.02097,0.01677,acr_cls
+6_8,Bronchial,1.3327,0.0506,27781,0.07542,0.02607,acr_cls
+8,Bronchial,0.60948,0.07145,5039,0.00365,0.00302,acr_cls
+6_7,Bronchial,0.5205,0.01844,28070,0.06611,0.02284,acr_cls
+10,Cartilage,0.5533,0.00642,253355,0.82197,0.14219,acr_cls
+9,Lymphocytoplasmic inflammation,1.37264,0.06054,38352,0.03179,0.02187,acr_cls
+3,Unknown,1.73705,0.042,2574,0.00044,0.00028,acr_cls
