@@ -92,7 +92,9 @@ results_lung_competitors/
 # Claude Code instructions (internal only)
 CLAUDE.md
 
-# ── Large generated outputs (videos, patient UMAPs, zip archives) ─────────────
-figures/video/
-figures/interpretability/patient_rep_umap/
-figures/*.zip
+# ── Large generated outputs (figures, videos, UMAPs, zip archives) ───────────
+# figures/ contains only regenerated PNGs/PDFs — not tracked in git
+figures/
+# ── Large project notes / PDFs not needed for development ────────────────────
+Lung transplant multimodal + time project-2.md
+Lung transplant multimodal + time project-6.pdf
