@@ -137,13 +137,16 @@ def build_model_v8(
                                 tasks=_task_list)
     if variant in ("longitudinal_mk", "longitudinal_mk_mt",
                    "longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi",
-                   "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time"):
+                   "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time",
+                   "longitudinal_mk_no_alibi_v2_no_pma"):
         encoders = {m: ModalFFNEncoder(_feat_dim(m), HIDDEN_DIM, DROPOUT)
                     for m in MODALITIES}
         no_alibi  = variant in ("longitudinal_mk_no_alibi", "longitudinal_mk_mt_no_alibi",
-                                "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time")
-        use_lw    = variant in ("longitudinal_mk_no_alibi_v2",)
+                                "longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_time",
+                                "longitudinal_mk_no_alibi_v2_no_pma")
+        use_lw    = variant in ("longitudinal_mk_no_alibi_v2", "longitudinal_mk_no_alibi_v2_no_pma")
         use_nt    = variant == "longitudinal_mk_no_alibi_v2_no_time"
+        use_pma   = variant != "longitudinal_mk_no_alibi_v2_no_pma"
         return LongitudinalMIL(
             encoders,
             hidden_dim=HIDDEN_DIM,
@@ -158,6 +161,7 @@ def build_model_v8(
             use_alibi=not no_alibi,
             use_learned_weight=use_lw,
             use_no_time=use_nt,
+            use_pma=use_pma,
         )
     raise ValueError(f"Unknown variant {variant!r}. Choose from: {P2_VARIANTS}")
 

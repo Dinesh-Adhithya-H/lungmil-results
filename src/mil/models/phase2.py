@@ -652,12 +652,14 @@ class LongitudinalMIL(nn.Module):
                  tasks: Optional[List[str]] = None,
                  use_alibi: bool = True,
                  use_learned_weight: bool = False,
-                 use_no_time: bool = False):
+                 use_no_time: bool = False,
+                 use_pma: bool = True):
         super().__init__()
         self.encoders           = nn.ModuleDict(encoders)
         self.modal_dropout      = modal_dropout
         self.max_he_patches     = max_he_patches
         self.n_seeds            = n_seeds
+        self.use_pma            = use_pma
         _tasks = tasks if tasks is not None else ["acr_cls", "acr_surv", "clad", "death"]
         self.task_names         = _tasks
         self.use_alibi          = use_alibi
@@ -671,10 +673,11 @@ class LongitudinalMIL(nn.Module):
         self.modal_embed = nn.Embedding(len(self._mod_idx), hidden_dim)
         nn.init.trunc_normal_(self.modal_embed.weight, std=0.02)
 
-        self.pma = nn.ModuleDict({
-            mod: PMA(hidden_dim, n_seeds, n_heads, n_pma_layers, dropout)
-            for mod in encoders
-        })
+        if use_pma:
+            self.pma = nn.ModuleDict({
+                mod: PMA(hidden_dim, n_seeds, n_heads, n_pma_layers, dropout)
+                for mod in encoders
+            })
 
         # Temporal attention: TemporalSAB (ALiBi + causal) or plain SAB stack
         if use_alibi:
@@ -851,15 +854,20 @@ class LongitudinalMIL(nn.Module):
                     idx  = torch.randperm(feat.shape[0], device=device)[:self.max_he_patches]
                     feat = feat[idx]
                 h = enc.encode_patches(feat)                   # (N, H)
-                s = self.pma[mod](h)                           # (K, H)
+                if self.use_pma:
+                    s = self.pma[mod](h)                       # (K, H)
+                    n_tok = K
+                else:
+                    s = h.mean(0, keepdim=True)                # (1, H)
+                    n_tok = 1
                 mod_idx_i = torch.tensor(self._mod_idx[mod], device=device)
                 s = s + self.modal_embed(mod_idx_i)
                 all_seeds.append(s)
                 all_days_flat.append(
-                    torch.full((K,), d_val, dtype=torch.float32, device=device))
-                tok_biopsy.extend([t_idx] * K)
-                tok_mod.extend([self._mod_idx[mod]] * K)
-                running_total += K
+                    torch.full((n_tok,), d_val, dtype=torch.float32, device=device))
+                tok_biopsy.extend([t_idx] * n_tok)
+                tok_mod.extend([self._mod_idx[mod]] * n_tok)
+                running_total += n_tok
                 present_this.append(mod)
 
             biopsy_ends.append(running_total)
