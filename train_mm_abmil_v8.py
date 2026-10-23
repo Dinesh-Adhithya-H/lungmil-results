@@ -487,6 +487,8 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
 
     if args.p2_hp_sweep:
         sweep_dir = save_dir / "hp_sweep"
+        _wp = getattr(args, "wandb_project", "chicago-mil")
+        _lmk_variant_short = _lmk_variant.replace("longitudinal_mk_no_alibi_v2", "lmk")
         p2_lr, p2_wd = run_longitudinal_hp_sweep(
             model_factory=_make_model,
             patient_train=patient_train,
@@ -499,6 +501,9 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
             biopsy_batch_size=_biopsy_batch,
             cls_loss=_cls_loss,
             biopsy_independent=_biopsy_independent,
+            task=args.task,
+            wandb_project=_wp,
+            wandb_run_name=f"{_lmk_variant_short}_s{split}_f{fold}_{args.task}_hp",
         )
         print(f"  [LMK] HP sweep selected: lr={p2_lr}  wd={p2_wd}")
 
@@ -518,6 +523,8 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
     if combined_n_epochs is not None:
         final_kwargs["n_epochs"] = combined_n_epochs
 
+    _wp = getattr(args, "wandb_project", "chicago-mil")
+    _lmk_variant_short = _lmk_variant.replace("longitudinal_mk_no_alibi_v2", "lmk")
     metrics = run_longitudinal_final(
         model=model,
         variant=_lmk_variant,
@@ -535,6 +542,8 @@ def run_phase2_longitudinal(args, bag_cache, device, out: Path,
         cls_loss=_cls_loss,
         biopsy_independent=_biopsy_independent,
         task=args.task,
+        wandb_project=_wp,
+        wandb_run_name=f"{_lmk_variant_short}_s{split}_f{fold}_{args.task}",
         **final_kwargs,
     )
     return metrics

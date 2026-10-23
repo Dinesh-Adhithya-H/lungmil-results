@@ -2648,6 +2648,8 @@ def run_longitudinal_hp_sweep(
     cls_loss: str = "hinge",
     biopsy_independent: bool = False,
     task: str = "mega",
+    wandb_project: str = "",
+    wandb_run_name: str = "",
 ) -> Tuple[float, float]:
     """HP sweep for LongitudinalMIL — same grid as set_mil."""
     from itertools import product as iproduct
@@ -2664,11 +2666,27 @@ def run_longitudinal_hp_sweep(
     flat_train = [r for pat in patient_train for r in pat["records"]]
     cw = compute_class_weights(flat_train)
 
+    # wandb run for HP sweep
+    _wb_hp = None
+    if wandb_project and _WANDB_AVAILABLE:
+        try:
+            _wb_hp = _wandb.init(
+                project=wandb_project,
+                name=wandb_run_name or f"hp_sweep_{save_dir.parent.name}",
+                group=save_dir.parent.name,
+                config={"task": task, "lr_grid": lr_grid, "wd_grid": wd_grid,
+                        "sweep_epochs": sweep_epochs},
+                reinit=True,
+            )
+        except Exception as _we:
+            print(f"  [wandb] hp sweep init failed: {_we}")
+            _wb_hp = None
+
     best_metric = -1.0
     best_lr, best_wd = lr_grid[0], wd_grid[0]
     results = []
 
-    for lr, wd in iproduct(lr_grid, wd_grid):
+    for combo_idx, (lr, wd) in enumerate(iproduct(lr_grid, wd_grid)):
         print(f"  [LMK-HP] lr={lr:.0e}  wd={wd:.0e}", flush=True)
         model = model_factory().to(device)
         opt   = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
@@ -2691,20 +2709,41 @@ def run_longitudinal_hp_sweep(
                 no_improve = 0 if improved else no_improve + 1
                 print(f"  ep {ep+1:3d}/{sweep_epochs}  val_score={metric:.4f}  "
                       f"best={best_ep_metric:.4f}", flush=True)
+                if _wb_hp:
+                    try:
+                        _wb_hp.log({f"hp/combo{combo_idx}/val_score": metric,
+                                    f"hp/combo{combo_idx}/ep": ep + 1})
+                    except Exception:
+                        pass
                 _gc()
                 if no_improve >= hp_patience:
                     stopped_ep = ep + 1
                     print(f"  [LMK-HP] early stop", flush=True); break
 
         print(f"  [LMK-HP] lr={lr:.0e}  wd={wd:.0e}  DONE  val_score={best_ep_metric:.4f}")
+        if _wb_hp:
+            try:
+                _wb_hp.log({f"hp/combo{combo_idx}/best_val": best_ep_metric,
+                            "hp/best_so_far": max(best_metric, best_ep_metric)})
+            except Exception:
+                pass
         results.append({"lr": lr, "wd": wd, "val_bacc": best_ep_metric,
                         "stopped_ep": stopped_ep})
         if best_ep_metric > best_metric:
             best_metric, best_lr, best_wd = best_ep_metric, lr, wd
         del model, opt, scaler; _gc()
 
+    if _wb_hp:
+        try:
+            _wb_hp.summary.update({"best_lr": best_lr, "best_wd": best_wd,
+                                   "best_val": best_metric})
+            _wb_hp.finish()
+        except Exception:
+            pass
+
     res = {"best_lr": best_lr, "best_wd": best_wd, "best_val_bacc": best_metric,
            "grid": results}
+    Path(result_path).parent.mkdir(parents=True, exist_ok=True)
     with open(result_path, "w") as f:
         json.dump(res, f, indent=2)
     return best_lr, best_wd
@@ -2731,6 +2770,8 @@ def run_longitudinal_final(
     cls_loss: str = "hinge",
     biopsy_independent: bool = False,
     task: str = "mega",
+    wandb_project: str = "",
+    wandb_run_name: str = "",
 ) -> dict:
     """Final training + test eval for LongitudinalMIL."""
     vtag = variant
@@ -2744,6 +2785,23 @@ def run_longitudinal_final(
         if mf.exists():
             with open(mf) as f: return json.load(f)
         return {}
+
+    _wb = None
+    if wandb_project and _WANDB_AVAILABLE:
+        try:
+            _run_name = wandb_run_name or f"{variant}_s{save_dir.parent.name.split('_')[0].replace('split','')}_f{fold}_{task}"
+            _wb = _wandb.init(
+                project=wandb_project,
+                name=_run_name,
+                group=save_dir.parent.name,
+                config={"variant": variant, "fold": fold, "task": task,
+                        "lr": lr, "weight_decay": weight_decay,
+                        "n_epochs": n_epochs, "combined_train": combined_train},
+                reinit=True,
+            )
+        except Exception as _we:
+            print(f"  [wandb] init failed: {_we} — continuing without wandb")
+            _wb = None
 
     optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
                                  lr=lr, weight_decay=weight_decay)
@@ -2779,6 +2837,17 @@ def run_longitudinal_final(
                   f"  val_score={metric:.4f}  best={best_metric:.4f}"
                   + ("  *best*" if improved else f"  (no_improve={no_improve+1}/{patience})"),
                   flush=True)
+            if _wb:
+                try:
+                    _log = {"epoch": epoch + 1, "train/loss": loss_d["bce"],
+                            "val/score": metric, "val/best": max(best_metric, metric),
+                            "val/bacc":     vm.get("acr_cls", {}).get("bacc", 0),
+                            "val/ci_acr":   vm.get("acr_surv", {}).get("c_index", 0),
+                            "val/ci_clad":  vm.get("clad", {}).get("c_index", 0),
+                            "val/ci_death": vm.get("death", {}).get("c_index", 0)}
+                    _wb.log(_log)
+                except Exception:
+                    pass
             if improved:
                 best_metric = metric; best_epoch = epoch + 1; no_improve = 0
                 if not combined_train:
@@ -2815,6 +2884,20 @@ def run_longitudinal_final(
           f"  ci_acr={tm['acr_surv'].get('c_index', 0):.4f}"
           f"  ci_clad={tm['clad'].get('c_index', 0):.4f}"
           f"  ci_death={tm['death'].get('c_index', 0):.4f}")
+
+    if _wb:
+        try:
+            _wb.summary.update({
+                "test/val_score":  tm["val_score"],
+                "test/bacc":       tm["acr_cls"].get("bacc", 0),
+                "test/ci_acr":     tm["acr_surv"].get("c_index", 0),
+                "test/ci_clad":    tm["clad"].get("c_index", 0),
+                "test/ci_death":   tm["death"].get("c_index", 0),
+                "best_epoch":      best_epoch,
+            })
+            _wb.finish()
+        except Exception:
+            pass
 
     with open(save_dir / f"metrics_{vtag}_final.json", "w") as f:
         json.dump(all_metrics, f, indent=2)
