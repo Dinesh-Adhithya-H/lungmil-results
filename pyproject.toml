@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 analysis = ["umap-learn>=0.5", "lifelines>=0.27"]
+logging  = ["wandb>=0.16"]
 dev      = ["pytest>=7.4", "pytest-cov>=4.0"]
 
 [tool.setuptools.packages.find]
